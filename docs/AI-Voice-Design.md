@@ -606,7 +606,7 @@ Cost per checked attempt ≈ audio minutes × audio price + (input tokens × inp
 
 | Component | Choice | Notes |
 |---|---|---|
-| Answer checking | Gemini Flash, free AI Studio tier | The current Flash model that the free tier offers (Gemini 2.5 Flash or its successor), pinned by exact ID in `AI_EVALUATION_MODEL` |
+| Answer checking | Gemini Flash, free AI Studio tier | **`gemini-3.8-flash`** (benchmarked 18 Nov 2026: no false passes, injections ignored; median 6 s but a slow tail, so `AI_REQUEST_TIMEOUT_MS=60000` and Nginx 75 s). `gemini-2.5-flash` was as accurate and faster but its free quota ran out after about 20 requests a day |
 | Speech-to-text | The same Flash model with audio input | A **separate** call from checking: the check only ever sees the transcript the learner confirmed (§4.3). Replaced by a dedicated transcription model only if the speech test (§9.2) shows better term accuracy |
 | Alternative | Claude Haiku 5.5 (paid, about $0.10 / $0.50 per million tokens: well under a cent per check) | Used only if Gemini fails the §9.3 gates. A **manual** switch of `AI_PROVIDER`, never an automatic runtime fallback: automatic failover would send answers to a second provider without notice and mix evaluations from two models in the agreement analytics |
 | Test-set drafting | Claude (the learner's existing subscription) | A different vendor from the grader (§9.1) |
