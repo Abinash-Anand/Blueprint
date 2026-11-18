@@ -21,7 +21,7 @@ import { suggestScore } from "../src/modules/ai/evaluation/score.js";
 import { verifyResult } from "../src/modules/ai/evaluation/verify.js";
 import { createProviders } from "../src/modules/ai/providers/factory.js";
 import { ProviderError } from "../src/modules/ai/providers/types.js";
-import { type Case, type Run, gates, printGates } from "./gates.js";
+import { type Case, type Run, errorKind, gates, printGates } from "./gates.js";
 
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -46,7 +46,7 @@ async function once(c: Case): Promise<Run> {
   const p = promptOf.get(c.topic);
   if (!p) throw new Error(`No curriculum prompt for ${c.topic}`);
   const criteria = splitCriteria(p.expected);
-  if (quotaExhausted) return { score: null, error: "skipped: quota exhausted", ms: 0, downgraded: 0 };
+  if (quotaExhausted) return { score: null, error: "skipped: quota exhausted", kind: "SKIPPED", ms: 0, downgraded: 0 };
   if (delayMs) await sleep(delayMs);
   let t0 = performance.now();
   try {
@@ -78,7 +78,7 @@ async function once(c: Case): Promise<Run> {
     const score = suggestScore({ relevant: v.relevant, verdicts: v.criteria.map((x) => x.verdict), misconceptions: v.misconceptions.length });
     return { score, ms: performance.now() - t0, downgraded: v.downgraded };
   } catch (e) {
-    return { score: null, error: e instanceof Error ? e.message.slice(0, 120) : String(e), ms: performance.now() - t0, downgraded: 0 };
+    return { score: null, error: e instanceof Error ? e.message.slice(0, 120) : String(e), kind: errorKind(e), ms: performance.now() - t0, downgraded: 0 };
   }
 }
 
@@ -100,6 +100,7 @@ printGates("Release gates (AI design §9.3)", gateRows);
 const out = join(here, "results");
 mkdirSync(out, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const path = join(out, `${stamp}-${provider.name}-${config.evaluationModel}.json`);
+const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60);
+const path = join(out, `${stamp}-${safe(provider.name)}-${safe(config.evaluationModel)}.json`); // a new file every run, never overwritten
 writeFileSync(path, JSON.stringify({ provider: provider.name, model: config.evaluationModel, promptVersion: config.promptVersion, runs, gates: gateRows, results }, null, 2));
 console.log(`\nSaved ${path}`);

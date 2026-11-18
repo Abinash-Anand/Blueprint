@@ -5,3 +5,6 @@ backups/*.dump
 
 # AI benchmark output (may contain model responses)
 backend/eval/results/
+
+# Voice recordings for the speech-term test (personal audio; never commit)
+recordings/

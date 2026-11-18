@@ -1,0 +1,29 @@
+{
+  "about": "Speech-term test (AI design §9.2). Read each sentence aloud, naturally, and save it as <id>.wav / .mp3 / .flac in one folder per microphone (for example recordings/laptop/01.wav). 12 sentences, 60 curriculum terms. Each recording is one transcription request, so one microphone uses 12 of the ~20 free daily requests.",
+  "sentences": [
+    { "id": "01", "topic": "fe.ts", "text": "TypeScript generics with a discriminated union let narrowing work without casts, and strictNullChecks catches the rest.",
+      "terms": ["TypeScript", "generics", "discriminated union", "narrowing", "strictNullChecks"] },
+    { "id": "02", "topic": "fe.ng-fundamentals", "text": "In Angular, a standalone component gets its data through input signals and uses dependency injection for the HttpClient.",
+      "terms": ["Angular", "standalone component", "input signals", "dependency injection", "HttpClient"] },
+    { "id": "03", "topic": "fe.reactivity", "text": "With RxJS I pipe the stream through debounceTime and switchMap, then call toSignal so the template stays reactive.",
+      "terms": ["RxJS", "debounceTime", "switchMap", "toSignal", "template"] },
+    { "id": "04", "topic": "be.express", "text": "The NestJS module registers a controller, a provider and a guard, and validation pipes check every DTO.",
+      "terms": ["NestJS", "controller", "guard", "validation pipes", "DTO"] },
+    { "id": "05", "topic": "be.prisma", "text": "Prisma generates a typed client from the schema, and migrations run against PostgreSQL inside Docker Compose.",
+      "terms": ["Prisma", "schema", "migrations", "PostgreSQL", "Docker Compose"] },
+    { "id": "06", "topic": "db.indexes", "text": "An index on the foreign key avoids a sequential scan, and EXPLAIN ANALYZE shows the query plan with its cost.",
+      "terms": ["index", "foreign key", "sequential scan", "EXPLAIN ANALYZE", "query plan"] },
+    { "id": "07", "topic": "be.auth", "text": "Passwords are hashed with argon2 or bcrypt, the session cookie is httpOnly and sameSite, and OAuth handles delegated login.",
+      "terms": ["argon2", "bcrypt", "httpOnly", "sameSite", "OAuth"] },
+    { "id": "08", "topic": "be.messaging", "text": "Idempotency keys make retries safe, while a message queue like Kafka or RabbitMQ decouples the producer from the consumer.",
+      "terms": ["idempotency", "Kafka", "RabbitMQ", "producer", "consumer"] },
+    { "id": "09", "topic": "cl.k8s", "text": "Kubernetes runs pods behind a Service, an Ingress routes the traffic, and a ConfigMap holds the settings.",
+      "terms": ["Kubernetes", "pods", "Service", "Ingress", "ConfigMap"] },
+    { "id": "10", "topic": "cl.aws", "text": "On AWS the app keeps files in S3, uses IAM roles for access, sends logs to CloudWatch and sits behind an ALB.",
+      "terms": ["AWS", "S3", "IAM", "CloudWatch", "ALB"] },
+    { "id": "11", "topic": "ar.observability", "text": "Observability combines structured logs, Prometheus metrics, OpenTelemetry traces and SLOs with an error budget.",
+      "terms": ["observability", "Prometheus", "OpenTelemetry", "SLOs", "error budget"] },
+    { "id": "12", "topic": "ai.rag", "text": "A RAG pipeline splits documents into chunks, stores embeddings in a vector database, and the LLM answers with citations.",
+      "terms": ["RAG", "chunks", "embeddings", "vector database", "LLM"] }
+  ]
+}

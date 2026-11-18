@@ -101,19 +101,23 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
     }
   }
 
-  /** The unit's names and question texts, for transcription spelling hints. */
+  /**
+   * The unit's names and question texts, for transcription spelling hints. A sub-topic unit also gets its topic's
+   * curriculum question, which holds most of the topic's technical terms (its own prompts are mostly templates).
+   */
   async function unitTerms(scheduleId: number) {
     const s = await prisma.revisionSchedule.findUnique({
       where: { id: scheduleId },
       include: { topic: { select: { name: true } }, subtopic: { select: { name: true } } },
     });
     if (!s) return [];
-    const prompts = await prisma.revisionPrompt.findMany({
-      where: { topicId: s.topicId, subtopicId: s.subtopicId, isActive: true },
-      select: { content: true, expectedAnswer: true },
-      take: 5,
-    });
-    return vocabulary([s.topic.name, s.subtopic?.name ?? "", ...prompts.flatMap((p) => [p.content, p.expectedAnswer])]);
+    const select = { content: true, expectedAnswer: true } as const;
+    const own = await prisma.revisionPrompt.findMany({ where: { topicId: s.topicId, subtopicId: s.subtopicId, isActive: true }, select, orderBy: { id: "asc" }, take: 5 });
+    const topic =
+      s.subtopicId === null
+        ? []
+        : await prisma.revisionPrompt.findMany({ where: { topicId: s.topicId, subtopicId: null, source: "CURRICULUM", isActive: true }, select, orderBy: { id: "asc" }, take: 2 });
+    return vocabulary([s.topic.name, s.subtopic?.name ?? "", ...[...own, ...topic].flatMap((p) => [p.content, p.expectedAnswer])]);
   }
 
   async function ancestors(e: EvalRow) {

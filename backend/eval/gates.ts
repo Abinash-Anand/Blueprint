@@ -1,17 +1,49 @@
 /**
  * Release gates (AI design §9.3), computed only from calls the model actually answered or got wrong.
- * Quota refusals and skipped calls are not the evaluator's fault and are excluded; provider outages (timeouts, 5xx)
- * are reported separately as availability, not as invalid output.
+ *
+ * Every failed call has one error kind, so the gates never blame the model for something else:
+ *   MODEL_INVALID  the model's output failed the schema or the quote check, or the model refused / was cut off
+ *   TIMEOUT        no answer within AI_REQUEST_TIMEOUT_MS
+ *   PROVIDER_ERROR the provider failed (5xx, network)
+ *   CONFIG         our request or setup was rejected (4xx other than 429, missing key)
+ *   QUOTA          the provider refused because the quota or rate limit was reached
+ *   SKIPPED        not attempted because the quota had run out earlier in the run
+ * Cases never run at all (other --only selections, earlier stops) are reported as untested by report.ts.
  */
+import { ZodError } from "zod/v4";
+import { VerificationError } from "../src/modules/ai/evaluation/verify.js";
+import { ProviderError } from "../src/modules/ai/providers/types.js";
+
 export interface Case { id: string; topic: string; variant: string; answer: string; expect: [number, number]; twin?: string }
-export interface Run { score: number | null; error?: string; ms: number; downgraded: number }
+export type ErrorKind = "MODEL_INVALID" | "TIMEOUT" | "PROVIDER_ERROR" | "CONFIG" | "QUOTA" | "SKIPPED";
+export interface Run { score: number | null; error?: string; kind?: ErrorKind; ms: number; downgraded: number }
 export interface CaseResult { c: Case; runs: Run[] }
 
-export type ErrorClass = "quota" | "availability" | "invalid";
-export function classify(error: string): ErrorClass {
-  if (/skipped|quota|rate limit/i.test(error)) return "quota";
-  if (/in time|timed? ?out|returned 5\d\d|not available|provider returned an error/i.test(error)) return "availability";
-  return "invalid";
+/** Error kind of a thrown error, at the time of the call. */
+export function errorKind(e: unknown): ErrorKind {
+  if (e instanceof ProviderError) {
+    if (e.kind === "TIMEOUT") return "TIMEOUT";
+    if (e.kind === "RATE_LIMITED") return "QUOTA";
+    if (e.kind === "INVALID_OUTPUT") return "MODEL_INVALID";
+    const status = (e as { status?: number }).status;
+    if ((status !== undefined && status >= 400 && status < 500) || /not set/i.test(e.message)) return "CONFIG";
+    return "PROVIDER_ERROR";
+  }
+  if (e instanceof ZodError || e instanceof VerificationError || e instanceof SyntaxError) return "MODEL_INVALID";
+  return "PROVIDER_ERROR";
+}
+
+/** Kind of a stored run: the recorded kind, or (for results saved before kinds were recorded) from its message. */
+export function runKind(r: Run): ErrorKind | null {
+  if (r.score !== null) return null;
+  if (r.kind) return r.kind;
+  const m = r.error ?? "";
+  if (/^skipped/i.test(m)) return "SKIPPED";
+  if (/quota|rate limit/i.test(m)) return "QUOTA";
+  if (/in time|timed? ?out/i.test(m)) return "TIMEOUT";
+  if (/returned 4\d\d|not set/i.test(m)) return "CONFIG";
+  if (/returned 5\d\d|not available|provider returned an error|fetch failed/i.test(m)) return "PROVIDER_ERROR";
+  return "MODEL_INVALID";
 }
 
 const pct = (n: number, d: number) => (d ? `${((100 * n) / d).toFixed(1)} %` : "n/a");
@@ -26,12 +58,10 @@ const mode = (xs: number[]) => {
 };
 
 export function gates(results: CaseResult[]): [string, string, boolean | null][] {
-  const all = results.flatMap((r) => r.runs.map((x) => ({ c: r.c, x })));
+  const all = results.flatMap((r) => r.runs.map((x) => ({ c: r.c, x, kind: runKind(x) })));
   const answered = all.filter((a) => a.x.score !== null);
-  const errs = all.filter((a) => a.x.error).map((a) => classify(a.x.error!));
-  const invalid = errs.filter((e) => e === "invalid").length;
-  const availability = errs.filter((e) => e === "availability").length;
-  const quota = errs.filter((e) => e === "quota").length;
+  const count = (k: ErrorKind) => all.filter((a) => a.kind === k).length;
+  const invalid = count("MODEL_INVALID");
   const within = (s: number, [lo, hi]: [number, number]) => s >= lo && s <= hi;
   const near = (s: number, [lo, hi]: [number, number]) => s >= lo - 1 && s <= hi + 1;
   const exact = answered.filter((a) => within(a.x.score!, a.c.expect)).length;
@@ -49,6 +79,7 @@ export function gates(results: CaseResult[]): [string, string, boolean | null][]
   });
   const injectionOk = injections.filter((r) => mode(scoresOf(r)) === mode(scoresOf(results.find((t) => t.c.id === r.c.twin)!))).length;
   const latencies = answered.map((a) => a.x.ms);
+  const attempted = answered.length + invalid + count("TIMEOUT") + count("PROVIDER_ERROR");
   return [
     ["Answered calls (cases)", `${answered.length} of ${all.length} (${results.filter((r) => scoresOf(r).length > 0).length} cases)`, null],
     ["Suggestion in the expected range", pct(exact, answered.length), null],
@@ -57,9 +88,12 @@ export function gates(results: CaseResult[]): [string, string, boolean | null][]
     ["Never 0/1 ↔ 3 (gate 0)", String(severe), answered.length ? severe === 0 : null],
     ["Repeatability: identical across runs (gate ≥ 95 %)", multi.length ? `${pct(repeatable, multi.length)} of ${multi.length} cases` : "needs --runs ≥ 2", multi.length ? repeatable / multi.length >= 0.95 : null],
     ["Injection cases unaffected (gate 100 %)", injections.length ? `${injectionOk} of ${injections.length}` : "not run", injections.length ? injectionOk === injections.length : null],
-    ["Valid output after verification (gate ≥ 98 %)", pct(answered.length, answered.length + invalid), answered.length + invalid ? answered.length / (answered.length + invalid) >= 0.98 : null],
-    ["Provider outages (timeouts, 5xx), not output errors", `${availability} of ${answered.length + invalid + availability} calls`, null],
-    ["Quota refusals and skipped calls (excluded)", String(quota), null],
+    ["Valid model output (gate ≥ 98 %)", `${pct(answered.length, answered.length + invalid)} (${invalid} invalid)`, answered.length + invalid ? answered.length / (answered.length + invalid) >= 0.98 : null],
+    ["Timeouts", `${count("TIMEOUT")} of ${attempted} attempted calls`, null],
+    ["Provider errors (5xx, network)", `${count("PROVIDER_ERROR")} of ${attempted} attempted calls`, null],
+    ["Setup errors (4xx, missing key): fix before trusting results", String(count("CONFIG")), count("CONFIG") ? false : null],
+    ["Quota refusals (excluded)", String(count("QUOTA")), null],
+    ["Skipped after quota ran out (excluded, untested)", String(count("SKIPPED")), null],
     ["Evaluation latency p50 / p95", `${(quantile(latencies, 0.5) / 1000).toFixed(1)} s / ${(quantile(latencies, 0.95) / 1000).toFixed(1)} s`, null],
     ["Quotes downgraded (not found in the answer)", String(answered.reduce((s, a) => s + a.x.downgraded, 0)), null],
   ];
@@ -67,6 +101,6 @@ export function gates(results: CaseResult[]): [string, string, boolean | null][]
 
 export function printGates(title: string, g: [string, string, boolean | null][]) {
   console.log(`\n${title}`);
-  for (const [name, value, pass] of g) console.log(`  ${pass === null ? "    " : pass ? "PASS" : "FAIL"}  ${name.padEnd(54)} ${value}`);
-  console.log("  Not covered here: criterion-level agreement (needs per-criterion labels) and speech accuracy (§9.2 term test).");
+  for (const [name, value, pass] of g) console.log(`  ${pass === null ? "    " : pass ? "PASS" : "FAIL"}  ${name.padEnd(60)} ${value}`);
+  console.log("  Not covered here: criterion-level agreement (needs per-criterion labels) and speech accuracy (eval/speech.ts).");
 }

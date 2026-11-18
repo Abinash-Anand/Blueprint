@@ -144,6 +144,12 @@ suite("AI check and voice", () => {
     evalImpl = fakeProvider();
   });
 
+  it("gives a sub-topic revision its topic's curriculum terms as spelling hints", async () => {
+    const terms = await aiService(prisma, clock, config, providers).unitTerms(scheduleId);
+    expect(terms).toContain("fetchJson<T>"); // from the fe.ts curriculum question, not the sub-topic's own prompts
+    expect(terms.length).toBeLessThanOrEqual(40);
+  });
+
   it("transcribes a WAV recording without storing it, and refuses other uploads", async () => {
     const r = await request(app).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(2)).expect(200);
     expect(r.body).toEqual({ text: "Generics keep the type parameter from the call site.", audioSeconds: 2 });

@@ -132,7 +132,24 @@ Off by default. When on, a revision answer can be spoken (transcribed, then edit
 
 **Privacy:** on the free tier Google may keep what you send and people may review it; Blueprint never stores recordings and sends no notes, history or other topics. The paid alternative for checking is Claude Haiku 5.5 (`AI_EVALUATION_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`); transcription stays on Gemini.
 
-**Before relying on it**, run the benchmark: `cd backend && GEMINI_API_KEY=… npm run eval:ai -- --runs 5` (results in `backend/eval/results/`, git-ignored). It reports the release gates, most importantly false passes.
+**Model and limits:** `gemini-3.8-flash` was chosen after the benchmark (no false passes). The free tier allows about 20 requests a day per model, resetting at 09:00 Berlin; set `AI_DAILY_REQUEST_LIMIT=18` so the app stops just before Google refuses. A voice revision uses two requests (transcription and check), a typed one uses one.
+
+**Benchmark the answer checker** (96 constructed cases, 12 questions × 8 variants; results in `backend/eval/results/`, git-ignored). On the free tier run it in parts, one question per day or so:
+
+```bash
+cd backend
+npx tsx --env-file=../.env eval/run.ts --only idx --runs 2 --delay 7000    # one question's 8 cases, twice
+npx tsx eval/report.ts gemini-3.8-flash                                     # merge every saved run, no new calls
+```
+
+**Test speech recognition on your microphones:** read the 12 sentences in `backend/eval/speech-terms.json` aloud and save them as `01.wav` … `12.wav` (or `.mp3` / `.flac`, for example with Windows Sound Recorder) in one folder per microphone, then:
+
+```bash
+cd backend
+npx tsx --env-file=../.env eval/speech.ts --dir ../recordings/laptop --device laptop --delay 7000
+```
+
+It reports how many of the 60 curriculum terms were spelled correctly (gate 95 %) and the word error rate. Blueprint never stores the recordings in its database, and `recordings/` is git-ignored so they are never committed. Each one is sent once to Google for transcription (12 requests per microphone); on the free tier Google may keep it and people at Google may review it. The benchmark and this test share the daily quota with your real revisions, so run them on days you revise less.
 
 ## 7. Development without Docker
 
@@ -163,8 +180,9 @@ cd backend && npm run test:unit
 docker run -d --name ec-test-db -e POSTGRES_USER=ec -e POSTGRES_PASSWORD=ec_test -e POSTGRES_DB=ec_test -p 127.0.0.1:55432:5432 postgres:17-alpine
 TEST_DATABASE_URL=postgresql://ec:ec_test@127.0.0.1:55432/ec_test npm run test:integration   # PowerShell: $env:TEST_DATABASE_URL="..."; npm run test:integration
 
-# AI evaluator benchmark (calls the real provider; not part of npm test)
-GEMINI_API_KEY=... npm run eval:ai -- --runs 5          # or AI_EVALUATION_PROVIDER=fake for a dry run
+# AI evaluator benchmark and speech-term test (call the real provider; not part of npm test; see §6.2)
+npx tsx --env-file=../.env eval/run.ts --only idx --runs 2 --delay 7000   # or AI_EVALUATION_PROVIDER=fake npm run eval:ai for a dry run
+npx tsx eval/report.ts                                                     # re-report saved results
 
 # Frontend tests (map geometry, renderer, formatting, Mission Control, recall dialog, AI check)
 cd frontend && npm test
