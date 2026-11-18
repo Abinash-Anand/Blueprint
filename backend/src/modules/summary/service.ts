@@ -239,7 +239,7 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
       ]);
       const [targets, attempts, schedules, checkpoints, policy] = await Promise.all([
         loadTargets(prisma),
-        prisma.revisionAttempt.findMany({ select: { score: true, attemptDate: true } }),
+        prisma.revisionAttempt.findMany({ select: { score: true, attemptDate: true, selfScore: true, inputMode: true, evaluation: { select: { suggestedScore: true } } } }),
         prisma.revisionSchedule.findMany({
           where: { suspendedAt: null },
           include: { topic: { select: { name: true } }, subtopic: { select: { name: true } } },
@@ -357,6 +357,7 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
             const xs = attempts.filter((a) => monthKey(d2i(a.attemptDate)) === m);
             return { month: m, attempts: xs.length, successful: xs.filter((a) => a.score >= 2).length, averageScore: xs.length ? sum(xs, (a) => a.score) / xs.length : null };
           }),
+          ai: aiAnalytics(attempts),
           weakUnits: schedules
             .filter((s) => isWeak(s, policy))
             .map((s) => ({
@@ -368,5 +369,33 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         },
       };
     },
+  };
+}
+
+/**
+ * AI design §4.5: calibration (self-score vs saved score), AI agreement (suggestion vs saved score) and spoken vs
+ * typed answers. Derived from attempts only; never feeds learning progress, demonstration or the road.
+ */
+export function aiAnalytics(
+  attempts: { score: number; selfScore: number | null; inputMode: "TYPED" | "SPOKEN"; evaluation: { suggestedScore: number | null } | null }[],
+) {
+  const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+  const self = attempts.filter((a) => a.selfScore !== null);
+  const checked = attempts.filter((a) => a.evaluation?.suggestedScore != null);
+  const mode = (m: "TYPED" | "SPOKEN") => {
+    const xs = attempts.filter((a) => a.inputMode === m);
+    return { attempts: xs.length, averageScore: avg(xs.map((a) => a.score)) };
+  };
+  return {
+    selfScored: self.length,
+    selfMatches: self.filter((a) => a.selfScore === a.score).length,
+    /** Positive: self-scores were higher than the saved score (over-confidence). */
+    selfMeanDifference: avg(self.map((a) => a.selfScore! - a.score)),
+    checked: checked.length,
+    agreed: checked.filter((a) => a.evaluation!.suggestedScore === a.score).length,
+    savedHigher: checked.filter((a) => a.score > a.evaluation!.suggestedScore!).length,
+    savedLower: checked.filter((a) => a.score < a.evaluation!.suggestedScore!).length,
+    spoken: mode("SPOKEN"),
+    typed: mode("TYPED"),
   };
 }

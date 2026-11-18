@@ -215,14 +215,16 @@ model StudySession {
 }
 
 model Settings {
-  id                            Int      @id @default(1)
-  journeyStart                  DateTime @db.Date
-  journeyEnd                    DateTime @db.Date
+  id                            Int       @id @default(1)
+  journeyStart                  DateTime  @db.Date
+  journeyEnd                    DateTime  @db.Date
   timezone                      String
   /// Revision minutes every study day accepts on top of planned learning (REVISION_POLICY.dailyBudgetMinutes).
-  revisionDailyMinutes          Int      @default(30)
+  revisionDailyMinutes          Int       @default(30)
   /// Over-target revision minutes a week may carry (REVISION_POLICY.weeklyOvertimeMinutes).
-  revisionWeeklyOvertimeMinutes Int      @default(120)
+  revisionWeeklyOvertimeMinutes Int       @default(120)
+  /// When the learner accepted the AI first-use notice (AI design §8.3); null until then.
+  aiConsentAt                   DateTime? @db.Timestamptz(3)
 }
 
 model WeeklyTarget {
@@ -252,6 +254,7 @@ model RevisionPrompt {
   updatedAt       DateTime             @updatedAt @db.Timestamptz(3)
   attempts        RevisionAttempt[]
   checkpoints     LearningCheckpoint[]
+  evaluations     RevisionEvaluation[]
 
   @@index([topicId])
 }
@@ -259,60 +262,67 @@ model RevisionPrompt {
 /// Current scheduling state of one revision unit: a sub-topic or a whole topic (spec §12.1).
 /// SCHEDULED / DUE / OVERDUE are derived from nextDueDate; only suspension and the correction state are stored.
 model RevisionSchedule {
-  id                   Int               @id @default(autoincrement())
+  id                   Int                  @id @default(autoincrement())
   /// "s:<subtopicId>" or "t:<topicId>" (a CHECK keeps it consistent), so topic and sub-topic units never collide.
-  unit                 String            @unique
+  unit                 String               @unique
   scope                RevisionScope
   topicId              String
-  topic                Topic             @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  subtopicId           Int?              @unique
-  subtopic             Subtopic?         @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
-  eligibleSince        DateTime          @db.Date
+  topic                Topic                @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subtopicId           Int?                 @unique
+  subtopic             Subtopic?            @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  eligibleSince        DateTime             @db.Date
   /// null while a score-0 attempt waits for its correction.
-  nextDueDate          DateTime?         @db.Date
-  lastAttemptAt        DateTime?         @db.Timestamptz(3)
-  lastAttemptDate      DateTime?         @db.Date
+  nextDueDate          DateTime?            @db.Date
+  lastAttemptAt        DateTime?            @db.Timestamptz(3)
+  lastAttemptDate      DateTime?            @db.Date
   lastScore            Int?
-  previousIntervalDays Int               @default(0)
-  consecutiveSuccesses Int               @default(0)
-  consecutiveFailures  Int               @default(0)
-  correctionPending    Boolean           @default(false)
+  previousIntervalDays Int                  @default(0)
+  consecutiveSuccesses Int                  @default(0)
+  consecutiveFailures  Int                  @default(0)
+  correctionPending    Boolean              @default(false)
   /// Set while the unit is no longer eligible (sub-topic unticked); history is kept.
-  suspendedAt          DateTime?         @db.Timestamptz(3)
-  createdAt            DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt            DateTime          @updatedAt @db.Timestamptz(3)
+  suspendedAt          DateTime?            @db.Timestamptz(3)
+  createdAt            DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime             @updatedAt @db.Timestamptz(3)
   attempts             RevisionAttempt[]
   tasks                Task[]
+  evaluations          RevisionEvaluation[]
 
   @@index([topicId])
 }
 
 /// One retrieval attempt (spec §7.2). Immutable after submission except for confirming the correction.
 model RevisionAttempt {
-  id                  Int              @id @default(autoincrement())
+  id                  Int                 @id @default(autoincrement())
   scheduleId          Int
-  schedule            RevisionSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  schedule            RevisionSchedule    @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
   promptId            Int?
-  prompt              RevisionPrompt?  @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  prompt              RevisionPrompt?     @relation(fields: [promptId], references: [id], onDelete: SetNull)
   taskId              Int?
-  task                Task?            @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  task                Task?               @relation(fields: [taskId], references: [id], onDelete: SetNull)
   /// Prompt text as shown at the time, so later prompt edits never rewrite history.
   promptText          String
   score               Int // 0..3 as assessed by the learner
   effectiveScore      Int // what the scheduler used (a 3 with hints or notes counts as 2)
   retrievalMethod     RetrievalMethod
-  attemptedAt         DateTime         @default(now()) @db.Timestamptz(3)
-  attemptDate         DateTime         @db.Date
+  attemptedAt         DateTime            @default(now()) @db.Timestamptz(3)
+  attemptDate         DateTime            @db.Date
   durationMinutes     Int?
   usedHints           Boolean
   usedNotes           Boolean
-  response            String           @default("")
-  mistakes            String           @default("")
+  response            String              @default("")
+  mistakes            String              @default("")
   correctionCompleted Boolean
-  correctedAt         DateTime?        @db.Timestamptz(3)
-  comment             String           @default("")
+  correctedAt         DateTime?           @db.Timestamptz(3)
+  comment             String              @default("")
   intervalDays        Int
-  nextDueDate         DateTime?        @db.Date
+  nextDueDate         DateTime?           @db.Date
+  /// AI assessment the learner looked at before saving (AI design §5.3); reference only, never changes scheduling.
+  evaluationId        Int?                @unique
+  evaluation          RevisionEvaluation? @relation(fields: [evaluationId], references: [id], onDelete: SetNull)
+  /// Score the learner committed before seeing AI feedback (0..3); null when AI was not used.
+  selfScore           Int?
+  inputMode           InputMode           @default(TYPED)
 
   @@index([scheduleId, attemptedAt])
   @@index([attemptDate])
@@ -336,4 +346,73 @@ model LearningCheckpoint {
   completedAt      DateTime         @default(now()) @db.Timestamptz(3)
 
   @@index([topicId])
+}
+
+enum EvaluationStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum InputMode {
+  TYPED
+  SPOKEN
+}
+
+enum AiOperation {
+  TRANSCRIBE
+  EVALUATE
+}
+
+/// One AI assessment of one answer to one prompt (AI design §5.1). Immutable once SUCCEEDED or FAILED.
+model RevisionEvaluation {
+  id               Int                  @id @default(autoincrement())
+  scheduleId       Int
+  schedule         RevisionSchedule     @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  promptId         Int?
+  prompt           RevisionPrompt?      @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  /// The evaluation a follow-up answer responds to.
+  parentId         Int?
+  parent           RevisionEvaluation?  @relation("FollowUp", fields: [parentId], references: [id], onDelete: Cascade)
+  followUps        RevisionEvaluation[] @relation("FollowUp")
+  /// sha256 of prompt version, model, prompt text, criteria, transcript, follow-up question and parent id.
+  inputHash        String
+  promptText       String
+  criteriaText     String
+  transcript       String
+  followUpQuestion String?
+  status           EvaluationStatus     @default(PENDING)
+  /// Validated result plus derived fields (criteria verdicts, suggested mistakes, assisted flag).
+  result           Json?
+  suggestedScore   Int?
+  errorCode        String?
+  provider         String
+  model            String
+  promptVersion    String
+  latencyMs        Int?
+  createdAt        DateTime             @default(now()) @db.Timestamptz(3)
+  completedAt      DateTime?            @db.Timestamptz(3)
+  attempt          RevisionAttempt?
+
+  @@unique([scheduleId, inputHash])
+  @@index([createdAt])
+}
+
+/// Cost and reliability ledger (AI design §5.1). Never holds transcript, prompt or audio.
+model AiUsage {
+  id           Int         @id @default(autoincrement())
+  at           DateTime    @default(now()) @db.Timestamptz(3)
+  operation    AiOperation
+  provider     String
+  model        String
+  inputTokens  Int?
+  outputTokens Int?
+  audioSeconds Int?
+  /// Estimated from configured prices; 1 EUR = 1 000 000.
+  costMicroEur Int         @default(0)
+  latencyMs    Int
+  /// OK, TIMEOUT, PROVIDER_ERROR, INVALID_OUTPUT, RATE_LIMITED
+  outcome      String
+
+  @@index([at])
 }

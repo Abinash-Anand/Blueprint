@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — Software Requirements Specification"
 subtitle: "Personal engineering direction and execution system"
-version: "1.4"
+version: "1.5"
 date: "18 November 2026"
 ---
 
@@ -124,7 +124,7 @@ An inspection of the current HTML artifact found:
 | C-2 | One repository with `frontend/` and `backend/`. A monolithic backend. |
 | C-3 | No microservices, Kubernetes, cloud hosting, Redis, Kafka, message brokers or complex state-management libraries in the application. |
 | C-4 | Services are bound to `127.0.0.1` only. |
-| C-5 | No paid or third-party services. No LLM integration in the application. |
+| C-5 | No paid or third-party services, with one exception: the optional AI check of revision answers (§3.10), which is off by default, needs the learner's consent and works on a provider's free tier. No other LLM integration. |
 | C-6 | Time zone `Europe/Berlin`. The current date is always derived from the clock, never hard-coded. |
 
 ## 2.4 Assumptions
@@ -271,13 +271,33 @@ Derived from `docs/Revision-Spec.md`. Revision is a third dimension next to *lea
 | FR-REV-24 | Revision status shall use one vocabulary on every screen: exactly one primary state, chosen in the order *Paused → Correct the gap first → Done today → Overdue → Due today → Upcoming*, plus an independent *Weak* flag (a unit can be weak and overdue). Overdue and correction are shown in bold, due today in the accent colour, the rest muted; at most one outlined *Weak* tag. | M |
 | FR-REV-25 | Week shall show over-target minutes per day and for the week against the weekly allowance, and the revision minutes still to do this week. Today's over-target notice names both allowances and how much of the week's is used. | M |
 
+## 3.10 AI check and voice (FR-AI)
+
+Source: `docs/AI-Voice-Design.md` v2.2. The AI only *suggests*; the learner's own score is what is saved and scheduled.
+
+| ID | Requirement | Priority |
+|---|---|---|
+| FR-AI-01 | The AI check shall be off unless enabled in the backend configuration, and shall be usable only after the learner accepts a first-use notice naming the provider(s), what is sent and, on a free tier, that the provider may keep and review it. | M |
+| FR-AI-02 | In the Retrieve step of a revision, the learner can answer by voice: a bounded recording (at most `AI_MAX_RECORDING_SECONDS`, default 120 s) with start, stop, cancel, a timer and a level meter, converted in the browser to 16 kHz mono WAV and transcribed by the backend. The transcript fills the answer box and stays editable. Typing always works. | M |
+| FR-AI-03 | Before seeing any feedback the learner commits a self-score (0–3); only then can the answer be checked. | M |
+| FR-AI-04 | The check judges the answer against the prompt's own expected points (`expectedAnswer`, split on `·` or new lines): each point is Covered, Partly, Missing or Incorrect, Covered and Partly with a quote from the answer; misconceptions are listed with a correction. Prompts without expected points cannot be checked. | M |
+| FR-AI-05 | Every quote is verified against the answer in code; an unverifiable Covered or Partly verdict becomes Missing, and a result whose quotes are mostly invented is rejected. | M |
+| FR-AI-06 | The suggested score is computed by code from the verdicts (all covered → 3; at least half covered without errors → 2; any error or under half → 1; nothing relevant → 0). | M |
+| FR-AI-07 | At most one follow-up question about one gap, which may be answered by voice or text. A point recovered only after the follow-up is marked and pre-ticks *I used hints*, so the existing rule counts a 3 as 2. | M |
+| FR-AI-08 | The Assess step shows the self-score and the suggestion side by side and pre-fills *what was missing*; the learner still chooses the score (no default) and can edit everything. | M |
+| FR-AI-09 | A check links to the saved attempt only if it finished, belongs to the same unit and was made on exactly the saved answer; otherwise the attempt is saved without it. | M |
+| FR-AI-10 | Limits: per-hour limits for checks and transcriptions, an optional daily request limit (set below the free quota) and a monthly budget when prices are configured. Reaching a limit only hides the AI for that attempt. | M |
+| FR-AI-11 | Repeating a check of the same answer returns the stored result without calling the provider again; a failed check can be retried. | S |
+| FR-AI-12 | The Revision analytics show how often the self-score matched the saved score (and the average difference), how often the saved score matched the suggestion (higher/lower overrides), and spoken vs typed attempts with their average scores. | S |
+| FR-AI-13 | Questions and the AI's feedback can be read aloud with the browser's own speech synthesis; text always stays on screen. | C |
+
 # 4. Non-functional requirements
 
 | ID | Category | Requirement |
 |---|---|---|
 | NFR-01 | Deployment | `docker compose up --build` starts the database, backend and frontend. The application is served at `http://localhost`. |
 | NFR-02 | Security | Published ports bind to `127.0.0.1` only. PostgreSQL is not published to the host. |
-| NFR-03 | Offline | No runtime dependency on internet services. No web fonts, CDNs or analytics. |
+| NFR-03 | Offline | No runtime dependency on internet services. No web fonts, CDNs or analytics. The optional AI check (§3.10) is the only feature that calls out, and every screen works without it. |
 | NFR-04 | Persistence | Data survives `docker compose down` and `up` (named volume). It is lost only after `down -v`. |
 | NFR-05 | Backup | Documented `pg_dump` backup and `pg_restore` restore commands. |
 | NFR-06 | Performance | Typical API responses take under 200 ms locally. Map interactions run at 60 fps on a typical laptop, for 7 districts and 83 buildings. |
@@ -287,6 +307,7 @@ Derived from `docs/Revision-Spec.md`. Revision is a third dimension next to *lea
 | NFR-10 | Maintainability | TypeScript strict mode, input validation at the API boundary, versioned migrations, automated tests for the domain logic and the API. |
 | NFR-11 | Reliability | Invalid input never corrupts data. Multi-row updates such as bulk rescheduling run in a transaction. |
 | NFR-12 | Simplicity (YAGNI) | No features beyond those listed in §3. |
+| NFR-14 | AI check | Off unless `AI_ENABLED=true`; provider keys only in the backend environment; raw audio never stored or logged; transcripts and prompts never logged; every state-changing request from a browser must be same-origin and carry `X-Blueprint: 1`; unknown Host names are dropped by Nginx; hourly, daily and monthly limits (FR-AI-10). |
 | NFR-13 | Revision engine | Deterministic for the same inputs and policy (pure domain functions), multi-record updates in one transaction, dates in `Europe/Berlin`, testable without the UI, no external services (NFR-REV-01 to NFR-REV-07). |
 
 # 5. Business rules
@@ -417,11 +438,11 @@ sequenceDiagram
 
 ## 9.1 In scope
 
-Curriculum, map with vehicle progression, Today, Week, Progress and timeline views, tasks, study sessions, stages and settings, revision and active recall (phases 1–7 of the revision specification), local Docker deployment, backup and restore, and documentation. Phase 8 of the revision specification (scheduling tuned from accumulated data) is deliberately deferred until there is real attempt data. Calendar integrations, cloud services and external notifications stay out of scope for revision too.
+Curriculum, map with vehicle progression, Today, Week, Progress and timeline views, tasks, study sessions, stages and settings, revision and active recall (phases 1–7 of the revision specification), local Docker deployment, backup and restore, and documentation. Phase 8 of the revision specification (scheduling tuned from accumulated data) is deliberately deferred until there is real attempt data. Calendar integrations, cloud services and external notifications stay out of scope for revision too. The optional AI check and voice answers of §3.10 are in scope (AI design v2.2).
 
 ## 9.2 Explicit exclusions (YAGNI)
 
-AI chatbot or LLM features; AI-generated plans; multiple users, registration or login; social sharing; gamification, XP, badges, streaks or leaderboards; notifications; cloud sync or hosting; a mobile app; calendar integrations (iCal, Google); general note-taking; project-management features unrelated to the journey; analytics that do not support a learning decision; Redis, message brokers, microservices or Kubernetes in the application. For revision in particular: AI-generated questions or answers, external flashcard services, scraping documentation, a standalone flashcard app, a separate revision calendar, machine-learning scheduling and any claim of permanent mastery.
+AI chatbots or LLM features other than the optional answer check of §3.10; AI-generated plans; multiple users, registration or login; social sharing; gamification, XP, badges, streaks or leaderboards; notifications; cloud sync or hosting; a mobile app; calendar integrations (iCal, Google); general note-taking; project-management features unrelated to the journey; analytics that do not support a learning decision; Redis, message brokers, microservices or Kubernetes in the application. For revision in particular: AI-generated questions or answers, external flashcard services, scraping documentation, a standalone flashcard app, a separate revision calendar, machine-learning scheduling and any claim of permanent mastery.
 
 # 10. Acceptance criteria
 
@@ -451,6 +472,12 @@ AI chatbot or LLM features; AI-generated plans; multiple users, registration or 
 | AC-22 | A double submission records one attempt and leaves exactly one open task; a recorded revision cannot be reopened. | FR-REV-08, BR-20 |
 | AC-23 | Confirming a correction leaves the success count at 0 and the failed score unchanged; the next successful attempt starts the ladder at 7 days. | BR-21 |
 | AC-24 | With both allowances at 0, no study day is planned beyond its target; with the defaults, a week's over-target time never exceeds 120 minutes. | BR-18 |
+| AC-25 | With AI off, no AI control appears and every revision flow works as before; with AI on, nothing is sent before the notice is accepted. | FR-AI-01, NFR-03 |
+| AC-26 | *Check with AI* stays disabled until a self-score is chosen; the result lists every expected point with a verdict, and every shown quote appears in the answer. | FR-AI-03–05 |
+| AC-27 | Saving a different score from the suggestion saves the learner's score and schedules by it; an answer edited after the check saves without the link. | FR-AI-08/09 |
+| AC-28 | A point recovered only in the follow-up pre-ticks *I used hints*; a second follow-up is refused. | FR-AI-07 |
+| AC-29 | A cross-site POST, a request from an unknown Host name and a non-WAV or over-long upload are refused before any provider call. | NFR-14 |
+| AC-30 | An AI check never changes learned or demonstrated status, tasks or schedules. | FR-AI-09, FR-REV-18 |
 
 # Appendix A — Curriculum and plan
 

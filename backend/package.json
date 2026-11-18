@@ -14,12 +14,14 @@
     "db:seed": "tsx prisma/seed.ts",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run tests/integration",
+    "eval:ai": "tsx eval/run.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
     "@prisma/client": "6.19.3",
     "express": "^5.1.0",
     "prisma": "6.19.3",

@@ -3,14 +3,23 @@
  * Used for scheduled revision (one unit or an interleaved session) and for checkpoints during initial learning.
  * The expected answer stays hidden until the learner moves past Retrieve; moving between steps keeps every input;
  * no score is preselected and Save stays disabled until one is chosen.
+ *
+ * AI design §4: when the AI check is on, the answer can be spoken (transcribed, then editable), the learner commits a
+ * self-score before any feedback, and the AI's per-point assessment joins the Compare step. It only suggests: the
+ * learner's chosen score is what is saved and scheduled.
  */
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api } from "../api/client";
-import type { CheckpointResult, RetrievalMethod, RevisionScope, TopicRevision } from "../api/types";
+import { ApiError, api } from "../api/client";
+import type { AiEvaluation, AiStatus, CheckpointResult, RetrievalMethod, RevisionScope, TopicRevision } from "../api/types";
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SCORES, SOURCE_LABEL, scoreLabel, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
+import { AiConsent, AiPanel } from "./AiPanel";
 import { Loading } from "./ui";
+import { Recorder, canRecord } from "./voice/Recorder";
+import { canSpeak, speak, stopSpeaking } from "./voice/speak";
+
+type Score = 0 | 1 | 2 | 3;
 
 export interface RecallItem {
   topicId: string;
@@ -48,6 +57,14 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
   const [outcome, setOutcome] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
+  const [ai, setAi] = useState<AiStatus | null>(null);
+  const [aiReload, setAiReload] = useState(0);
+  const [selfScore, setSelfScore] = useState<Score | null>(null);
+  const [evaluation, setEvaluation] = useState<AiEvaluation | null>(null);
+  const [followUp, setFollowUp] = useState<AiEvaluation | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [inputMode, setInputMode] = useState<"TYPED" | "SPOKEN">("TYPED");
   const box = useRef<HTMLDivElement>(null);
   const stepRef = useRef<HTMLDivElement>(null);
 
@@ -75,6 +92,19 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
       live = false;
     };
   }, [item.topicId, item.scope, item.subtopicId, item.mode, reload]);
+
+  // AI status (§4.2). Any failure just leaves the AI controls hidden: the manual flow never depends on it.
+  useEffect(() => {
+    if (item.mode !== "revision") return;
+    let live = true;
+    Promise.resolve()
+      .then(() => api.aiStatus())
+      .then((st) => live && setAi(st), () => live && setAi(null));
+    return () => {
+      live = false;
+    };
+  }, [item.mode, aiReload]);
+  useEffect(() => () => stopSpeaking(), []);
 
   // Focus once on open. Escape exits, but never discards typed work silently.
   const closeRef = useRef(onClose);
@@ -105,6 +135,12 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
     setDuration("");
     setComment("");
     setOutcome(null);
+    setSelfScore(null);
+    setEvaluation(null);
+    setFollowUp(null);
+    setAiError(null);
+    setInputMode("TYPED");
+    stopSpeaking();
   };
 
   const unit = rev?.units.find((x) => x.scope === item.scope && x.subtopicId === item.subtopicId);
@@ -117,6 +153,52 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
   const ref = option ? (option.promptId ? { promptId: option.promptId } : { templateKey: option.templateKey! }) : null;
   const assessed = isRevision ? score !== null : result !== null;
   const canSave = !busy && !!ref && assessed && (!isRevision || !failed || mistakes.trim().length > 0);
+  const scheduleId = unit?.schedule?.id;
+  const hasCriteria = !!option?.expectedAnswer.trim();
+  const aiReady = isRevision && !!ai?.enabled && ai.consented && !!scheduleId && hasCriteria;
+  const stale = !!evaluation && evaluation.transcript.trim() !== response.trim();
+
+  const errorText = (e: unknown) => (e instanceof ApiError ? e.message : "The AI check failed. Carry on without it.");
+
+  const checkWithAi = async () => {
+    if (!aiReady || !ref || !scheduleId || !response.trim()) return;
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const e = await api.evaluate({ scheduleId, ...ref, transcript: response });
+      setEvaluation(e);
+      setFollowUp(null);
+      if (!mistakes.trim() || mistakes === evaluation?.suggestedMistakes) setMistakes(e.suggestedMistakes);
+      setStep("compare");
+    } catch (e) {
+      setAiError(errorText(e));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const answerFollowUp = async (answer: string) => {
+    if (!evaluation || !scheduleId) return;
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const e = await api.evaluate({ scheduleId, transcript: answer, parentId: evaluation.id });
+      setFollowUp(e);
+      if (e.assisted) setUsedHints(true);
+      if (!mistakes.trim() || mistakes === evaluation.suggestedMistakes) setMistakes(e.suggestedMistakes);
+    } catch (e) {
+      setAiError(errorText(e));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const acceptAi = async () => {
+    setAiBusy(true);
+    const r = await mutate(() => api.aiConsent());
+    setAiBusy(false);
+    if (r) setAiReload((n) => n + 1);
+  };
 
   const save = async () => {
     if (!unit || !ref || !canSave) return;
@@ -137,6 +219,9 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
           response: response || undefined,
           mistakes: mistakes.trim() || undefined,
           comment: comment.trim() || undefined,
+          evaluationId: evaluation && !stale ? evaluation.rootId : undefined,
+          selfScore: selfScore ?? undefined,
+          inputMode,
         }),
       );
       if (r) {
@@ -274,16 +359,58 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
                 </label>
               </div>
             )}
-            <p className="rd-q">{option?.content}</p>
+            <p className="rd-q">
+              {option?.content}
+              {isRevision && canSpeak() && option && (
+                <button className="link rv-say" onClick={() => speak(option.content)} aria-label="Read the question aloud">Read aloud</button>
+              )}
+            </p>
+            {isRevision && ai?.enabled && !ai.consented && <AiConsent status={ai} busy={aiBusy} onAccept={() => void acceptAi()} />}
+            {aiReady && canRecord() && (
+              <Recorder
+                scheduleId={scheduleId!}
+                maxSeconds={ai!.maxRecordingSeconds}
+                maxBytes={ai!.maxAudioBytes}
+                onTranscript={(t) => {
+                  setResponse((r) => (r.trim() ? `${r.trimEnd()}\n${t}` : t));
+                  setInputMode("SPOKEN");
+                }}
+              />
+            )}
             <label className="rd-field">
-              Your answer, from memory {method === "VISUAL" ? "(describe what you drew, or the key relationships)" : method === "PRACTICAL" ? "(paste the code or describe what you built)" : "(key points are enough)"}
+              {inputMode === "SPOKEN" ? "Your answer (transcript: fix any misheard terms before checking)" : <>Your answer, from memory {method === "VISUAL" ? "(describe what you drew, or the key relationships)" : method === "PRACTICAL" ? "(paste the code or describe what you built)" : "(key points are enough)"}</>}
               <textarea className="inp" value={response} maxLength={5000} onChange={(e) => setResponse(e.target.value)} rows={6} autoFocus />
             </label>
-            <p className="rd-hint">Close your notes and answer first. The expected answer appears in the next step.</p>
-            <div className="rd-acts">
-              <button className="btn primary" onClick={() => setStep("compare")}>Continue to comparison</button>
-              <button className="btn" onClick={onClose}>{exitLabel}</button>
-            </div>
+            {aiReady && response.trim() ? (
+              <>
+                <fieldset className="rv-self">
+                  <legend>Before you see the expected answer: how well do you think you did?</legend>
+                  {SCORES.map((sc) => (
+                    <label key={sc.score} className={selfScore === sc.score ? "on" : ""}>
+                      <input type="radio" name="self-score" checked={selfScore === sc.score} onChange={() => setSelfScore(sc.score)} />
+                      {sc.score} · {sc.label}
+                    </label>
+                  ))}
+                </fieldset>
+                {aiError && <p className="rv-err" role="alert">{aiError}</p>}
+                <div className="rd-acts">
+                  <button className="btn primary" disabled={aiBusy || selfScore === null} onClick={() => void checkWithAi()}>
+                    {aiBusy ? "Checking…" : "Check with AI"}
+                  </button>
+                  <button className="btn" onClick={() => setStep("compare")}>Continue without AI</button>
+                  <button className="btn" onClick={onClose}>{exitLabel}</button>
+                  {selfScore === null && <span className="rd-hint" style={{ margin: 0 }}>Choose your own score first.</span>}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="rd-hint">Close your notes and answer first. The expected answer appears in the next step.</p>
+                <div className="rd-acts">
+                  <button className="btn primary" onClick={() => setStep("compare")}>Continue to comparison</button>
+                  <button className="btn" onClick={onClose}>{exitLabel}</button>
+                </div>
+              </>
+            )}
           </div>
         ) : step === "compare" ? (
           <div className="rd-step" ref={stepRef} tabIndex={-1}>
@@ -297,6 +424,15 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
                 <p>{option?.expectedAnswer}</p>
               </div>
             </div>
+            {evaluation && ai && scheduleId && !stale && (
+              <AiPanel evaluation={evaluation} followUp={followUp} status={ai} scheduleId={scheduleId} busy={aiBusy} error={aiError} onFollowUp={(a) => void answerFollowUp(a)} />
+            )}
+            {evaluation && stale && (
+              <div className="rv-ai-note">
+                Your answer changed after the AI check, so it no longer applies.{" "}
+                <button className="link" disabled={aiBusy} onClick={() => void checkWithAi()}>{aiBusy ? "Checking…" : "Check again"}</button>
+              </div>
+            )}
             <label className="rd-field">
               What's missing, wrong or incomplete?
               <textarea className="inp" value={mistakes} maxLength={2000} onChange={(e) => setMistakes(e.target.value)} rows={3} />
@@ -308,6 +444,13 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
           </div>
         ) : (
           <div className="rd-step" ref={stepRef} tabIndex={-1}>
+            {isRevision && (selfScore !== null || (evaluation && !stale)) && (
+              <p className="rv-cmp">
+                {selfScore !== null && <>Your first guess: <b>{selfScore} · {scoreLabel(selfScore)}</b></>}
+                {selfScore !== null && evaluation && !stale && " · "}
+                {evaluation && !stale && evaluation.suggestedScore !== null && <>AI suggestion: <b>{evaluation.suggestedScore} · {scoreLabel(evaluation.suggestedScore)}</b></>}
+              </p>
+            )}
             <fieldset className="rd-scale">
               <legend>{isRevision ? "How well did you retrieve it? Choose one." : "How did it go? Choose one."}</legend>
               {isRevision

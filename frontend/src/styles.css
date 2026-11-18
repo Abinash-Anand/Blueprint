@@ -336,3 +336,44 @@ textarea.inp{resize:vertical;min-height:54px;width:100%}
   .grid3,.grid4{grid-template-columns:minmax(0,1fr)}
   .tabs button{padding:6px 10px}
 }
+
+/* ---------- AI check and voice (AI design §4.2) ---------- */
+.rv-say,.rv-ai .link,.rv-ai-note .link,.rv-notice .link{border:0;background:none;padding:0;color:var(--accent);cursor:pointer;font-size:12.5px;text-decoration:underline;text-underline-offset:2px;text-decoration-color:#a9b9c0}
+.rv-say{margin-left:8px;font-size:12px}
+.rv-rec{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.rv-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#9a4a3f;opacity:.55;vertical-align:middle}
+.rv-dot.on{opacity:1;animation:rvpulse 1.2s ease-in-out infinite}
+@keyframes rvpulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.rv-dot.on{animation:none}}
+.rv-live{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-variant-numeric:tabular-nums}
+.rv-level{display:inline-block;width:70px;height:5px;background:#dcd8cf;border-radius:99px;overflow:hidden}
+.rv-level i{display:block;height:100%;background:var(--accent)}
+.rv-err{color:#9a4a3f;font-size:12.5px;margin:6px 0 0}
+.rv-ai-note{margin-top:10px;font-size:13px;line-height:1.5;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+.rv-notice p{margin:8px 0 0}
+.rv-notice .btn{margin-top:8px}
+.rv-self{border:0;margin:12px 0 0;padding:0;display:flex;gap:6px;flex-wrap:wrap}
+.rv-self legend{font-size:12px;color:var(--muted);margin-bottom:6px;padding:0}
+.rv-self label{display:flex;gap:6px;align-items:center;border:1px solid var(--line);background:#fff;border-radius:9px;padding:6px 10px;cursor:pointer;font-size:12.5px}
+.rv-self label.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.rv-self input{accent-color:var(--accent);margin:0}
+.rv-ai{margin-top:12px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.rv-ai-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:baseline;font-size:13px}
+.rv-ai-head b{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.rv-crit,.rv-mis{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:6px}
+.rv-crit li{display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;font-size:13px;line-height:1.45}
+.rv-crit q,.rv-mis q{display:block;color:var(--muted);font-size:12.5px;margin-top:1px}
+.rv-crit em{color:var(--muted);font-size:12px}
+.rv-v{font-size:11px;border-radius:6px;padding:1px 6px;text-align:center;align-self:start;border:1px solid var(--line);background:var(--paper)}
+.rv-v.ok{color:#3f6150;border-color:#b9cdbf;background:#eef3ef}
+.rv-v.part{color:#7a5f2e;border-color:#ddcfb0;background:#f6f1e6}
+.rv-v.miss{color:var(--muted)}
+.rv-v.bad{color:#9a4a3f;border-color:#e0c3bd;background:#f7ecea}
+.rv-mis li{font-size:13px;line-height:1.45;border-left:2px solid #e0c3bd;padding-left:8px}
+.rv-fb{font-size:13.5px;line-height:1.5;margin:10px 0 0}
+.rv-fu{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.rv-fu p{margin:0 0 6px;font-size:13.5px;line-height:1.5}
+.rv-fu textarea{width:100%;margin-top:6px}
+.rv-cmp{font-size:13px;color:var(--muted);margin:0 0 4px}
+.rv-cmp b{color:var(--ink);font-weight:600}
+@media (max-width:480px){.rv-crit li{grid-template-columns:minmax(0,1fr)}.rv-v{justify-self:start}}

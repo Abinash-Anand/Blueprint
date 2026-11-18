@@ -1,5 +1,5 @@
 import type {
-  AttemptResult, Checkpoint, CheckpointResult, Curriculum, Progress, Prompt, RetrievalMethod, Session, Stage, Task, TaskKind,
+  AiEvaluation, AiStatus, AttemptResult, Checkpoint, CheckpointResult, Curriculum, Progress, Prompt, RetrievalMethod, Session, Stage, Task, TaskKind,
   RevisionOverview, TaskStatus, Today, Topic, TopicRevision, Week,
 } from "./types";
 
@@ -9,13 +9,17 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+// Every request carries X-Blueprint: a page on another site cannot add it without a CORS preflight, which the API
+// never allows, so the backend can tell its own pages from cross-site requests (AI design §8.2).
+const BASE_HEADERS = { "X-Blueprint": "1" };
+
+async function request<T>(method: string, path: string, body?: unknown, raw?: { data: Blob; type: string }): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`/api${path}`, {
       method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: raw ? { ...BASE_HEADERS, "Content-Type": raw.type } : body === undefined ? BASE_HEADERS : { ...BASE_HEADERS, "Content-Type": "application/json" },
+      body: raw ? raw.data : body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, "NETWORK_ERROR", "Can't reach the Engineering City server.");
@@ -66,6 +70,17 @@ export interface AttemptInput {
   response?: string;
   mistakes?: string;
   comment?: string;
+  evaluationId?: number;
+  selfScore?: 0 | 1 | 2 | 3;
+  inputMode?: "TYPED" | "SPOKEN";
+}
+
+export interface EvaluationInput {
+  scheduleId: number;
+  promptId?: number;
+  templateKey?: string;
+  transcript: string;
+  parentId?: number;
 }
 
 export interface CheckpointInput {
@@ -117,4 +132,9 @@ export const api = {
   patchPrompt: (id: number, body: Partial<Pick<Prompt, "title" | "content" | "retrievalMethod" | "expectedAnswer" | "isActive">>) =>
     request<Prompt>("PATCH", `/prompts/${id}`, body),
   deletePrompt: (id: number) => request<void>("DELETE", `/prompts/${id}`),
+  aiStatus: () => request<AiStatus>("GET", "/ai/status"),
+  aiConsent: () => request<{ consentedAt: string }>("POST", "/ai/consent", {}),
+  transcribe: (scheduleId: number, wav: Blob) =>
+    request<{ text: string; audioSeconds: number }>("POST", `/ai/transcriptions?scheduleId=${scheduleId}`, undefined, { data: wav, type: "audio/wav" }),
+  evaluate: (body: EvaluationInput) => request<AiEvaluation>("POST", "/revision/evaluations", body),
 };

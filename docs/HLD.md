@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — High-Level Design"
 subtitle: "Architecture of the local-first full-stack application"
-version: "1.4"
+version: "1.5"
 date: "18 November 2026"
 ---
 
@@ -333,6 +333,25 @@ flowchart LR
 | Leaked secrets | The database password lives only in `.env`, which is git-ignored. `.env.example` uses placeholders. |
 | Stack-trace disclosure | The error handler returns generic `500` messages and logs details to the server only. |
 | Authentication | Deliberately absent. Single user, loopback only (SRS §9.2). |
+| Cross-site requests from another web page in the same browser | `requestGuard`: every non-GET request from a browser must be same-origin (`Origin` host = `Host`) and carry `X-Blueprint: 1`, which a cross-site page cannot add without a CORS preflight; there is no CORS. Fetch Metadata `cross-site` is refused. No CSRF token, because the app sets no cookies. |
+| DNS rebinding | Nginx answers only `localhost` and `127.0.0.1`; a `default_server` drops every other Host name (444). |
+| AI provider keys and data (optional AI check) | Keys live only in the backend environment. Only the question, its expected points and the answer (or the recording, for transcription) leave the machine, after the learner accepts the notice. Audio is never stored; transcripts and prompts are never logged. |
+
+## 12.1 Optional AI check and voice
+
+The AI check (`docs/AI-Voice-Design.md`) adds one backend module, `modules/ai`, and no container. The browser records, converts to WAV and calls `/api/ai/transcriptions`; the backend calls the provider over HTTPS, outside any database transaction, and writes only `RevisionEvaluation`, `AiUsage` and `Settings.aiConsentAt`. Scheduling still happens only in `POST /revision/attempts`, with the learner's score.
+
+```mermaid
+flowchart LR
+  RD["RecallDialog"] -->|"WAV"| T["POST /ai/transcriptions"]
+  RD -->|"answer"| E["POST /revision/evaluations"]
+  RD -->|"score + evaluationId"| A["POST /revision/attempts"]
+  T --> P["Provider adapter: gemini, anthropic or fake"]
+  E --> P
+  E --> DB[("RevisionEvaluation, AiUsage")]
+  A --> S["Revision scheduler (unchanged)"]
+  P --> X["Provider HTTPS"]
+```
 
 # 13. Persistence and backup strategy
 
