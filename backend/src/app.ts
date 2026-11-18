@@ -1,7 +1,12 @@
 import express from "express";
 import type { PrismaClient } from "@prisma/client";
 import type { Clock } from "./lib/clock.js";
+import { requestGuard } from "./lib/guard.js";
 import { errorHandler, notFoundRoute, requestLog } from "./lib/http.js";
+import { AI_DISABLED, type AiConfig } from "./modules/ai/config.js";
+import { createProviders } from "./modules/ai/providers/factory.js";
+import type { AiProviders } from "./modules/ai/providers/types.js";
+import { aiRoutes } from "./modules/ai/routes.js";
 import { curriculumRoutes } from "./modules/curriculum/routes.js";
 import { revisionRoutes } from "./modules/revision/routes.js";
 import { scheduleRoutes } from "./modules/schedule/routes.js";
@@ -12,9 +17,11 @@ import { taskRoutes } from "./modules/tasks/routes.js";
 export interface Deps {
   prisma: PrismaClient;
   clock: Clock;
+  ai: { config: AiConfig; providers: AiProviders };
 }
 
-export function createApp(deps: Deps) {
+export function createApp(input: Omit<Deps, "ai"> & { ai?: Deps["ai"] }) {
+  const deps: Deps = { ...input, ai: input.ai ?? { config: AI_DISABLED, providers: createProviders({ ...AI_DISABLED, evaluationProvider: "fake", transcriptionProvider: "fake" }) } };
   const app = express();
   app.disable("x-powered-by");
   app.set("query parser", "simple");
@@ -22,6 +29,7 @@ export function createApp(deps: Deps) {
   app.use(express.json({ limit: "100kb" }));
 
   const api = express.Router();
+  api.use(requestGuard);
   api.get("/health", async (_req, res) => {
     try {
       await deps.prisma.$queryRaw`SELECT 1`;
@@ -36,6 +44,7 @@ export function createApp(deps: Deps) {
   api.use(summaryRoutes(deps));
   api.use(scheduleRoutes(deps));
   api.use(revisionRoutes(deps));
+  api.use(aiRoutes(deps));
 
   app.use("/api", api);
   app.use(notFoundRoute);

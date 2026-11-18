@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — Low-Level Design"
 subtitle: "Schema, API, modules and algorithms"
-version: "1.4"
+version: "1.5"
 date: "18 November 2026"
 ---
 
@@ -935,6 +935,36 @@ flag    = Weak                   if consecutiveFailures ≥ 2 (independent of pr
 
 `backfillRevision` (called by the seed on every start) runs `syncTopic` for every topic with a learned sub-topic, a demonstration or an existing schedule, then `planOpenRevisions`, in one transaction. It is idempotent: a second run creates nothing (integration test). On 18 Nov 2026 it scheduled 4 revision tasks for the 3 sub-topics learned on the live database.
 
+## 12.6 AI check and voice (`modules/ai`)
+
+Design source: `docs/AI-Voice-Design.md` v2.2. Migration `20261118180000_ai_revision` adds `RevisionEvaluation`, `AiUsage`, `RevisionAttempt.evaluationId` (unique), `selfScore`, `inputMode` and `Settings.aiConsentAt`, with CHECKs for score ranges, *succeeded ⇔ result and suggestion*, *failed ⇒ error code* and *follow-up ⇒ question*.
+
+| File | Responsibility |
+|---|---|
+| `config.ts` | `loadAiConfig(env)`: providers, models, keys, limits, prices, prompt version. Off by default. |
+| `evaluation/criteria.ts` | Split `expectedAnswer` into criteria (`·` or new lines, bullets removed, at most 20). |
+| `evaluation/schema.ts` | One Zod schema (`zod/v4`) for the model output; `z.toJSONSchema` gives the provider schema. |
+| `evaluation/prompt.ts` | System prompt, user prompt with tagged blocks, vocabulary hints and the transcription instruction. |
+| `evaluation/verify.ts` | Quote verification after normalising case and punctuation; downgrade unverifiable Covered/Partly; reject when most quotes are missing; drop a follow-up that repeats a criterion. |
+| `evaluation/score.ts` | `suggestScore` and the pre-filled gaps text. |
+| `providers/*` | `gemini` (REST `generateContent`, `responseJsonSchema` with a plain-JSON fallback), `anthropic` (SDK, `output_config.format` JSON schema, `effort: "low"`, refusals and truncation mapped), `fake` (deterministic keyword matcher). |
+| `voice/wav.ts` | WAV header parsing: 16-bit PCM only, duration from the data chunk. |
+| `usage.ts` | Ledger, per-hour limits (in memory), rolling 24 h limit and monthly budget (from the ledger). |
+| `service.ts` | `status`, `consent`, `transcribe`, `evaluate` (reserve by `(scheduleId, inputHash)`, call, validate, verify, score, persist), `cleanup`. |
+| `lib/guard.ts` | `requestGuard` for every non-GET route. |
+
+| Method and path | Body | Result / errors |
+|---|---|---|
+| `GET /api/ai/status` | — | enabled, consented, providers, models, limits, usage |
+| `POST /api/ai/consent` | `{}` | `{ consentedAt }` |
+| `POST /api/ai/transcriptions?scheduleId=` | raw `audio/wav` | `{ text, audioSeconds }`; 415 `AUDIO_UNSUPPORTED`, 413 `AUDIO_TOO_LARGE` / `PAYLOAD_TOO_LARGE`, 400 `AUDIO_TOO_SHORT` |
+| `POST /api/revision/evaluations` | `{ scheduleId, promptId? \| templateKey?, transcript, parentId? }` | `AiEvaluation`; 403 `AI_DISABLED` / `AI_CONSENT_REQUIRED`, 409 `AI_NO_CRITERIA` / `AI_FOLLOW_UP_LIMIT` / `EVALUATION_IN_PROGRESS`, 429 `AI_RATE_LIMITED` / `AI_BUDGET_REACHED`, 502 `AI_PROVIDER_ERROR` / `AI_INVALID_OUTPUT`, 504 `AI_TIMEOUT` (retryable errors carry `details.retryable`) |
+| `POST /api/revision/attempts` | existing body + `evaluationId?`, `selfScore?`, `inputMode?` | 409 `EVALUATION_STALE` when the check is foreign, failed, a follow-up, already used or made on a different answer |
+
+**Evaluation sequence.** Limits are checked first. The rubric comes from the stored prompt (templates are stored on first use by `resolvePrompt`, now shared with attempts), never from the client. The row is reserved with `INSERT` on the unique `(scheduleId, inputHash)`; an existing `SUCCEEDED` row is returned, a young `PENDING` row gives `409 EVALUATION_IN_PROGRESS`, and a `FAILED` or stale row is reset and run again. The provider call has `AI_REQUEST_TIMEOUT_MS` and no automatic retry. For a follow-up the answer for quotes is the original plus the follow-up, criteria that improve are marked `recoveredInFollowUp`, the suggestion stays the original's and `assisted` is set. Startup housekeeping marks leftover `PENDING` rows failed, deletes unlinked checks older than 30 days and usage rows older than 400 days.
+
+**Frontend.** `RecallDialog` loads `GET /ai/status` (any failure hides AI), shows the notice, `Recorder` (MediaRecorder → `lib/wav.ts` → upload), the self-score, *Check with AI* / *Continue without AI*, `AiPanel` in Compare (verdicts, quotes, feedback, follow-up), the self vs suggestion line in Assess, and sends `evaluationId` only while the answer is unchanged. Every request sends `X-Blueprint: 1`.
+
 # 13. Error handling
 
 | Layer | Strategy |
@@ -998,3 +1028,13 @@ flag    = Weak                   if consecutiveFailures ≥ 2 (independent of pr
 | Frontend | 20 / 20 passed. New: three-step flow, inputs kept across Back/Continue, no score preselected and Save disabled with a hint, criteria hidden again on Retrieve, status ordering for overlapping states, kind tags. |
 | Live data | Backup `backups/engineering-city-20261118-pre-weekly-cap.dump` (verified), then migration `20261118120000_revision_weekly_cap` applied; plan untouched. |
 | Browser (demo stack, clock 23 Nov) | Revision badge *1*; Start session opens Retrieve with the step indicator, question and answer only; Compare shows the answer beside the criteria; Assess has no selected score and a disabled Save with "Choose a score to save."; Back twice keeps the answer and hides the criteria again. Units revised today offer no new attempt. |
+
+## 14.5 Verification results (AI check and voice, 18 Nov 2026)
+
+| Suite | Result |
+|---|---|
+| Backend (unit + integration) | 120 / 120 passed. New unit tests: criteria for all 83 curriculum prompts and 8 templates, quote verification and downgrades, rejected invented output, follow-up leak, score rules, JSON schema, vocabulary, WAV parsing, configuration. New integration tests (fake provider): off by default and consent, guard (foreign Origin, cross-site, missing header, same-origin OK), check never changes learning or tasks, dedupe without a second provider call, rubric-less prompt, one follow-up with assisted recovery and no second, failure stored and retried, invented evidence rejected, WAV transcription and refusals, link only for the same answer with the learner's score saved, hourly and daily limits, housekeeping. |
+| Frontend | 25 / 25 passed. New: self-score before the check, suggestion shown and overruled, gaps pre-filled, follow-up pre-ticks hints, edited answer not linked, notice and consent, AI hidden when off. Test setup now unmounts after each test. |
+| Benchmark harness | `npm run eval:ai` with the fake provider runs the 24 constructed cases; the keyword fake fails the false-pass gate (20 %), showing the gates catch a weak evaluator. The Gemini benchmark needs `GEMINI_API_KEY` and has not been run. |
+| Live data | Backup `backups/engineering-city-20261118-pre-ai.dump` (verified, 150 entries) before migration `20261118180000_ai_revision`. |
+| Browser (test stack on port 8092, fake provider) | Notice/consent, *Answer by voice* and *Read aloud* shown; *Check with AI* disabled until a self-score; per-point verdicts with quotes, feedback and follow-up; gaps pre-filled; Assess shows "Your first guess: 2 · AI suggestion: 1"; the learner's 2 was saved with a 3-day interval and the link; analytics rows correct; foreign Host dropped, cross-site POST 403, WAV upload transcribed through Nginx. Microphone capture itself was not exercised (no microphone in the test browser). |

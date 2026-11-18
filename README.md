@@ -88,6 +88,7 @@ Back up weekly, after the Saturday review, and keep the last four. `backups/*.du
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `engineering_city` / `engineering_city_local` / `engineering_city` | Database credentials. Use URL-safe characters in the password. |
 | `HTTP_PORT` | `80` | Host port, always bound to `127.0.0.1`. |
 | `APP_TODAY` | *(empty)* | Pins "today" (`YYYY-MM-DD`) for demos or for testing deadlines. Leave it empty in normal use. |
+| `AI_ENABLED`, `GEMINI_API_KEY`, … | off | Optional AI check of revision answers; see §6.2 and `.env.example`. |
 
 Only the web server is published, and only on `127.0.0.1`. The API and the database are not reachable from your network.
 
@@ -121,6 +122,18 @@ Three things are tracked separately: **learned** (you ticked the sub-topics), **
 - **Sunday** stays a rest day: revisions due that day are listed as optional and planned for Monday.
 - **Questions**: every topic has a curriculum question with evaluation criteria, every unit has eight templates (Explain, Why, How, Compare, Scenario, Debug, Design, Write from memory), and you can add your own under **Questions** in the topic panel.
 
+### 6.2 AI check and voice answers (optional)
+
+Off by default. When on, a revision answer can be spoken (transcribed, then editable) and checked against the question's own expected points. The AI only **suggests**: you choose your own score first, see which points were covered with quotes from your answer, answer at most one follow-up question, and then save **your** score. It never changes learned, demonstrated, tasks or schedules. Design: `docs/AI-Voice-Design.md`.
+
+1. Create a free API key in Google AI Studio and note your project's daily request limit there.
+2. In `.env`: `AI_ENABLED=true`, `GEMINI_API_KEY=…`, and `AI_DAILY_REQUEST_LIMIT` a little below that limit. Optionally pin `AI_EVALUATION_MODEL` / `AI_TRANSCRIPTION_MODEL` to the exact model you benchmarked.
+3. `docker compose up --build -d`, open a revision, read and accept the notice.
+
+**Privacy:** on the free tier Google may keep what you send and people may review it; Blueprint never stores recordings and sends no notes, history or other topics. The paid alternative for checking is Claude Haiku 5.5 (`AI_EVALUATION_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`); transcription stays on Gemini.
+
+**Before relying on it**, run the benchmark: `cd backend && GEMINI_API_KEY=… npm run eval:ai -- --runs 5` (results in `backend/eval/results/`, git-ignored). It reports the release gates, most importantly false passes.
+
 ## 7. Development without Docker
 
 You need Node.js 22+ and a PostgreSQL database.
@@ -150,7 +163,10 @@ cd backend && npm run test:unit
 docker run -d --name ec-test-db -e POSTGRES_USER=ec -e POSTGRES_PASSWORD=ec_test -e POSTGRES_DB=ec_test -p 127.0.0.1:55432:5432 postgres:17-alpine
 TEST_DATABASE_URL=postgresql://ec:ec_test@127.0.0.1:55432/ec_test npm run test:integration   # PowerShell: $env:TEST_DATABASE_URL="..."; npm run test:integration
 
-# Frontend tests (map geometry, renderer, formatting, Mission Control, recall dialog)
+# AI evaluator benchmark (calls the real provider; not part of npm test)
+GEMINI_API_KEY=... npm run eval:ai -- --runs 5          # or AI_EVALUATION_PROVIDER=fake for a dry run
+
+# Frontend tests (map geometry, renderer, formatting, Mission Control, recall dialog, AI check)
 cd frontend && npm test
 ```
 

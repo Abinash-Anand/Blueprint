@@ -177,6 +177,10 @@ export interface AttemptInput {
   response?: string;
   mistakes?: string;
   comment?: string;
+  /** AI assessment the learner looked at (AI design §5.3). */
+  evaluationId?: number;
+  selfScore?: RecallScore;
+  inputMode?: "TYPED" | "SPOKEN";
 }
 
 export interface CheckpointInput {
@@ -209,44 +213,58 @@ export interface PromptPatch {
   isActive?: boolean;
 }
 
+/**
+ * AI design §5.3 (I-3): only a finished assessment of this unit, of exactly the answer being saved, that no other
+ * attempt uses, can be linked. The link is reference data: the learner's score drives scheduling as before.
+ */
+async function checkEvaluationLink(tx: Db, evaluationId: number, scheduleId: number, response: string) {
+  const stale = (why: string) => new HttpError(409, "EVALUATION_STALE", why);
+  const e = await tx.revisionEvaluation.findUnique({ where: { id: evaluationId }, include: { attempt: { select: { id: true } } } });
+  if (!e || e.scheduleId !== scheduleId) throw stale("That AI check belongs to a different revision.");
+  if (e.parentId !== null) throw stale("Link the first AI check of the answer, not the follow-up.");
+  if (e.status !== "SUCCEEDED") throw stale("That AI check did not finish. Check again or save without it.");
+  if (e.transcript.trim() !== response.trim()) throw stale("The answer changed after the AI check. Check again or save without it.");
+  if (e.attempt) throw stale("That AI check is already part of another attempt.");
+}
+
 const notEligible = () =>
   new HttpError(409, "NOT_ELIGIBLE", "This isn't ready for revision yet. Mark the sub-topic as learned first, or use a recall check while studying.");
 
-export function revisionService(prisma: PrismaClient, clock: Clock) {
-  /** A stored prompt for the unit, or a template rendered and stored for it on first use. */
-  async function resolvePrompt(
-    tx: Db,
-    unit: { scope: RevisionScope; topicId: string; subtopicId: number | null },
-    promptId?: number,
-    templateKey?: string,
-  ) {
-    if (promptId) {
-      const p = await tx.revisionPrompt.findUnique({ where: { id: promptId } });
-      if (!p) throw notFound("Prompt");
-      const matches = p.topicId === unit.topicId && (p.subtopicId ?? null) === unit.subtopicId;
-      if (!matches) throw new HttpError(400, "VALIDATION_ERROR", "The prompt belongs to a different topic or sub-topic");
-      return p;
-    }
-    const tpl = templateKey ? templateByKey.get(templateKey) : undefined;
-    if (!tpl) throw new HttpError(400, "VALIDATION_ERROR", "Provide promptId or a valid templateKey");
-    const topic = await tx.topic.findUniqueOrThrow({
-      where: { id: unit.topicId },
-      include: { subtopics: { orderBy: { position: "asc" } } },
-    });
-    const sub = unit.subtopicId ? topic.subtopics.find((s) => s.id === unit.subtopicId) : null;
-    if (unit.subtopicId && !sub) throw new HttpError(400, "VALIDATION_ERROR", "subtopicId does not belong to topicId");
-    const content = tpl.content(
-      unitSubject({ scope: unit.scope, topicName: topic.name, subtopicName: sub?.name, learned: topic.subtopics.filter((s) => s.completedAt).map((s) => s.name) }),
-    );
-    const key = `tpl:${tpl.key}:${unitKey(unit.scope, unit.topicId, unit.subtopicId)}`;
-    const data = { title: tpl.label, content, retrievalMethod: tpl.method(topic.districtId), expectedAnswer: tpl.expected };
-    return tx.revisionPrompt.upsert({
-      where: { key },
-      update: data,
-      create: { ...data, key, topicId: unit.topicId, subtopicId: unit.subtopicId, source: "TEMPLATE", templateKey: tpl.key },
-    });
+/** A stored prompt for the unit, or a template rendered and stored for it on first use. */
+export async function resolvePrompt(
+  tx: Db,
+  unit: { scope: RevisionScope; topicId: string; subtopicId: number | null },
+  promptId?: number,
+  templateKey?: string,
+) {
+  if (promptId) {
+    const p = await tx.revisionPrompt.findUnique({ where: { id: promptId } });
+    if (!p) throw notFound("Prompt");
+    const matches = p.topicId === unit.topicId && (p.subtopicId ?? null) === unit.subtopicId;
+    if (!matches) throw new HttpError(400, "VALIDATION_ERROR", "The prompt belongs to a different topic or sub-topic");
+    return p;
   }
+  const tpl = templateKey ? templateByKey.get(templateKey) : undefined;
+  if (!tpl) throw new HttpError(400, "VALIDATION_ERROR", "Provide promptId or a valid templateKey");
+  const topic = await tx.topic.findUniqueOrThrow({
+    where: { id: unit.topicId },
+    include: { subtopics: { orderBy: { position: "asc" } } },
+  });
+  const sub = unit.subtopicId ? topic.subtopics.find((s) => s.id === unit.subtopicId) : null;
+  if (unit.subtopicId && !sub) throw new HttpError(400, "VALIDATION_ERROR", "subtopicId does not belong to topicId");
+  const content = tpl.content(
+    unitSubject({ scope: unit.scope, topicName: topic.name, subtopicName: sub?.name, learned: topic.subtopics.filter((s) => s.completedAt).map((s) => s.name) }),
+  );
+  const key = `tpl:${tpl.key}:${unitKey(unit.scope, unit.topicId, unit.subtopicId)}`;
+  const data = { title: tpl.label, content, retrievalMethod: tpl.method(topic.districtId), expectedAnswer: tpl.expected };
+  return tx.revisionPrompt.upsert({
+    where: { key },
+    update: data,
+    create: { ...data, key, topicId: unit.topicId, subtopicId: unit.subtopicId, source: "TEMPLATE", templateKey: tpl.key },
+  });
+}
 
+export function revisionService(prisma: PrismaClient, clock: Clock) {
   return {
     async submitAttempt(b: AttemptInput) {
       const today = clock.today();
@@ -269,6 +287,7 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
         if (s.lastAttemptDate && d2i(s.lastAttemptDate) === today)
           throw new HttpError(409, "ALREADY_ATTEMPTED_TODAY", "You already recorded an attempt for this today. Its next revision is scheduled; try again then.");
         const prompt = await resolvePrompt(tx, s, b.promptId, b.templateKey);
+        if (b.evaluationId !== undefined) await checkEvaluationLink(tx, b.evaluationId, s.id, b.response ?? "");
         const policy = await revisionPolicy(tx);
         const u = applyAttempt(
           {
@@ -289,6 +308,7 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
             correctionCompleted: b.score <= 1 ? b.correctionCompleted : false,
             correctedAt: b.score <= 1 && b.correctionCompleted ? now : null,
             comment: b.comment ?? "", intervalDays: u.intervalDays, nextDueDate: u.nextDueDate ? i2d(u.nextDueDate) : null,
+            evaluationId: b.evaluationId ?? null, selfScore: b.selfScore ?? null, inputMode: b.inputMode ?? "TYPED",
           },
         });
         await tx.revisionSchedule.update({
@@ -553,6 +573,9 @@ export const attemptDTO = (a: AttemptRow) => ({
   comment: a.comment,
   intervalDays: a.intervalDays,
   nextDueDate: a.nextDueDate ? d2i(a.nextDueDate) : null,
+  evaluationId: a.evaluationId,
+  selfScore: a.selfScore,
+  inputMode: a.inputMode,
 });
 
 const checkpointDTO = (c: Prisma.LearningCheckpointGetPayload<object>) => ({

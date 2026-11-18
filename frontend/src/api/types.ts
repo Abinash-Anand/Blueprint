@@ -163,6 +163,9 @@ export interface Attempt {
   comment: string;
   intervalDays: number;
   nextDueDate: ISODate | null;
+  evaluationId?: number | null;
+  selfScore?: number | null;
+  inputMode?: "TYPED" | "SPOKEN";
 }
 
 export interface Checkpoint {
@@ -349,6 +352,7 @@ export interface Progress {
     awaitingCorrection: number;
     dailyAllowanceMinutes: number;
     monthly: { month: string; attempts: number; successful: number; averageScore: number | null }[];
+    ai?: AiAnalytics;
     weakUnits: {
       scheduleId: number; topicId: string; subtopicId: number | null; scope: RevisionScope; label: string;
       lastScore: number | null; consecutiveFailures: number; nextDueDate: ISODate | null;
@@ -391,4 +395,54 @@ export interface RevisionOverview {
   session: { topicId: string; scope: RevisionScope; subtopicId: number | null }[];
   history: (Attempt & { topicId: string; topicName: string })[];
   checkpoints: { id: number; topicId: string; topicName: string; subtopicId: number; label: string; result: CheckpointResult; neededAssistance: boolean; gaps: string; date: ISODate }[];
+}
+
+/** AI design §4.5. */
+export interface AiAnalytics {
+  selfScored: number;
+  selfMatches: number;
+  selfMeanDifference: number | null;
+  checked: number;
+  agreed: number;
+  savedHigher: number;
+  savedLower: number;
+  spoken: { attempts: number; averageScore: number | null };
+  typed: { attempts: number; averageScore: number | null };
+}
+
+export interface AiStatus {
+  enabled: boolean;
+  consented: boolean;
+  consentedAt: string | null;
+  evaluationProvider: string;
+  transcriptionProvider: string;
+  evaluationModel: string;
+  transcriptionModel: string;
+  maxRecordingSeconds: number;
+  maxAudioBytes: number;
+  maxFollowUps: number;
+  dailyRequestLimit: number;
+  requestsLast24h: number;
+  monthlyBudgetEur: number;
+  spentThisMonthEur: number;
+}
+
+export type Verdict = "COVERED" | "PARTIAL" | "MISSING" | "INCORRECT";
+
+export interface AiEvaluation {
+  id: number;
+  parentId: number | null;
+  rootId: number;
+  status: "PENDING" | "SUCCEEDED" | "FAILED";
+  errorCode: string | null;
+  transcript: string;
+  suggestedScore: 0 | 1 | 2 | 3 | null;
+  relevant: boolean | null;
+  criteria: { index: number; text: string; verdict: Verdict; evidence: string | null; recoveredInFollowUp: boolean }[];
+  misconceptions: { claim: string; correction: string; verified: boolean }[];
+  feedback: string;
+  followUpQuestion: string | null;
+  suggestedMistakes: string;
+  assisted: boolean;
+  createdAt: string;
 }

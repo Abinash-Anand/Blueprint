@@ -206,6 +206,38 @@ function RevisionAnalytics({ r, weekly }: { r: NonNullable<ReturnType<typeof use
             </ul>
           </>
         )}
+        {r.ai && (r.ai.selfScored > 0 || r.ai.checked > 0 || r.ai.spoken.attempts > 0) && (
+          <>
+            <div className="kick" style={{ margin: "12px 0 6px" }}>Self-assessment and AI check</div>
+            <ul className="list">
+              {r.ai.selfScored > 0 && (
+                <li>
+                  <span>Your first guess matched your final score</span>
+                  <span className="m">
+                    {r.ai.selfMatches} of {r.ai.selfScored}
+                    {r.ai.selfMeanDifference !== null && Math.abs(r.ai.selfMeanDifference) >= 0.05 &&
+                      ` · guesses ${r.ai.selfMeanDifference > 0 ? "higher" : "lower"} by ${Math.abs(r.ai.selfMeanDifference).toFixed(1)} on average`}
+                  </span>
+                </li>
+              )}
+              {r.ai.checked > 0 && (
+                <li>
+                  <span>Final score matched the AI suggestion</span>
+                  <span className="m">{r.ai.agreed} of {r.ai.checked} · you scored higher {r.ai.savedHigher}×, lower {r.ai.savedLower}×</span>
+                </li>
+              )}
+              {r.ai.spoken.attempts > 0 && (
+                <li>
+                  <span>Spoken vs typed answers</span>
+                  <span className="m">
+                    {plural(r.ai.spoken.attempts, "spoken")} · average {r.ai.spoken.averageScore!.toFixed(1)} · {r.ai.typed.attempts} typed
+                    {r.ai.typed.averageScore !== null && ` · average ${r.ai.typed.averageScore.toFixed(1)}`}
+                  </span>
+                </li>
+              )}
+            </ul>
+          </>
+        )}
         <div className="sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
           Over-target revision allowed: <b style={{ color: "var(--ink)" }}>{hm(r.dailyAllowanceMinutes)}</b> a day,{" "}
           <b style={{ color: "var(--ink)" }}>{hm(weekly)}</b> a week

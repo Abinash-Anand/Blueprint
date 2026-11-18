@@ -2,3 +2,6 @@ node_modules
 dist
 .env
 backups/*.dump
+
+# AI benchmark output (may contain model responses)
+backend/eval/results/

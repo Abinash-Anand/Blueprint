@@ -28,6 +28,9 @@ const attemptBody = z
     response: text(5000).optional(),
     mistakes: text(2000).optional(),
     comment: text(1000).optional(),
+    evaluationId: z.number().int().positive().optional(),
+    selfScore: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
+    inputMode: z.enum(["TYPED", "SPOKEN"]).optional(),
   })
   .strict()
   .refine(onePrompt, { message: "Provide exactly one of promptId or templateKey" });
