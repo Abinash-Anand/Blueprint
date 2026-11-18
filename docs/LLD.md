@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — Low-Level Design"
 subtitle: "Schema, API, modules and algorithms"
-version: "1.3"
+version: "1.4"
 date: "18 November 2026"
 ---
 
@@ -119,6 +119,7 @@ erDiagram
     date journeyEnd
     text timezone
     int revisionDailyMinutes "0..240, default 30"
+    int revisionWeeklyOvertimeMinutes "0..720, default 120"
   }
   RevisionPrompt {
     serial id PK
@@ -272,7 +273,7 @@ ALTER TABLE "Settings" ADD CONSTRAINT "Settings_singleton" CHECK ("id" = 1);
 
 ## 2.4 Revision migration (abridged)
 
-`backend/prisma/migrations/20261118000000_revision/migration.sql` is additive: it creates four enums and four tables, adds two columns and the value `TaskSource.REVISION`, and needs no data migration. Existing learning state is picked up by the seed's backfill (§12.5.8). The hand-written part:
+`backend/prisma/migrations/20261118000000_revision/migration.sql` is additive: it creates four enums and four tables, adds two columns and the value `TaskSource.REVISION`, and needs no data migration. Existing learning state is picked up by the seed's backfill (§12.5.9). Migration `20261118120000_revision_weekly_cap` adds `Settings.revisionWeeklyOvertimeMinutes` (default 120, CHECK 0–720). The hand-written part:
 
 ```sql
 CREATE UNIQUE INDEX "Task_one_open_revision_per_schedule" ON "Task"("revisionScheduleId")
@@ -392,7 +393,7 @@ interface ErrorBody { error: { code: string; message: string; details?: unknown 
 | `GET /tasks/:id` | One task | — | `200 TaskDTO` | `404` |
 | `GET /tasks?from&to&status&topicId` | List tasks | filters are optional; `from`/`to` range is at most 400 days | `200 TaskDTO[]` | `400` |
 | `POST /tasks` | Create a manual task | `{title, scheduledDate, estimatedMinutes, kind?, topicId?, subtopicId?, notes?}` | `201 TaskDTO` | `400`, `404` (unknown topic) |
-| `PATCH /tasks/:id` | Edit, complete or reschedule | `{title?, notes?, estimatedMinutes?, scheduledDate?, status?}` (at least one field) | `200 TaskDTO` | `400`, `404`, `409 ATTEMPT_REQUIRED` / `REVISION_NOT_SKIPPABLE` (revision tasks) |
+| `PATCH /tasks/:id` | Edit, complete or reschedule | `{title?, notes?, estimatedMinutes?, scheduledDate?, status?}` (at least one field) | `200 TaskDTO` | `400`, `404`, `409 ATTEMPT_REQUIRED` / `REVISION_NOT_SKIPPABLE` / `REVISION_RECORDED` (revision tasks) |
 | `DELETE /tasks/:id` | Delete a manual task | — | `204` | `404`, `409 PLAN_TASK_NOT_DELETABLE`, `409 REVISION_TASK_NOT_DELETABLE` |
 | `POST /tasks/reschedule-overdue` | Move overdue tasks forward | `{}` | `200 {moved: [{id, from, to}]}` | — |
 | `GET /sessions?from&to` | List study sessions | `from`, `to` | `200 SessionDTO[]` | `400` |
@@ -401,10 +402,10 @@ interface ErrorBody { error: { code: string; message: string; details?: unknown 
 | `GET /stages` | Stages | — | `200 StageDTO[]` | — |
 | `PATCH /stages/:id` | Edit stage dates | `{startDate?, endDate?}` | `200 StageDTO` | `400` (start > end, outside journey), `404` |
 | `GET /settings` | Journey and targets | — | `200 SettingsDTO` | — |
-| `PATCH /settings` | Change weekday targets and/or the revision allowance | `{weeklyTargets?: [{weekday, targetMinutes}], revisionDailyMinutes?: 0–240}` | `200 SettingsDTO` | `400` |
+| `PATCH /settings` | Change weekday targets and/or the revision allowances | `{weeklyTargets?: [{weekday, targetMinutes}], revisionDailyMinutes?: 0–240, revisionWeeklyOvertimeMinutes?: 0–720}` (steps of 5) | `200 SettingsDTO` | `400` |
 | `GET /revision/overview` | Revision section (read-only) | — | `200 RevisionOverviewDTO` | — |
 | `GET /topics/:id/revision` | Revision view of one topic | — | `200 TopicRevisionDTO` | `404` |
-| `POST /revision/attempts` | Record an assessed attempt | `{topicId, subtopicId?, promptId \| templateKey, retrievalMethod, score 0–3, usedHints, usedNotes, correctionCompleted?, durationMinutes?, response?, mistakes?, comment?}` | `201 AttemptResultDTO` | `400` (no gap for score 0–1, prompt of another unit), `404`, `409 NOT_ELIGIBLE`, `409 CORRECTION_REQUIRED` |
+| `POST /revision/attempts` | Record an assessed attempt | `{topicId, subtopicId?, promptId \| templateKey, retrievalMethod, score 0–3, usedHints, usedNotes, correctionCompleted?, durationMinutes?, response?, mistakes?, comment?}` | `201 AttemptResultDTO` | `400` (no gap for score 0–1, prompt of another unit), `404`, `409 NOT_ELIGIBLE`, `409 CORRECTION_REQUIRED`, `409 ALREADY_ATTEMPTED_TODAY` |
 | `POST /revision/attempts/:id/correction` | Confirm the correction of a failed attempt | `{mistakes?}` | `200 {id, correctionCompleted, nextDueDate, nextTaskDate}` | `404`, `409 NOTHING_TO_CORRECT` |
 | `POST /checkpoints` | Record a recall check | `{topicId, subtopicId, promptId \| templateKey, result, neededAssistance, gaps?, response?}` | `201 CheckpointDTO` | `400`, `404` |
 | `POST /prompts` | Add a learner question | `{topicId, subtopicId?, title?, content, retrievalMethod, expectedAnswer, difficulty?}` | `201 PromptDTO` | `400`, `404` |
@@ -651,11 +652,12 @@ frontend/src/
     ├── TaskRow.tsx          # checkbox (or revision mark + Revise), meta, inline log-time / reschedule / edit forms
     ├── RevisionBox.tsx      # topic panel: units, Check / Revise / Corrected, history, questions
     ├── RecallDialog.tsx     # prompt → answer → reveal → assess → correct; single unit or session
-    ├── RevisionView.tsx     # Revision section: lists, session, history, recall analytics, allowance
+    ├── RevisionView.tsx     # Revision section: lists, session, history, recall analytics, allowances
+    ├── RevisionStatus.tsx   # shared status vocabulary (one primary state + Weak flag)
     ├── WeekView.tsx
     ├── ProgressView.tsx     # hours, districts, learned vs demonstrated, timeline
     ├── ui.tsx               # Bar, Stat, Loading
-    └── __tests__/           # vehicle, render, format, TodayView, RecallDialog, RevisionView
+    └── __tests__/           # vehicle, render, format, TodayView, RecallDialog, RevisionView, RevisionStatus
 ```
 
 # 8. State management
@@ -687,12 +689,15 @@ DELETE /tasks/:id
   source = PLAN → 409 PLAN_TASK_NOT_DELETABLE (use SKIPPED instead, BR-10)
   source = REVISION → 409 REVISION_TASK_NOT_DELETABLE
 
-Revision tasks (revisionScheduleId set):
+Revision tasks (revisionScheduleId set): status follows attempts only
   PATCH {status: DONE}    → 409 ATTEMPT_REQUIRED (completed only by POST /revision/attempts, FR-REV-08)
   PATCH {status: SKIPPED} → 409 REVISION_NOT_SKIPPABLE (it stays due; move it instead)
+  PATCH {status: TODO}    → 409 REVISION_RECORDED (a recorded revision is history; reopening it
+                            would also collide with the next cycle's open task)
   PATCH {scheduledDate}   → allowed; originalDate (= due date) unchanged, so it stays overdue (REV-18)
-  POST /revision/attempts → open task: status DONE, completedAt = now, and scheduledDate = today
-                            if it was planned later (revised early)
+  POST /revision/attempts → open task: status DONE, completedAt = now, scheduledDate = today
+                            (counted on the day it was done; early or late)
+  Title in TaskDTO        → derived from the unit's current names ("Revise: <sub-topic>"), not stored text
 ```
 
 In the UI, a task with a linked sub-topic shows a secondary checkbox, "Sub-topic learned". This keeps the two actions separate but one click apart.
@@ -840,7 +845,8 @@ bufferDays = eligible days in the stage with no tasks originally planned
 | `maxIntervalDays` | 60 | Cap after the ladder |
 | `weakAfterFailures` | 2 | Consecutive 0–1 scores that flag a unit as weak |
 | `subtopicMinutes` / `topicMinutes` | 10 / 20 | Revision task estimates |
-| `dailyBudgetMinutes` | 30 | Default allowance; the live value is `Settings.revisionDailyMinutes` |
+| `dailyBudgetMinutes` | 30 | Over-target revision minutes a day; live value `Settings.revisionDailyMinutes` |
+| `weeklyOvertimeMinutes` | 120 | Over-target revision minutes a week; live value `Settings.revisionWeeklyOvertimeMinutes` |
 | `horizonDays` | 400 | How far ahead placement looks |
 
 ### 12.5.2 Eligibility (`syncTopic`)
@@ -872,27 +878,31 @@ effective = 3:  failures = 0; k = successes
 weak = failures ≥ 2
 ```
 
-`submitAttempt` runs in one transaction: it refuses a unit that has no active schedule (`409 NOT_ELIGIBLE`) or a pending correction (`409 CORRECTION_REQUIRED`), resolves the prompt (a template is stored on first use), applies the rule, inserts the attempt with the prompt text and the resulting interval, updates the schedule, completes the unit's open task, records a study session when a duration is given, and calls `planOpenRevisions`.
+`submitAttempt` runs in one transaction. It first locks the unit's schedule row (`SELECT … FOR UPDATE`), so concurrent submissions for one unit run one after the other. It refuses a unit that has no active schedule (`409 NOT_ELIGIBLE`), a pending correction (`409 CORRECTION_REQUIRED`) or an attempt already recorded today (`409 ALREADY_ATTEMPTED_TODAY`), resolves the prompt (a template is stored on first use), applies the rule, inserts the attempt with the prompt text and the resulting interval, updates the schedule, completes the unit's open task, records a study session when a duration is given, and calls `planOpenRevisions`.
 
-`correctAttempt` marks the attempt corrected. If it is the latest attempt and the schedule is waiting, the schedule's correction flag is cleared and a missing due date becomes `today + 1`, then placement runs.
+`correctAttempt` locks the schedule row too, then marks the attempt corrected (`correctionCompleted`, `correctedAt`); score, effective score and the schedule's success and failure counts are unchanged (SRS BR-21). If it is the latest attempt and the schedule is waiting, the schedule's correction flag is cleared and a missing due date becomes `today + 1`, then placement runs.
 
 ### 12.5.4 Placement (`placeRevisions`, pure)
 
 ```text
 candidates = active schedules with a due date and no open task
 order: (weak and due < today) first, then dueDate, lastScore (none last), lastAttemptDate, id
+free(d)  = target(d) − learning(d) − revision(d)
+over(d)  = max(0, learning(d) + revision(d) − target(d))
 for c in candidates (in that order):
-  d = max(c.dueDate, today)
-  while d ≤ today + 400:
-    if weekday(d) ≠ Sunday and target(d) > 0:
-      allowance = max(dailyAllowance, target(d) − learningLoad(d))
-      if revisionLoad(d) + c.minutes ≤ allowance: break
-    d = d + 1
+  from = max(c.dueDate, today)
+  repeat until placed or beyond today + 400:
+    days = study days from `from` to Saturday of from's week (never Sunday, never target 0)
+    d = first day in days with c.minutes ≤ free(d)                              -- no over-target time
+    if none: d = first day in days with
+               revision(d) + c.minutes ≤ max(dailyAllowance, target(d) − learning(d))
+               and Σ_week over + (over(d) after − over(d) before) ≤ weeklyAllowance
+    if none: from = next Monday
   create REVISION task {originalDate: c.dueDate, scheduledDate: d, estimate: c.minutes}
-  revisionLoad(d) += c.minutes
+  revision(d) += c.minutes
 ```
 
-`learningLoad` and `revisionLoad` are the non-skipped minutes per day of tasks without and with a revision link. Learning tasks are only read, never changed. Existing revision tasks are not moved by later placements.
+`learning` and `revision` are the non-skipped minutes per day of tasks without and with a revision link. With both allowances at 0 the rule never plans a day beyond its target (strict mode). Learning tasks are only read, never changed. Existing revision tasks are not moved by later placements.
 
 ### 12.5.5 Read models
 
@@ -901,15 +911,27 @@ for c in candidates (in that order):
 - **Today**: `optional` lists revision tasks due by the viewed date but planned later; on Sunday they are presented as optional. `competing` is true when the day has a target and learning plus revision exceeds it.
 - **Session** (`interleave`): today's and carried-over open revision tasks, ranked like placement, then reordered so that consecutive items come from different topics when possible.
 
-### 12.5.6 Revision section and indicators
+### 12.5.6 Status vocabulary (frontend `RevisionStatus`)
+
+```text
+primary = Paused                 if the unit is suspended
+        | Correct the gap first  if correctionPending
+        | Done today             if completed today (task DONE, or last attempt today and next due later)
+        | N days overdue         if nextDueDate < today
+        | Due today              if nextDueDate = today
+        | Next <date>            otherwise
+flag    = Weak                   if consecutiveFailures ≥ 2 (independent of primary)
+```
+
+### 12.5.7 Revision section and indicators
 
 `revisionOverview` loads the active schedules once (with topic, sub-topic, open task and latest attempt id) and derives every list from them, so the section and the scheduler cannot disagree. Overdue, due and weak lists use `revisionOrder` (the placement priority); upcoming is ordered by date; the session is `interleave(overdue + due without pending corrections)`. It runs no writes. The tab badge (`dueCount`, `overdueCount`) and the sidebar line come from `TodayDTO.revision`, which the app already reloads after every mutation.
 
-### 12.5.7 Separation from progress
+### 12.5.8 Separation from progress
 
 `topicAggregates` excludes tasks with a revision link from a topic's planned minutes, done-task count and planned window. `topicStatus`, `districtFraction` and `roadProgress` never read revision tables. A study session recorded with an attempt carries the topic id, so it counts as actual time for that topic and day.
 
-### 12.5.8 Backfill
+### 12.5.9 Backfill
 
 `backfillRevision` (called by the seed on every start) runs `syncTopic` for every topic with a learned sub-topic, a demonstration or an existing schedule, then `planOpenRevisions`, in one transaction. It is idempotent: a second run creates nothing (integration test). On 18 Nov 2026 it scheduled 4 revision tasks for the 3 sub-topics learned on the live database.
 
@@ -967,3 +989,12 @@ for c in candidates (in that order):
 | Type checks | `tsc --noEmit` clean in both packages |
 | Browser (demo stack on port 8091, clock pinned to Sat 21 Nov) | Revision tab badge *2* in accent (one overdue); summary *2 revisions due now*; Overdue lists Utility types "1 day overdue (due 20 Nov) · last 19 Nov: Struggled"; Due today lists the whole-topic unit; Upcoming lists Generics with *Revise early*; history shows attempts and the recall check across topics; recall analytics appear only here; Today rows carry Study / Practice / Revision tags and revision rows show only *Revise* and *Reschedule*. |
 | Regression fixed | New CSS classes `.dist` and `.dbar` collided with the sidebar's district card classes and changed the sidebar bars and building lists; renamed to `.scores` / `.sbar`. Every new class was checked against the original stylesheet. |
+
+## 14.4 Verification results (revision refinement, 18 Nov 2026)
+
+| Suite | Result |
+|---|---|
+| Backend (unit + integration) | 93 / 93 passed. New: placement uses free time first, weekly over-target cap, strict mode, no Monday pile-up of Sunday revisions; missing / negative / fractional score refused; manual move keeps the due date and overdue count; concurrent double submission records one attempt and one open task, and completes the right task; a recorded revision cannot be reopened (`409 REVISION_RECORDED`); confirming a correction leaves score, success and failure counts unchanged and the next 3 starts at 7 days; learning and demonstration untouched; revision titles follow a curriculum rename; Week over-target minutes equal planned − target per day and stay within 120; strict mode keeps the day within 240. |
+| Frontend | 20 / 20 passed. New: three-step flow, inputs kept across Back/Continue, no score preselected and Save disabled with a hint, criteria hidden again on Retrieve, status ordering for overlapping states, kind tags. |
+| Live data | Backup `backups/engineering-city-20261118-pre-weekly-cap.dump` (verified), then migration `20261118120000_revision_weekly_cap` applied; plan untouched. |
+| Browser (demo stack, clock 23 Nov) | Revision badge *1*; Start session opens Retrieve with the step indicator, question and answer only; Compare shows the answer beside the criteria; Assess has no selected score and a disabled Save with "Choose a score to save."; Back twice keeps the answer and hides the criteria again. Units revised today offer no new attempt. |

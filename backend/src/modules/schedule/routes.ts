@@ -25,9 +25,13 @@ const settingsBody = z
       .optional(),
     /** Revision minutes each study day accepts on top of planned learning (SRS FR-REV-12). */
     revisionDailyMinutes: z.number().int().min(0).max(240).multipleOf(5).optional(),
+    /** Over-target revision minutes per week (SRS BR-18). */
+    revisionWeeklyOvertimeMinutes: z.number().int().min(0).max(720).multipleOf(5).optional(),
   })
   .strict()
-  .refine((b) => b.weeklyTargets || b.revisionDailyMinutes !== undefined, { message: "Provide weeklyTargets and/or revisionDailyMinutes" });
+  .refine((b) => b.weeklyTargets || b.revisionDailyMinutes !== undefined || b.revisionWeeklyOvertimeMinutes !== undefined, {
+    message: "Provide weeklyTargets, revisionDailyMinutes and/or revisionWeeklyOvertimeMinutes",
+  });
 
 export function scheduleRoutes({ prisma }: Deps) {
   const svc = scheduleService(prisma);

@@ -9,6 +9,7 @@ import type { RevisionOverview, RevisionUnitRow } from "../api/types";
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SCORES, dayMonth, hm, monthName, pct, plural, scoreLabel, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { type RecallItem, RecallDialog } from "./RecallDialog";
+import { RevisionStatus } from "./RevisionStatus";
 import { Loading, Stat } from "./ui";
 
 const asItem = (u: { topicId: string; scope: RevisionUnitRow["scope"]; subtopicId: number | null }): RecallItem => ({
@@ -17,11 +18,6 @@ const asItem = (u: { topicId: string; scope: RevisionUnitRow["scope"]; subtopicI
 
 function UnitRow({ u, today, onRevise, onOpenTopic }: { u: RevisionUnitRow; today: string; onRevise: (u: RevisionUnitRow) => void; onOpenTopic: (id: string) => void }) {
   const { mutate } = useAppData();
-  const when =
-    u.correctionPending ? "Correct the gap first"
-    : u.overdueDays > 0 ? `${plural(u.overdueDays, "day")} overdue (due ${dayMonth(u.nextDueDate!)})`
-    : u.nextDueDate === today ? "Due today"
-    : `Due ${shortDate(u.nextDueDate!)}`;
   return (
     <li className="rv-row">
       <div className="rl-main">
@@ -29,16 +25,21 @@ function UnitRow({ u, today, onRevise, onOpenTopic }: { u: RevisionUnitRow; toda
           {u.label}{" "}
           <button className="link" onClick={() => onOpenTopic(u.topicId)} aria-label={`Open topic ${u.topicName}`}>{u.scope === "TOPIC" ? "open" : u.topicName}</button>
         </span>
-        <span className={`rl-st${u.overdueDays > 0 || u.correctionPending ? " warn" : ""}`}>
-          {when}
-          {u.lastAttemptDate && ` · last ${dayMonth(u.lastAttemptDate)}: ${scoreLabel(u.lastScore)}`}
-        </span>
+        <RevisionStatus
+          x={{ correctionPending: u.correctionPending, nextDueDate: u.nextDueDate, lastAttemptDate: u.lastAttemptDate }}
+          today={today}
+          weak={u.weak}
+          extra={[
+            u.overdueDays > 0 ? `due ${shortDate(u.nextDueDate!)}` : "",
+            u.lastAttemptDate ? `last ${dayMonth(u.lastAttemptDate)}: ${scoreLabel(u.lastScore)}` : "",
+          ].filter(Boolean).join(" · ") || undefined}
+        />
       </div>
-      {u.weak && <span className="tag ink">Weak</span>}
       <div className="rl-acts">
         {u.correctionPending && u.pendingAttemptId ? (
           <button className="btn" onClick={() => void mutate(() => api.correctAttempt(u.pendingAttemptId!))} aria-label={`Confirm correction: ${u.label}`}>Corrected</button>
-        ) : (
+        ) : u.lastAttemptDate === today ? null : (
+          // One attempt per unit per day: nothing to start for a unit already revised today.
           <button className={`btn${u.status === "SCHEDULED" ? "" : " primary"}`} onClick={() => onRevise(u)} aria-label={`Revise: ${u.label}`}>
             {u.status === "SCHEDULED" ? "Revise early" : "Revise"}
           </button>
@@ -126,7 +127,7 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
         {list("Overdue", o.overdue, "Weak units first, then the oldest due date.")}
         {list("Due today", o.due)}
         {list("Weak concepts", o.weak.filter((u) => u.status === "SCHEDULED"), "Weak units that aren't due yet. Revisiting the original material helps more than another question.")}
-        {list(`Upcoming · next ${o.upcomingDays} days`, o.upcoming)}
+        {list(`Upcoming · next ${o.upcomingDays} days`, o.upcoming.filter((u) => !u.weak), o.upcoming.some((u) => u.weak) ? "Weak units are listed above." : undefined)}
 
         {history.length > 0 && (
           <div className="section">
@@ -160,7 +161,7 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
           </div>
         )}
 
-        {progress && <RevisionAnalytics r={progress.revision} />}
+        {progress && <RevisionAnalytics r={progress.revision} weekly={o.weeklyOvertimeMinutes} />}
       </div>
       {recall && <RecallDialog items={recall} onClose={() => setRecall(null)} />}
     </div>
@@ -168,9 +169,10 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
 }
 
 /** Recall behaviour over time (spec §14.4): descriptive only, no streaks or points. */
-function RevisionAnalytics({ r }: { r: NonNullable<ReturnType<typeof useAppData>["progress"]>["revision"] }) {
+function RevisionAnalytics({ r, weekly }: { r: NonNullable<ReturnType<typeof useAppData>["progress"]>["revision"]; weekly: number }) {
   const { mutate } = useAppData();
-  const [allowance, setAllowance] = useState<number | null>(null);
+  const [caps, setCaps] = useState<{ daily: number; weekly: number } | null>(null);
+  const valid = (n: number, max: number) => Number.isInteger(n) && n >= 0 && n <= max && n % 5 === 0;
   const maxDist = Math.max(1, ...r.distribution);
   const months = r.monthly.filter((m) => m.attempts > 0);
   return (
@@ -205,26 +207,28 @@ function RevisionAnalytics({ r }: { r: NonNullable<ReturnType<typeof useAppData>
           </>
         )}
         <div className="sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
-          Daily revision allowance on full days: <b style={{ color: "var(--ink)" }}>{hm(r.dailyAllowanceMinutes)}</b>
-          {allowance === null ? (
-            <button className="btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setAllowance(r.dailyAllowanceMinutes)}>Change</button>
+          Over-target revision allowed: <b style={{ color: "var(--ink)" }}>{hm(r.dailyAllowanceMinutes)}</b> a day,{" "}
+          <b style={{ color: "var(--ink)" }}>{hm(weekly)}</b> a week
+          {caps === null ? (
+            <button className="btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setCaps({ daily: r.dailyAllowanceMinutes, weekly })}>Change</button>
           ) : (
             <>
-              <input className="inp" type="number" aria-label="Daily revision allowance in minutes" min={0} max={240} step={5} value={allowance} style={{ width: 80 }} onChange={(e) => setAllowance(Number(e.target.value))} />
+              <input className="inp" type="number" aria-label="Daily over-target revision minutes" min={0} max={240} step={5} value={caps.daily} style={{ width: 74 }} onChange={(e) => setCaps({ ...caps, daily: Number(e.target.value) })} />
+              <input className="inp" type="number" aria-label="Weekly over-target revision minutes" min={0} max={720} step={5} value={caps.weekly} style={{ width: 74 }} onChange={(e) => setCaps({ ...caps, weekly: Number(e.target.value) })} />
               <button
                 className="btn primary"
                 style={{ padding: "2px 8px", fontSize: 12 }}
-                disabled={allowance < 0 || allowance > 240 || allowance % 5 !== 0}
+                disabled={!valid(caps.daily, 240) || !valid(caps.weekly, 720)}
                 onClick={async () => {
-                  const ok = await mutate(() => api.patchSettings({ revisionDailyMinutes: allowance }));
-                  if (ok) setAllowance(null);
+                  const ok = await mutate(() => api.patchSettings({ revisionDailyMinutes: caps.daily, revisionWeeklyOvertimeMinutes: caps.weekly }));
+                  if (ok) setCaps(null);
                 }}
               >
                 Save
               </button>
             </>
           )}
-          <span>Days with free capacity take more. New placements use it; already planned revisions stay where they are.</span>
+          <span>Revision uses free time first. Set both to 0 for a strict 4 h day (revision then waits for free time). New placements use the values; planned revisions stay where they are.</span>
         </div>
       </div>
     </div>

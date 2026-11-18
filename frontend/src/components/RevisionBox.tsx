@@ -5,26 +5,24 @@ import type { RetrievalMethod, RevisionUnit, TopicRevision } from "../api/types"
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SOURCE_LABEL, dayMonth, scoreLabel } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { type RecallItem, RecallDialog } from "./RecallDialog";
+import { RevisionStatus } from "./RevisionStatus";
 
-function statusText(u: RevisionUnit, today: string) {
+/** Status line of one unit: the shared revision status, plus the last attempt (date and score). */
+function UnitStatus({ u, today }: { u: RevisionUnit; today: string }) {
   const s = u.schedule;
-  if (!u.eligible) {
-    if (s?.status === "SUSPENDED") return "Paused: not marked learned";
-    return u.scope === "TOPIC" ? "Starts after two sub-topics are learned" : "Not learned yet";
+  if (!s || (!u.eligible && s.status !== "SUSPENDED")) {
+    return <span className="rstat"><span className="rs rs-upcoming">{u.scope === "TOPIC" ? "Starts after two sub-topics are learned" : "Not learned yet"}</span></span>;
   }
-  if (!s) return "";
-  switch (s.status) {
-    case "AWAITING_CORRECTION":
-      return "Correct the gap first";
-    case "OVERDUE":
-      return `Overdue since ${dayMonth(s.nextDueDate!)}`;
-    case "DUE":
-      return "Due today";
-    default:
-      return s.openTask && s.openTask.scheduledDate !== s.nextDueDate
-        ? `Due ${dayMonth(s.nextDueDate!)} · planned ${dayMonth(s.openTask.scheduledDate)}`
-        : `Next ${dayMonth(s.nextDueDate!)}${s.nextDueDate === today ? " (today)" : ""}`;
-  }
+  const planned = s.openTask && s.nextDueDate && s.openTask.scheduledDate !== s.nextDueDate ? `planned ${dayMonth(s.openTask.scheduledDate)}` : "";
+  const last = s.lastAttemptDate ? `last ${dayMonth(s.lastAttemptDate)}: ${scoreLabel(s.lastScore)}` : "";
+  return (
+    <RevisionStatus
+      x={{ suspended: s.status === "SUSPENDED", correctionPending: s.correctionPending, nextDueDate: s.nextDueDate, lastAttemptDate: s.lastAttemptDate }}
+      today={today}
+      weak={s.weak}
+      extra={[planned, last].filter(Boolean).join(" · ") || undefined}
+    />
+  );
 }
 
 export function RevisionBox({ topicId }: { topicId: string }) {
@@ -70,11 +68,7 @@ export function RevisionBox({ topicId }: { topicId: string }) {
             <li key={u.unit} className={u.scope === "TOPIC" ? "whole" : ""}>
               <div className="rl-main">
                 <span className="rl-name">{u.scope === "TOPIC" ? "Whole topic" : u.label}</span>
-                <span className={`rl-st${s?.status === "OVERDUE" || s?.status === "AWAITING_CORRECTION" ? " warn" : ""}`}>
-                  {statusText(u, rev.today)}
-                  {s?.lastAttemptDate && ` · last ${dayMonth(s.lastAttemptDate)}: ${scoreLabel(s.lastScore)}`}
-                </span>
-                {s?.weak && <span className="tag ink">Weak</span>}
+                <UnitStatus u={u} today={rev.today} />
               </div>
               <div className="rl-acts">
                 {u.scope === "SUBTOPIC" && (
@@ -84,7 +78,7 @@ export function RevisionBox({ topicId }: { topicId: string }) {
                   <button className="btn" onClick={() => void mutate(() => api.correctAttempt(s.pendingAttemptId!))} aria-label={`Confirm correction: ${u.label}`}>
                     Corrected
                   </button>
-                ) : u.eligible ? (
+                ) : u.eligible && s?.lastAttemptDate !== rev.today ? (
                   <button className="btn primary" onClick={() => open(u, "revision")} aria-label={`Revise: ${u.label}`}>Revise</button>
                 ) : null}
               </div>

@@ -2,7 +2,7 @@
  * Active recall and adaptive revision (Revision spec §7–§8, SRS §3.9, LLD §12.5). Pure and deterministic:
  * identical inputs and policy always give identical schedules (NFR-REV-01).
  */
-import { type ISODate, addDays, diffDays, isoWeekday } from "./dates.js";
+import { type ISODate, addDays, diffDays, isoWeekday, weekStart } from "./dates.js";
 
 export type RecallScore = 0 | 1 | 2 | 3;
 
@@ -31,6 +31,12 @@ export const REVISION_POLICY = {
    * full curriculum day. A day with free capacity (a buffer day) accepts up to that free capacity instead.
    */
   dailyBudgetMinutes: 30,
+  /**
+   * Over-target revision minutes a whole week may carry (Mon–Sat). Revision first uses free capacity; only what does not
+   * fit becomes over-target time, capped per day by dailyBudgetMinutes and per week by this value.
+   * 0 for both gives a strict 4 h day (revision only in free capacity). Live value: Settings.revisionWeeklyOvertimeMinutes.
+   */
+  weeklyOvertimeMinutes: 120,
   /** How far ahead the placer looks for room. */
   horizonDays: 400,
 };
@@ -159,10 +165,22 @@ export interface RevisionPlacement {
   date: ISODate;
 }
 
+/** Minutes a day is planned beyond its target (learning + revision − target), never negative. */
+export function overTarget(learning: number, revision: number, target: number) {
+  return Math.max(0, learning + revision - target);
+}
+
 /**
- * Place revision tasks on study days (REV-17, REV-19). A day accepts revision minutes up to
- * max(daily budget, target − planned learning). Sundays and 0-target days are never used, so Sunday stays optional.
- * Placement never moves or removes learning tasks; it only reads their load. Mutates the revision load map.
+ * Place revision tasks on study days (REV-17, REV-19, SRS BR-18). Revision counts inside the planned workload:
+ *
+ *  1. From max(due date, today) to the Saturday of that week, take the first study day where the revision fits in the
+ *     day's free capacity (target − planned learning − planned revision): no over-target time.
+ *  2. Otherwise take the first day in that same range where the day's revision stays within
+ *     max(daily allowance, free capacity) AND the week's over-target minutes stay within the weekly allowance.
+ *  3. Otherwise try the next week.
+ *
+ * Sundays and 0-target days are never used, so Sunday stays optional. Learning tasks are only read, never moved.
+ * Deterministic for identical inputs (NFR-REV-01). Mutates the revision load map.
  */
 export function placeRevisions(
   candidates: RevisionCandidate[],
@@ -173,21 +191,41 @@ export function placeRevisions(
   p: RevisionPolicy = REVISION_POLICY,
 ): RevisionPlacement[] {
   const target = (d: ISODate) => targetByWeekday[isoWeekday(d)] ?? 0;
+  const L = (d: ISODate) => learningLoad.get(d) ?? 0;
+  const R = (d: ISODate) => revisionLoad.get(d) ?? 0;
+  const study = (d: ISODate) => isoWeekday(d) !== 7 && target(d) > 0;
+  const weekOver = (ws: ISODate) => {
+    let o = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(ws, i);
+      o += overTarget(L(d), R(d), target(d));
+    }
+    return o;
+  };
   const out: RevisionPlacement[] = [];
   const limit = addDays(today, p.horizonDays);
   for (const c of [...candidates].sort(revisionOrder(today))) {
-    let d = c.dueDate > today ? c.dueDate : today;
-    while (d <= limit) {
-      const t = target(d);
-      if (isoWeekday(d) !== 7 && t > 0) {
-        const allowance = Math.max(p.dailyBudgetMinutes, t - (learningLoad.get(d) ?? 0));
-        if ((revisionLoad.get(d) ?? 0) + c.minutes <= allowance) break;
+    let from = c.dueDate > today ? c.dueDate : today;
+    let placed: ISODate | null = null;
+    while (!placed && from <= limit) {
+      const ws = weekStart(from);
+      const days: ISODate[] = [];
+      for (let d = from; d <= addDays(ws, 5); d = addDays(d, 1)) if (study(d)) days.push(d);
+      placed = days.find((d) => R(d) + c.minutes <= target(d) - L(d)) ?? null;
+      if (!placed) {
+        const used = weekOver(ws);
+        placed =
+          days.find((d) => {
+            if (R(d) + c.minutes > Math.max(p.dailyBudgetMinutes, target(d) - L(d))) return false;
+            const extra = overTarget(L(d), R(d) + c.minutes, target(d)) - overTarget(L(d), R(d), target(d));
+            return used + extra <= p.weeklyOvertimeMinutes;
+          }) ?? null;
       }
-      d = addDays(d, 1);
+      from = addDays(ws, 7);
     }
-    if (d > limit) continue;
-    revisionLoad.set(d, (revisionLoad.get(d) ?? 0) + c.minutes);
-    out.push({ scheduleId: c.scheduleId, date: d });
+    if (!placed) continue;
+    revisionLoad.set(placed, R(placed) + c.minutes);
+    out.push({ scheduleId: c.scheduleId, date: placed });
   }
   return out;
 }

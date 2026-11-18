@@ -243,6 +243,9 @@ export interface Today {
     plannedMinutes: number;
     learningMinutes: number;
     dailyAllowanceMinutes: number;
+    weeklyOvertimeMinutes: number;
+    overTargetMinutes: number;
+    weekOverTargetMinutes: number;
     competing: boolean;
     dueCount: number;
     overdueCount: number;
@@ -267,6 +270,7 @@ export interface WeekDay {
   revisionTasks: number;
   revisionPlannedMinutes: number;
   revisionDoneMinutes: number;
+  overTargetMinutes: number;
 }
 
 export interface Week {
@@ -282,7 +286,10 @@ export interface Week {
     tasksRemaining: number;
     remainingMinutes: number;
   };
-  revision: { plannedMinutes: number; doneMinutes: number; dueThisWeek: number; overdue: number };
+  revision: {
+    plannedMinutes: number; doneMinutes: number; upcomingMinutes: number; dueThisWeek: number; overdue: number;
+    overTargetMinutes: number; dailyAllowanceMinutes: number; weeklyOvertimeMinutes: number;
+  };
   milestones: { date: ISODate; type: "PRACTICE" | "STAGE_END"; title: string; topicId: string | null; stageId: string | null; done: boolean }[];
   tasks: Task[];
 }
@@ -374,6 +381,7 @@ export interface RevisionOverview {
   today: ISODate;
   upcomingDays: number;
   dailyAllowanceMinutes: number;
+  weeklyOvertimeMinutes: number;
   counts: { due: number; overdue: number; upcoming: number; later: number; weak: number; awaitingCorrection: number; active: number; paused: number };
   overdue: RevisionUnitRow[];
   due: RevisionUnitRow[];

@@ -215,12 +215,14 @@ model StudySession {
 }
 
 model Settings {
-  id                   Int      @id @default(1)
-  journeyStart         DateTime @db.Date
-  journeyEnd           DateTime @db.Date
-  timezone             String
+  id                            Int      @id @default(1)
+  journeyStart                  DateTime @db.Date
+  journeyEnd                    DateTime @db.Date
+  timezone                      String
   /// Revision minutes every study day accepts on top of planned learning (REVISION_POLICY.dailyBudgetMinutes).
-  revisionDailyMinutes Int      @default(30)
+  revisionDailyMinutes          Int      @default(30)
+  /// Over-target revision minutes a week may carry (REVISION_POLICY.weeklyOvertimeMinutes).
+  revisionWeeklyOvertimeMinutes Int      @default(120)
 }
 
 model WeeklyTarget {

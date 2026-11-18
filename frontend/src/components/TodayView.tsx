@@ -222,7 +222,8 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
               {rv.competing && (
                 <p>
                   <b>Revision is competing with new learning today:</b> {hm(rv.learningMinutes)} of learning plus {hm(rv.plannedMinutes)} of revision against a{" "}
-                  {hm(data.targetMinutes)} target. Learning tasks are not moved; revision is capped at {hm(rv.dailyAllowanceMinutes)} on full days.
+                  {hm(data.targetMinutes)} target ({hm(rv.overTargetMinutes)} over). Learning tasks are not moved. Over-target revision is capped at{" "}
+                  {hm(rv.dailyAllowanceMinutes)} a day and {hm(rv.weeklyOvertimeMinutes)} a week; this week uses {hm(rv.weekOverTargetMinutes)}.
                 </p>
               )}
               {rv.awaitingCorrection > 0 && (

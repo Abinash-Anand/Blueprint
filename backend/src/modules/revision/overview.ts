@@ -89,6 +89,7 @@ export function revisionOverview(prisma: PrismaClient, clock: Clock) {
       today,
       upcomingDays: UPCOMING_DAYS,
       dailyAllowanceMinutes: policy.dailyBudgetMinutes,
+      weeklyOvertimeMinutes: policy.weeklyOvertimeMinutes,
       counts: {
         due: due.length, overdue: overdue.length, upcoming: upcoming.length, later, weak: weak.length,
         awaitingCorrection: awaitingCorrection.length, active: units.length, paused: suspended,

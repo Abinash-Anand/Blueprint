@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — High-Level Design"
 subtitle: "Architecture of the local-first full-stack application"
-version: "1.3"
+version: "1.4"
 date: "18 November 2026"
 ---
 
@@ -138,6 +138,8 @@ flowchart TB
 | Errors | A typed `HttpError(status, code, message)`. The central handler maps Prisma `P2025` to `404`, and anything else to `500` without leaking internals. |
 | Clock | `Clock` is injected into `createApp`. Production uses the system time converted to Berlin. Tests and demos can set `APP_TODAY=YYYY-MM-DD` (FR-CAL-08, AC-08). |
 | Seeding | `prisma/seed.ts` upserts the curriculum and its 83 revision prompts, generates the plan only when no plan tasks exist (FR-CUR-09, scheduling rule 7), and backfills revision schedules for anything learned before revision existed. Every step is idempotent. |
+| Revision workload | Revision counts inside the planned day and week (SRS BR-18): free time first, then a daily (30 min) and weekly (120 min) over-target allowance, both stored in `Settings`. Placement only reads learning load; it never moves learning tasks. |
+| Revision integrity | Attempts for one unit are serialised with `SELECT … FOR UPDATE` on the schedule row inside the attempt transaction; one attempt per unit per day; a partial unique index keeps one open task per unit; a unique-key violation maps to `409 CONFLICT`, never `500`. |
 | Revision scheduling | Event-driven inside the request that changes learning state: ticking a sub-topic, demonstrating a topic, recording an attempt or confirming a correction runs `syncTopic` (eligibility) and `planOpenRevisions` (placement) in the same transaction. No background jobs or timers are needed. |
 
 # 6. Database architecture
@@ -243,7 +245,8 @@ sequenceDiagram
 | CityMap | Isometric map, pan, zoom, fly, building selection, car, signposts | FR-MAP-*, FR-CAR-* |
 | TopicPanel | Topic details, sub-topic checklist, demonstration, schedule a task | FR-MAP-04/06/10 |
 | RevisionBox | Per-unit revision status, *Check* and *Revise*, correction, history, questions | FR-REV-16 |
-| RecallDialog | Prompt, answer from memory, reveal, assessment, correction; single unit or interleaved session | FR-REV-06/07/17 |
+| RecallDialog | Three steps (Retrieve → Compare → Assess) with a step indicator, inputs kept across steps, no default score; single unit or interleaved session | FR-REV-06/07/17 |
+| RevisionStatus | Shared status vocabulary (one primary state + Weak flag) used by the topic panel, Revision view and Today rows | FR-REV-24 |
 | RevisionView | Revision section: counts, correction / overdue / due / weak / upcoming lists, session, history, recall analytics, allowance | FR-REV-15, FR-REV-19–21 |
 | TodayView | Mission Control: tasks, target, time log, carried over, rest or buffer day | FR-TODAY-* |
 | WeekView | Seven-day grid, totals, milestones | FR-WEEK-* |

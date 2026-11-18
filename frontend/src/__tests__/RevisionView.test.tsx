@@ -12,6 +12,7 @@ const overview: RevisionOverview = {
   today: "2026-11-19",
   upcomingDays: 14,
   dailyAllowanceMinutes: 30,
+  weeklyOvertimeMinutes: 120,
   counts: { due: 1, overdue: 1, upcoming: 1, later: 0, weak: 1, awaitingCorrection: 1, active: 4, paused: 0 },
   overdue: [unit({ scheduleId: 2, label: "Utility types", subtopicId: 12, status: "OVERDUE", nextDueDate: "2026-11-17", overdueDays: 2, weak: true, lastAttemptDate: "2026-11-16", lastScore: 1 })],
   due: [unit({})],
@@ -58,7 +59,8 @@ describe("RevisionView (Revision section)", () => {
     for (const h of ["Needs a correction · 1", "Overdue · 1", "Due today · 1", "Upcoming · next 14 days · 1", "History", "Recall analytics"]) {
       expect(screen.getByRole("heading", { name: new RegExp(h.replace(/[().]/g, "\\$&")) })).toBeInTheDocument();
     }
-    expect(screen.getByText(/2 days overdue \(due 17 Nov\) · last 16 Nov: Struggled/)).toBeInTheDocument();
+    expect(screen.getAllByText("2 days overdue").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/17 Nov · last 16 Nov: Struggled/).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Weak").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Revise: Generics" })).toBeInTheDocument();
     // Upcoming units can be revised early; a unit awaiting correction offers the correction instead.

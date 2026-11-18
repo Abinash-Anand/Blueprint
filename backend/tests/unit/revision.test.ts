@@ -10,6 +10,15 @@ const attempt = (score: 0 | 1 | 2 | 3, date = "2026-11-18", extra: Partial<{ use
   score, date, usedHints: false, usedNotes: false, correctionCompleted: true, ...extra,
 });
 const TARGETS = { 1: 240, 2: 240, 3: 240, 4: 240, 5: 240, 6: 240, 7: 0 };
+/** Learning load of a fully planned period: 240 min on every Mon–Sat from `from` for `days` days. */
+const full = (from: string, days = 21) => {
+  const m = new Map<string, number>();
+  for (let i = 0; i < days; i++) {
+    const d = addDays(from, i);
+    if (isoWeekday(d) !== 7) m.set(d, 240);
+  }
+  return m;
+};
 
 describe("applyAttempt (spec §8.2 rules A–D)", () => {
   it("score 3 climbs the ladder 7 → 14 → 30, then doubles up to 60", () => {
@@ -123,9 +132,42 @@ describe("placeRevisions (spec §8.4–§8.5)", () => {
   });
 
   it("respects the daily allowance on full learning days and spills over to the next study day", () => {
-    const learning = new Map([["2026-11-18", 240], ["2026-11-19", 240]]);
-    const ps = placeRevisions([1, 2, 3, 4].map((i) => cand(i, "2026-11-18")), learning, new Map(), TARGETS, "2026-11-18");
+    const ps = placeRevisions([1, 2, 3, 4].map((i) => cand(i, "2026-11-18")), full("2026-11-16"), new Map(), TARGETS, "2026-11-18");
     expect(ps.map((p) => p.date)).toEqual(["2026-11-18", "2026-11-18", "2026-11-18", "2026-11-19"]);
+  });
+
+  it("uses free capacity later in the same week before adding over-target time", () => {
+    const learning = full("2026-11-16");
+    learning.set("2026-11-21", 60); // Saturday has 3 h free
+    const [p] = placeRevisions([cand(1, "2026-11-18")], learning, new Map(), TARGETS, "2026-11-18");
+    expect(p.date).toBe("2026-11-21");
+  });
+
+  it("caps the week's over-target revision minutes and carries the rest into the next week", () => {
+    const policy = { ...REVISION_POLICY, dailyBudgetMinutes: 30, weeklyOvertimeMinutes: 60 };
+    const revision = new Map<string, number>();
+    const ps = placeRevisions([1, 2, 3, 4, 5, 6, 7].map((i) => cand(i, "2026-11-16")), full("2026-11-16"), revision, TARGETS, "2026-11-16", policy);
+    const firstWeek = ps.filter((p) => p.date <= "2026-11-21");
+    expect(firstWeek.length * 10).toBe(60); // 60 min of over-target time in week 1
+    expect(ps.filter((p) => p.date >= "2026-11-23").length).toBe(1);
+    for (const [, m] of revision) expect(m).toBeLessThanOrEqual(30);
+  });
+
+  it("strict mode (no allowances) never plans a day beyond its target", () => {
+    const policy = { ...REVISION_POLICY, dailyBudgetMinutes: 0, weeklyOvertimeMinutes: 0 };
+    const learning = full("2026-11-16", 14);
+    learning.set("2026-11-27", 200); // the only free time: 40 min on Friday of week 2
+    const ps = placeRevisions([1, 2, 3, 4, 5].map((i) => cand(i, "2026-11-16")), learning, new Map(), TARGETS, "2026-11-16", policy);
+    expect(ps.filter((p) => p.date === "2026-11-27")).toHaveLength(4);
+    expect(ps.find((p) => p.scheduleId === 5)!.date > "2026-11-29").toBe(true);
+  });
+
+  it("does not pile every Sunday revision onto Monday", () => {
+    const revision = new Map<string, number>();
+    placeRevisions([1, 2, 3, 4, 5, 6, 7, 8].map((i) => cand(i, "2026-11-22")), full("2026-11-23"), revision, TARGETS, "2026-11-20");
+    expect(revision.get("2026-11-22")).toBeUndefined();
+    expect(revision.get("2026-11-23")).toBe(30);
+    expect([...revision.values()].every((m) => m <= 30)).toBe(true);
   });
 
   it("uses free capacity on buffer days beyond the allowance", () => {
@@ -134,16 +176,15 @@ describe("placeRevisions (spec §8.4–§8.5)", () => {
   });
 
   it("puts overdue weak units first, then the oldest due date", () => {
-    const learning = new Map([["2026-11-18", 240]]);
     const ps = placeRevisions(
       [cand(1, "2026-11-17"), cand(2, "2026-11-12"), cand(3, "2026-11-16", { weak: true }), cand(4, "2026-11-15")],
-      learning, new Map(), { ...TARGETS }, "2026-11-18", { ...REVISION_POLICY, dailyBudgetMinutes: 20 },
+      full("2026-11-16"), new Map(), { ...TARGETS }, "2026-11-18", { ...REVISION_POLICY, dailyBudgetMinutes: 20 },
     );
     expect(ps.filter((p) => p.date === "2026-11-18").map((p) => p.scheduleId)).toEqual([3, 2]);
   });
 
   it("counts revisions already placed against the allowance and records new ones", () => {
-    const learning = new Map([["2026-11-18", 240]]);
+    const learning = full("2026-11-16");
     const revision = new Map([["2026-11-18", 30]]);
     const [p] = placeRevisions([cand(1, "2026-11-18")], learning, revision, TARGETS, "2026-11-18");
     expect(p.date).toBe("2026-11-19");

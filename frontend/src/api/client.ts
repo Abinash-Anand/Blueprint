@@ -105,7 +105,8 @@ export const api = {
     request<Session>("POST", "/sessions", body),
   deleteSession: (id: number) => request<void>("DELETE", `/sessions/${id}`),
   patchStage: (id: string, body: { startDate?: string; endDate?: string }) => request<Stage>("PATCH", `/stages/${id}`, body),
-  patchSettings: (body: { revisionDailyMinutes?: number }) => request<{ revisionDailyMinutes: number }>("PATCH", "/settings", body),
+  patchSettings: (body: { revisionDailyMinutes?: number; revisionWeeklyOvertimeMinutes?: number }) =>
+    request<{ revisionDailyMinutes: number; revisionWeeklyOvertimeMinutes: number }>("PATCH", "/settings", body),
   revisionOverview: () => request<RevisionOverview>("GET", "/revision/overview"),
   topicRevision: (id: string) => request<TopicRevision>("GET", `/topics/${encodeURIComponent(id)}/revision`),
   submitAttempt: (body: AttemptInput) => request<AttemptResult>("POST", "/revision/attempts", body),

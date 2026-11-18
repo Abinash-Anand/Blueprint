@@ -7,7 +7,7 @@ import {
 } from "../../domain/dates.js";
 import { currentTopicId, districtFraction, districtPassed, roadProgress } from "../../domain/progress.js";
 import { eligibleDays, reservedDates, type PlanStage } from "../../domain/planner.js";
-import { interleave, isWeak } from "../../domain/revision.js";
+import { interleave, isWeak, overTarget } from "../../domain/revision.js";
 import { d2i, i2d } from "../../db.js";
 import type { Clock } from "../../lib/clock.js";
 import { loadLearning } from "../learning.js";
@@ -43,7 +43,8 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         loadSettings(prisma), loadTargets(prisma), loadLearning(prisma), stagesWithRules(),
       ]);
       const revisionDue = { status: "TODO" as const, revisionScheduleId: { not: null }, originalDate: { lte: i2d(day) }, scheduledDate: { gt: i2d(day) } };
-      const [tasks, carried, sessions, reviews, schedules, optional, backlogCount, policy] = await Promise.all([
+      const dayWs = weekStart(day);
+      const [tasks, carried, sessions, reviews, schedules, optional, backlogCount, policy, weekTasks] = await Promise.all([
         prisma.task.findMany({ where: { scheduledDate: i2d(day) }, include: taskInclude, orderBy: taskOrder }),
         day === today
           ? prisma.task.findMany({ where: { status: "TODO", scheduledDate: { lt: i2d(today) } }, include: taskInclude, orderBy: taskOrder })
@@ -55,6 +56,10 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         prisma.task.findMany({ where: revisionDue, include: taskInclude, orderBy: [{ originalDate: "asc" }, { id: "asc" }], take: 20 }),
         prisma.task.count({ where: revisionDue }),
         revisionPolicy(prisma),
+        prisma.task.findMany({
+          where: { status: { not: "SKIPPED" }, scheduledDate: { gte: i2d(dayWs), lte: i2d(addDays(dayWs, 6)) } },
+          select: { scheduledDate: true, estimatedMinutes: true },
+        }),
       ]);
 
       const inJourney = day >= settings.journeyStart && day <= settings.journeyEnd;
@@ -102,10 +107,20 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           const open = [...carried, ...tasks].filter((t) => isRevision(t) && t.status === "TODO");
           const rank = (t: (typeof open)[number]) => (t.revisionSchedule && isWeak(t.revisionSchedule, policy) && d2i(t.originalDate) < day ? 0 : 1);
           open.sort((a, b) => rank(a) - rank(b) || d2i(a.originalDate).localeCompare(d2i(b.originalDate)) || a.id - b.id);
+          // Week over-target minutes (journey days only), the quantity the weekly cap limits (BR-18).
+          let weekOver = 0;
+          for (const d of eachDay(dayWs, addDays(dayWs, 6))) {
+            if (d < settings.journeyStart || d > settings.journeyEnd) continue;
+            const load = sum(weekTasks.filter((t) => d2i(t.scheduledDate) === d), (t) => t.estimatedMinutes);
+            weekOver += overTarget(load, 0, targets[isoWeekday(d)] ?? 0);
+          }
           return {
             plannedMinutes: revMinutes,
             learningMinutes: planned - revMinutes,
             dailyAllowanceMinutes: policy.dailyBudgetMinutes,
+            weeklyOvertimeMinutes: policy.weeklyOvertimeMinutes,
+            overTargetMinutes: target > 0 ? overTarget(planned, 0, target) : 0,
+            weekOverTargetMinutes: weekOver,
             // Visible when revision pushes the day past its target (spec 8.5).
             competing: target > 0 && revMinutes > 0 && planned > target,
             dueCount: due.length,
@@ -124,7 +139,7 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
       const today = clock.today();
       const ws = weekStart(date ?? today);
       const we = addDays(ws, 6);
-      const [settings, targets, tasks, sessions, stages, revDueInWeek, revOverdue] = await Promise.all([
+      const [settings, targets, tasks, sessions, stages, revDueInWeek, revOverdue, policy] = await Promise.all([
         loadSettings(prisma),
         loadTargets(prisma),
         prisma.task.findMany({ where: { scheduledDate: { gte: i2d(ws), lte: i2d(we) } }, include: taskInclude, orderBy: taskOrder }),
@@ -132,6 +147,7 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         stagesWithRules(),
         prisma.task.count({ where: { revisionScheduleId: { not: null }, status: { not: "SKIPPED" }, originalDate: { gte: i2d(ws), lte: i2d(we) } } }),
         prisma.task.count({ where: { revisionScheduleId: { not: null }, status: "TODO", originalDate: { lt: i2d(today) } } }),
+        revisionPolicy(prisma),
       ]);
       const live = tasks.filter((t) => t.status !== "SKIPPED");
       const days = eachDay(ws, we).map((d) => {
@@ -151,6 +167,8 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           revisionTasks: dt.filter(isRevision).length,
           revisionPlannedMinutes: sum(dt.filter(isRevision), (t) => t.estimatedMinutes),
           revisionDoneMinutes: sum(dt.filter((t) => isRevision(t) && t.status === "DONE"), (t) => t.estimatedMinutes),
+          // Planned beyond the day's target (learning + revision); Sunday and days outside the journey have no target.
+          overTargetMinutes: inJourney ? overTarget(sum(dt, (t) => t.estimatedMinutes), 0, targets[isoWeekday(d)] ?? 0) : 0,
         };
       });
       const todo = live.filter((t) => t.status === "TODO");
@@ -194,8 +212,13 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         revision: {
           plannedMinutes: sum(days, (d) => d.revisionPlannedMinutes),
           doneMinutes: sum(days, (d) => d.revisionDoneMinutes),
+          // Still to do this week, from today on.
+          upcomingMinutes: sum(live.filter((t) => isRevision(t) && t.status === "TODO" && d2i(t.scheduledDate) >= today), (t) => t.estimatedMinutes),
           dueThisWeek: revDueInWeek,
           overdue: revOverdue,
+          overTargetMinutes: sum(days, (d) => d.overTargetMinutes),
+          dailyAllowanceMinutes: policy.dailyBudgetMinutes,
+          weeklyOvertimeMinutes: policy.weeklyOvertimeMinutes,
         },
         milestones,
         tasks: tasks.map((t) => taskDTO(t, today)),

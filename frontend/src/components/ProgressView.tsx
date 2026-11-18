@@ -136,12 +136,19 @@ export function ProgressView({ onOpenDistrict, onOpenRevision }: { onOpenDistric
 
         <div className="section">
           <h3>Recall and revision</h3>
-          <div className="card soft rvcard">
-            <p>
-              Remembering is tracked separately from learning and demonstration, so it never changes the numbers above.{" "}
-              {p.revision.attempts ? `${plural(p.revision.attempts, "attempt")} so far, ${p.revision.dueToday + p.revision.overdue} due now.` : "No attempts yet."}{" "}
-              <button className="btn" style={{ padding: "2px 9px", fontSize: 12.5 }} onClick={onOpenRevision}>Open Revision</button>
-            </p>
+          <div className="grid4">
+            <Stat label="Attempts" value={p.revision.attempts} detail={p.revision.attempts ? `${pct(p.revision.successful / p.revision.attempts)} recalled (score 2–3)` : "none yet"} />
+            <Stat
+              label="Scores 0 · 1 · 2 · 3"
+              value={<span style={{ fontSize: 17 }}>{p.revision.distribution.join(" · ")}</span>}
+              detail="Forgot · Struggled · Recalled · Mastered"
+            />
+            <Stat label="Weak units" value={p.revision.weakUnits.length} detail="failed twice or more in a row" />
+            <Stat label="Overdue" value={p.revision.overdue} detail={p.revision.awaitingCorrection ? `${p.revision.awaitingCorrection} awaiting correction` : "none awaiting correction"} />
+          </div>
+          <div className="sub">
+            Remembering is tracked separately: it never changes floors, demonstrations, districts or the road above.{" "}
+            <button className="btn" style={{ padding: "2px 9px", fontSize: 12.5 }} onClick={onOpenRevision}>Open Revision</button>
           </div>
         </div>
 

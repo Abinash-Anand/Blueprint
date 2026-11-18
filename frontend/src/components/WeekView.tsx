@@ -106,16 +106,21 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
           </div>
         </div>
 
-        {(w.revision.plannedMinutes > 0 || w.revision.overdue > 0) && (
+        {(w.revision.plannedMinutes > 0 || w.revision.overdue > 0 || w.revision.overTargetMinutes > 0) && (
           <div className="section">
             <h3>Revision</h3>
             <div className="card">
               <ul className="list">
                 <li><span>Planned this week</span><span className="m">{hm(w.revision.plannedMinutes)} · {plural(w.revision.dueThisWeek, "unit")} due</span></li>
                 <li><span>Done</span><span className="m">{hm(w.revision.doneMinutes)}</span></li>
+                <li><span>Still to do this week</span><span className="m">{hm(w.revision.upcomingMinutes)}</span></li>
                 {w.revision.overdue > 0 && <li><span className="delayed">Overdue (all weeks)</span><span className="m">{plural(w.revision.overdue, "unit")}</span></li>}
+                <li>
+                  <span>Over the 4 h days (learning + revision)</span>
+                  <span className="m">{hm(w.revision.overTargetMinutes)} of {hm(w.revision.weeklyOvertimeMinutes)} allowed</span>
+                </li>
               </ul>
-              <div className="sub">Revision sits on top of new learning, at most the daily allowance on full days; Sunday stays optional and never counts against the target.</div>
+              <div className="sub">Revision counts in the planned week. It uses free time first; only what doesn't fit goes over a day's target, at most {hm(w.revision.dailyAllowanceMinutes)} a day and {hm(w.revision.weeklyOvertimeMinutes)} a week. Sunday stays optional and never counts against the target.</div>
             </div>
           </div>
         )}
