@@ -1,0 +1,13 @@
+{
+  "name": "engineering-city-docs",
+  "private": true,
+  "type": "module",
+  "description": "Builds docs/*.pdf from the Markdown sources (diagrams rendered with Mermaid, pagination with Paged.js).",
+  "scripts": { "build": "node build-pdf.mjs" },
+  "devDependencies": {
+    "marked": "^15.0.12",
+    "mermaid": "^11.6.0",
+    "pagedjs": "0.4.3",
+    "puppeteer-core": "^24.10.0"
+  }
+}

@@ -1,0 +1,187 @@
+// Engineering City — database schema.
+// Curriculum (District, Topic, Subtopic, Resource, TopicDependency) is seeded.
+// Calendar (Stage, Task, WeeklyTarget, Settings) is generated once, then owned by the learner.
+// Learning activity (Subtopic.completedAt, Topic.demonstratedAt, StudySession) is learner-owned.
+// Derived values (topic status, totals, road progress) are computed at read time, never stored.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Priority {
+  CORE
+  IMPORTANT
+  OPTIONAL
+}
+
+enum ResourceKind {
+  ROADMAP
+  DOCS
+  COURSE
+  ARTICLE
+}
+
+enum StageKind {
+  MAIN
+  PARALLEL
+}
+
+enum TaskKind {
+  STUDY
+  PRACTICE
+  REVISION
+}
+
+enum TaskStatus {
+  TODO
+  DONE
+  SKIPPED
+}
+
+enum TaskSource {
+  PLAN
+  MANUAL
+}
+
+model District {
+  id       String  @id // slug, e.g. "be"
+  position Int     @unique // 0..6, road order
+  name     String
+  subtitle String
+  layer    Int // 1..5
+  color    String  @db.Char(7) // "#rrggbb"
+  cols     Int // building grid columns on the platform
+  goal     String
+  note     String
+  topics   Topic[]
+  stages   Stage[]
+}
+
+model Topic {
+  id                String            @id // slug, e.g. "be.api"
+  districtId        String
+  district          District          @relation(fields: [districtId], references: [id], onDelete: Cascade)
+  position          Int
+  name              String
+  description       String
+  priority          Priority
+  estimatedHours    Int
+  exercise          String
+  demonstratedAt    DateTime?         @db.Timestamptz(3)
+  demonstrationNote String?
+  needsReview       Boolean           @default(false)
+  subtopics         Subtopic[]
+  resources         Resource[]
+  dependsOn         TopicDependency[] @relation("dependent")
+  requiredBy        TopicDependency[] @relation("prerequisite")
+  tasks             Task[]
+  sessions          StudySession[]
+
+  @@unique([districtId, position])
+}
+
+model Subtopic {
+  id          Int       @id @default(autoincrement())
+  topicId     String
+  topic       Topic     @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  position    Int
+  name        String
+  completedAt DateTime? @db.Timestamptz(3)
+  tasks       Task[]
+
+  @@unique([topicId, position])
+}
+
+model Resource {
+  id       Int          @id @default(autoincrement())
+  topicId  String
+  topic    Topic        @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  position Int
+  label    String
+  url      String
+  kind     ResourceKind
+
+  @@unique([topicId, position])
+}
+
+model TopicDependency {
+  topicId     String
+  topic       Topic  @relation("dependent", fields: [topicId], references: [id], onDelete: Cascade)
+  dependsOnId String
+  dependsOn   Topic  @relation("prerequisite", fields: [dependsOnId], references: [id], onDelete: Cascade)
+
+  @@id([topicId, dependsOnId])
+}
+
+model Stage {
+  id        String     @id // slug, e.g. "bedb"
+  position  Int        @unique
+  name      String
+  kind      StageKind
+  startDate DateTime   @db.Date
+  endDate   DateTime   @db.Date
+  districts District[]
+  tasks     Task[]
+}
+
+model Task {
+  id               Int            @id @default(autoincrement())
+  topicId          String?
+  topic            Topic?         @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  subtopicId       Int?
+  subtopic         Subtopic?      @relation(fields: [subtopicId], references: [id], onDelete: SetNull)
+  stageId          String?
+  stage            Stage?         @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  title            String
+  notes            String         @default("")
+  kind             TaskKind
+  estimatedMinutes Int
+  originalDate     DateTime       @db.Date
+  scheduledDate    DateTime       @db.Date
+  position         Int            @default(0) // order within its original day
+  status           TaskStatus     @default(TODO)
+  completedAt      DateTime?      @db.Timestamptz(3)
+  source           TaskSource
+  rescheduleCount  Int            @default(0)
+  createdAt        DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime       @updatedAt @db.Timestamptz(3)
+  sessions         StudySession[]
+
+  @@index([scheduledDate])
+  @@index([status, scheduledDate])
+  @@index([topicId])
+  @@index([stageId])
+}
+
+model StudySession {
+  id        Int      @id @default(autoincrement())
+  date      DateTime @db.Date
+  minutes   Int
+  taskId    Int?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  topicId   String?
+  topic     Topic?   @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  note      String   @default("")
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([date])
+  @@index([taskId])
+}
+
+model Settings {
+  id           Int      @id @default(1)
+  journeyStart DateTime @db.Date
+  journeyEnd   DateTime @db.Date
+  timezone     String
+}
+
+model WeeklyTarget {
+  weekday       Int @id // ISO 8601: 1 = Monday … 7 = Sunday
+  targetMinutes Int
+}
