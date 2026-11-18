@@ -23,7 +23,10 @@ export function taskDTO(t: TaskRow, today: ISODate) {
   const scheduled = d2i(t.scheduledDate);
   return {
     id: t.id,
-    title: t.title,
+    // Revision tasks are named after their unit as it is now, so a curriculum rename never leaves a stale title.
+    title: t.revisionSchedule
+      ? `Revise: ${t.revisionSchedule.scope === "TOPIC" ? `${t.topic?.name ?? ""} (whole topic)` : (t.subtopic?.name ?? t.title.replace(/^Revise: /, ""))}`
+      : t.title,
     notes: t.notes,
     kind: t.kind,
     status: t.status,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Today } from "../api/types";
 import { INK, mix } from "../lib/color";
-import { hm, pct, shortDate } from "../lib/format";
+import { hm, pct, shortDate, plural } from "../lib/format";
 import { LAYERS, LAYER_SUB } from "../lib/layers";
 import { useAppData } from "../state/AppData";
 import { Bar } from "./ui";
@@ -13,9 +13,10 @@ interface Props {
   onOpenTopic: (topicId: string) => void;
   onOpenDistrict: (districtIdx: number) => void;
   onOpenToday: () => void;
+  onOpenRevision: () => void;
 }
 
-export function Sidebar({ today, selectedId, open, onOpenTopic, onOpenDistrict, onOpenToday }: Props) {
+export function Sidebar({ today, selectedId, open, onOpenTopic, onOpenDistrict, onOpenToday, onOpenRevision }: Props) {
   const { curriculum, progress, topicById, districtById } = useAppData();
   const [openDist, setOpenDist] = useState<Set<number>>(new Set());
   const initialised = useRef(false);
@@ -86,6 +87,13 @@ export function Sidebar({ today, selectedId, open, onOpenTopic, onOpenDistrict, 
               </div>
               <Bar value={today.targetMinutes ? today.actualMinutes / today.targetMinutes : 0} />
             </>
+          )}
+          {today.revision.dueCount > 0 && (
+            <button className="link revdue" onClick={onOpenRevision}>
+              ↻ {plural(today.revision.dueCount, "revision")} due
+              {today.revision.overdueCount > 0 ? ` · ${today.revision.overdueCount} overdue` : ""}
+              {today.isRestDay ? " (optional)" : ""}
+            </button>
           )}
           <div style={{ marginTop: 10 }}>
             <button className="btn primary" onClick={onOpenToday}>

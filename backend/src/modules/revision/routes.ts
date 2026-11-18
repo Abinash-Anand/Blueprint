@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Deps } from "../../app.js";
 import { validate } from "../../lib/http.js";
 import { idParam, slug, slugParam } from "../../lib/schemas.js";
+import { revisionOverview } from "./overview.js";
 import { revisionService } from "./service.js";
 
 const method = z.enum(["CONCEPTUAL", "QUESTION_ANSWER", "WRITTEN", "VISUAL", "PRACTICAL", "SCENARIO"]);
@@ -72,7 +73,11 @@ const promptPatch = z
 
 export function revisionRoutes({ prisma, clock }: Deps) {
   const svc = revisionService(prisma, clock);
+  const overview = revisionOverview(prisma, clock);
   const r = Router();
+  r.get("/revision/overview", async (_req, res) => {
+    res.json(await overview());
+  });
   r.get("/topics/:id/revision", async (req, res) => {
     res.json(await svc.topicRevision(validate(slugParam, req.params).id));
   });

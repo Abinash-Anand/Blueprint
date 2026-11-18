@@ -21,8 +21,12 @@ export const unitKey = (scope: RevisionScope, topicId: string, subtopicId: numbe
   scope === "TOPIC" ? `t:${topicId}` : `s:${subtopicId}`;
 
 export async function revisionPolicy(db: Db | PrismaClient): Promise<RevisionPolicy> {
-  const s = await db.settings.findUnique({ where: { id: 1 }, select: { revisionDailyMinutes: true } });
-  return { ...REVISION_POLICY, dailyBudgetMinutes: s?.revisionDailyMinutes ?? REVISION_POLICY.dailyBudgetMinutes };
+  const s = await db.settings.findUnique({ where: { id: 1 }, select: { revisionDailyMinutes: true, revisionWeeklyOvertimeMinutes: true } });
+  return {
+    ...REVISION_POLICY,
+    dailyBudgetMinutes: s?.revisionDailyMinutes ?? REVISION_POLICY.dailyBudgetMinutes,
+    weeklyOvertimeMinutes: s?.revisionWeeklyOvertimeMinutes ?? REVISION_POLICY.weeklyOvertimeMinutes,
+  };
 }
 
 const label = (s: { scope: RevisionScope; topic: { name: string }; subtopic: { name: string } | null }) =>
@@ -250,6 +254,9 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
         throw new HttpError(400, "VALIDATION_ERROR", "Note what was missing or wrong: a failed retrieval is only useful once the gap is named");
       return prisma.$transaction(async (tx) => {
         const unit = b.subtopicId ? `s:${b.subtopicId}` : `t:${b.topicId}`;
+        // Row lock: two submissions for the same unit (double click, two tabs) run one after the other, so the second
+        // sees the first one's result instead of racing it (REV-13, NFR-REV-03).
+        await tx.$queryRaw`SELECT id FROM "RevisionSchedule" WHERE unit = ${unit} FOR UPDATE`;
         const s = await tx.revisionSchedule.findUnique({
           where: { unit },
           include: { topic: { select: { name: true } }, subtopic: { select: { name: true } } },
@@ -257,6 +264,10 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
         if (!s || s.topicId !== b.topicId || s.suspendedAt) throw notEligible();
         if (s.correctionPending)
           throw new HttpError(409, "CORRECTION_REQUIRED", "Correct the gap from the last attempt first, then try again (REV-08).");
+        // One recorded attempt per unit per day: a second one right after seeing the answer is re-reading, not
+        // retrieval, and it would otherwise complete the next cycle's task (double submission, second tab).
+        if (s.lastAttemptDate && d2i(s.lastAttemptDate) === today)
+          throw new HttpError(409, "ALREADY_ATTEMPTED_TODAY", "You already recorded an attempt for this today. Its next revision is scheduled; try again then.");
         const prompt = await resolvePrompt(tx, s, b.promptId, b.templateKey);
         const policy = await revisionPolicy(tx);
         const u = applyAttempt(
@@ -292,12 +303,9 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
           },
         });
         if (open) {
-          // Completing the revision task requires this recorded attempt (spec §9.3); done today, so it sits on today.
-          const sched = d2i(open.scheduledDate);
-          await tx.task.update({
-            where: { id: open.id },
-            data: { status: "DONE", completedAt: now, ...(sched > today ? { scheduledDate: i2d(today) } : {}) },
-          });
+          // Completing the revision task requires this recorded attempt (spec §9.3). It is done today, so it counts on
+          // today's workload; originalDate (the due date) keeps any lateness visible.
+          await tx.task.update({ where: { id: open.id }, data: { status: "DONE", completedAt: now, scheduledDate: i2d(today) } });
         }
         if (b.durationMinutes) {
           await tx.studySession.create({
@@ -321,8 +329,10 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
     async correctAttempt(id: number, mistakes?: string) {
       const today = clock.today();
       return prisma.$transaction(async (tx) => {
-        const a = await tx.revisionAttempt.findUnique({ where: { id }, include: { schedule: true } });
-        if (!a) throw notFound("Attempt");
+        const found = await tx.revisionAttempt.findUnique({ where: { id }, select: { scheduleId: true } });
+        if (!found) throw notFound("Attempt");
+        await tx.$queryRaw`SELECT id FROM "RevisionSchedule" WHERE id = ${found.scheduleId} FOR UPDATE`;
+        const a = await tx.revisionAttempt.findUniqueOrThrow({ where: { id }, include: { schedule: true } });
         if (a.effectiveScore > 1) throw new HttpError(409, "NOTHING_TO_CORRECT", "Only attempts scored 0 or 1 need a correction");
         if (!a.correctionCompleted) {
           await tx.revisionAttempt.update({

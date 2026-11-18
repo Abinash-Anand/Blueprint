@@ -252,6 +252,117 @@ suite("Revision and active recall", () => {
     await request(app).patch("/api/settings").send({ revisionDailyMinutes: 30 }).expect(200);
   });
 
+  it("refinement: explicit score, reschedule keeps the due date, one attempt per cycle, no reopening", async () => {
+    clock.date = "2026-12-10";
+    const id = await subId("fe.ui", 0);
+    await learn(id);
+    clock.date = "2026-12-11";
+    // A score is mandatory and must be 0–3.
+    await request(app).post("/api/revision/attempts").send({ topicId: "fe.ui", subtopicId: id, templateKey: "explain", retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false }).expect(400);
+    await attempt("fe.ui", id, { score: -1 }).expect(400);
+    await attempt("fe.ui", id, { score: 2.5 }).expect(400);
+
+    const task = (await unitOf("fe.ui", 0)).schedule!.openTask!;
+    const to = task.scheduledDate === "2026-12-16" ? "2026-12-17" : "2026-12-16";
+    const moved = (await request(app).patch(`/api/tasks/${task.id}`).send({ scheduledDate: to }).expect(200)).body;
+    expect(moved).toMatchObject({ originalDate: "2026-12-11", scheduledDate: to, rescheduleCount: 1 });
+    clock.date = "2026-12-12";
+    expect((await request(app).get(`/api/tasks/${task.id}`)).body.revision.overdueDays).toBe(1);
+
+    // Double submission: the row lock serialises them and only one attempt is recorded for the day.
+    const [r1, r2] = await Promise.all([attempt("fe.ui", id, { score: 3 }), attempt("fe.ui", id, { score: 3 })]);
+    expect([r1.status, r2.status].sort()).toEqual([201, 409]);
+    const sched = await prisma.revisionSchedule.findUniqueOrThrow({ where: { unit: `s:${id}` }, include: { attempts: true, tasks: true } });
+    expect(sched.attempts).toHaveLength(1);
+    expect(sched.attempts[0].taskId).toBe(task.id);
+    expect(sched.tasks.filter((t) => t.status === "TODO")).toHaveLength(1);
+    const done = (await request(app).get(`/api/tasks/${task.id}`)).body;
+    expect(done).toMatchObject({ status: "DONE", scheduledDate: "2026-12-12", originalDate: "2026-12-11" }); // counted on the day it was done
+    // A recorded revision cannot be reopened, ticked or skipped by hand.
+    expect((await request(app).patch(`/api/tasks/${task.id}`).send({ status: "TODO" }).expect(409)).body.error.code).toBe("REVISION_RECORDED");
+  });
+
+  it("refinement: confirming a correction is not a successful retrieval, and history never changes", async () => {
+    clock.date = "2026-12-12";
+    const id = await subId("fe.ui", 1);
+    await learn(id);
+    clock.date = "2026-12-14";
+    const r = await attempt("fe.ui", id, { score: 1, mistakes: "Forgot aria-expanded", correctionCompleted: false }).expect(201);
+    const before = await prisma.revisionSchedule.findUniqueOrThrow({ where: { unit: `s:${id}` } });
+    expect(before).toMatchObject({ consecutiveSuccesses: 0, consecutiveFailures: 1, correctionPending: true });
+    await request(app).post(`/api/revision/attempts/${r.body.attempt.id}/correction`).send({}).expect(200);
+    const after = await prisma.revisionSchedule.findUniqueOrThrow({ where: { unit: `s:${id}` } });
+    expect(after).toMatchObject({ consecutiveSuccesses: 0, consecutiveFailures: 1, correctionPending: false, lastScore: 1 });
+    const a = await prisma.revisionAttempt.findUniqueOrThrow({ where: { id: r.body.attempt.id } });
+    expect(a).toMatchObject({ score: 1, effectiveScore: 1, correctionCompleted: true, mistakes: "Forgot aria-expanded" });
+    expect(a.correctedAt).not.toBeNull();
+    clock.date = "2026-12-15";
+    expect((await attempt("fe.ui", id, { score: 3 }).expect(201)).body).toMatchObject({ intervalDays: 7 });
+    expect((await prisma.revisionAttempt.findUniqueOrThrow({ where: { id: r.body.attempt.id } })).score).toBe(1);
+    // Learning and demonstration are untouched.
+    expect((await prisma.subtopic.findUniqueOrThrow({ where: { id } })).completedAt).not.toBeNull();
+    expect((await prisma.topic.findUniqueOrThrow({ where: { id: "fe.ui" } })).demonstratedAt).toBeNull();
+  });
+
+  it("refinement: titles follow the curriculum, Week shows revision workload and over-target time", async () => {
+    clock.date = "2026-12-15";
+    const id = await subId("fe.ui", 1);
+    const open = await prisma.task.findFirstOrThrow({ where: { subtopicId: id, status: "TODO", source: "REVISION" } });
+    const old = (await prisma.subtopic.findUniqueOrThrow({ where: { id } })).name;
+    await prisma.subtopic.update({ where: { id }, data: { name: "Accessibility (renamed)" } });
+    expect((await request(app).get(`/api/tasks/${open.id}`)).body.title).toBe("Revise: Accessibility (renamed)");
+    await prisma.subtopic.update({ where: { id }, data: { name: old } });
+
+    const w = (await request(app).get("/api/week?date=2026-12-14").expect(200)).body;
+    for (const d of w.days) expect(d.overTargetMinutes).toBe(d.inJourney ? Math.max(0, d.plannedMinutes - d.targetMinutes) : 0);
+    expect(w.revision.overTargetMinutes).toBe(w.days.reduce((a: number, d: { overTargetMinutes: number }) => a + d.overTargetMinutes, 0));
+    expect(w.revision).toMatchObject({ dailyAllowanceMinutes: 30, weeklyOvertimeMinutes: 120 });
+    expect(w.revision.overTargetMinutes).toBeLessThanOrEqual(120);
+    expect(w.revision.upcomingMinutes).toBeGreaterThanOrEqual(0);
+  });
+
+  it("refinement: strict mode keeps every study day within its target", async () => {
+    clock.date = "2026-12-15";
+    await request(app).patch("/api/settings").send({ revisionDailyMinutes: 0, revisionWeeklyOvertimeMinutes: 0 }).expect(200);
+    const id = await subId("fe.ui", 2);
+    await learn(id);
+    const t = await prisma.task.findFirstOrThrow({ where: { subtopicId: id, status: "TODO", source: "REVISION" } });
+    const day = await prisma.task.findMany({ where: { scheduledDate: t.scheduledDate, status: { not: "SKIPPED" } } });
+    expect(day.reduce((a, x) => a + x.estimatedMinutes, 0)).toBeLessThanOrEqual(240);
+    await request(app).patch("/api/settings").send({ revisionDailyMinutes: 30, revisionWeeklyOvertimeMinutes: 120 }).expect(200);
+  });
+
+  it("serves the Revision section overview from the one schedule, read-only and prioritised", async () => {
+    clock.date = "2026-12-09";
+    const tasksBefore = await prisma.task.count();
+    const o = (await request(app).get("/api/revision/overview").expect(200)).body;
+    expect(await prisma.task.count()).toBe(tasksBefore); // reading never schedules anything
+
+    type U = { scheduleId: number; nextDueDate: string | null; weak: boolean; correctionPending: boolean; topicId: string; status: string; pendingAttemptId: number | null };
+    const ids = (xs: U[]) => xs.map((u) => u.scheduleId);
+    expect(o.counts).toMatchObject({ overdue: o.overdue.length, due: o.due.length, upcoming: o.upcoming.length, weak: o.weak.length });
+    expect(o.counts.active).toBe(await prisma.revisionSchedule.count({ where: { suspendedAt: null } }));
+    for (const u of o.overdue as U[]) expect(u.nextDueDate! < "2026-12-09").toBe(true);
+    for (const u of o.due as U[]) expect(u.nextDueDate).toBe("2026-12-09");
+    for (const u of o.upcoming as U[]) expect(u.nextDueDate! > "2026-12-09" && u.nextDueDate! <= "2026-12-23").toBe(true);
+    // Each unit appears in exactly one of overdue / due / upcoming.
+    const all = [...ids(o.overdue), ...ids(o.due), ...ids(o.upcoming)];
+    expect(new Set(all).size).toBe(all.length);
+    // Overdue weak units come first.
+    const firstNonWeak = (o.overdue as U[]).findIndex((u) => !u.weak);
+    if (firstNonWeak >= 0) expect((o.overdue as U[]).slice(firstNonWeak).some((u) => u.weak)).toBe(false);
+    expect((o.weak as U[]).map((u) => u.topicId)).toContain("fe.ts");
+    // The session holds every due or overdue unit that is not blocked by a correction.
+    expect(o.session).toHaveLength([...o.overdue, ...o.due].filter((u: U) => !u.correctionPending).length);
+    for (const u of o.awaitingCorrection as U[]) expect(u.pendingAttemptId).not.toBeNull();
+    // History: newest first, every attempt with its topic.
+    expect(o.history.length).toBe(Math.min(50, await prisma.revisionAttempt.count()));
+    const times = o.history.map((a: { attemptedAt: string }) => a.attemptedAt);
+    expect([...times].sort().reverse()).toEqual(times);
+    expect(o.history[0]).toHaveProperty("topicName");
+    expect(o.checkpoints.length).toBeGreaterThan(0);
+  });
+
   it("re-seeding keeps schedules, attempts and tasks (idempotent)", async () => {
     const counts = async () => ({
       tasks: await prisma.task.count(), schedules: await prisma.revisionSchedule.count(),

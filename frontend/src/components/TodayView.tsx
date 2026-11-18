@@ -12,9 +12,10 @@ interface Props {
   date: string | null; // null = today
   onDate: (date: string | null) => void;
   onOpenTopic: (id: string) => void;
+  onOpenRevision?: () => void;
 }
 
-export function TodayView({ date, onDate, onOpenTopic }: Props) {
+export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) {
   const { version, mutate, topicById, districtById, progress } = useAppData();
   const [data, setData] = useState<Today | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -206,6 +207,9 @@ export function TodayView({ date, onDate, onOpenTopic }: Props) {
               {isToday && sessionItems.length > 1 && (
                 <button className="btn primary" onClick={() => setSession(sessionItems)}>Start revision session ({sessionItems.length})</button>
               )}
+              {onOpenRevision && (
+                <button className="btn" style={sessionItems.length > 1 && isToday ? { marginLeft: 0 } : undefined} onClick={onOpenRevision}>All revisions</button>
+              )}
             </h3>
             <div className="card soft rvcard">
               {revToday.length > 0 && (
@@ -218,7 +222,8 @@ export function TodayView({ date, onDate, onOpenTopic }: Props) {
               {rv.competing && (
                 <p>
                   <b>Revision is competing with new learning today:</b> {hm(rv.learningMinutes)} of learning plus {hm(rv.plannedMinutes)} of revision against a{" "}
-                  {hm(data.targetMinutes)} target. Learning tasks are not moved; revision is capped at {hm(rv.dailyAllowanceMinutes)} on full days.
+                  {hm(data.targetMinutes)} target ({hm(rv.overTargetMinutes)} over). Learning tasks are not moved. Over-target revision is capped at{" "}
+                  {hm(rv.dailyAllowanceMinutes)} a day and {hm(rv.weeklyOvertimeMinutes)} a week; this week uses {hm(rv.weekOverTargetMinutes)}.
                 </p>
               )}
               {rv.awaitingCorrection > 0 && (

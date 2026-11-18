@@ -28,7 +28,10 @@ export async function loadTargets(prisma: Db): Promise<Record<number, number>> {
 export async function loadSettings(prisma: Db) {
   const s = await prisma.settings.findUnique({ where: { id: 1 } });
   if (!s) throw new HttpError(500, "NOT_SEEDED", "Settings missing: the database has not been seeded");
-  return { journeyStart: d2i(s.journeyStart), journeyEnd: d2i(s.journeyEnd), timezone: s.timezone, revisionDailyMinutes: s.revisionDailyMinutes };
+  return {
+    journeyStart: d2i(s.journeyStart), journeyEnd: d2i(s.journeyEnd), timezone: s.timezone,
+    revisionDailyMinutes: s.revisionDailyMinutes, revisionWeeklyOvertimeMinutes: s.revisionWeeklyOvertimeMinutes,
+  };
 }
 
 export function scheduleService(prisma: PrismaClient) {
@@ -59,7 +62,7 @@ export function scheduleService(prisma: PrismaClient) {
       };
     },
 
-    async patchSettings(body: { weeklyTargets?: { weekday: number; targetMinutes: number }[]; revisionDailyMinutes?: number }) {
+    async patchSettings(body: { weeklyTargets?: { weekday: number; targetMinutes: number }[]; revisionDailyMinutes?: number; revisionWeeklyOvertimeMinutes?: number }) {
       await prisma.$transaction([
         ...(body.weeklyTargets ?? []).map((t) =>
           prisma.weeklyTarget.upsert({
@@ -68,8 +71,14 @@ export function scheduleService(prisma: PrismaClient) {
             create: { weekday: t.weekday, targetMinutes: t.targetMinutes },
           }),
         ),
-        ...(body.revisionDailyMinutes !== undefined
-          ? [prisma.settings.update({ where: { id: 1 }, data: { revisionDailyMinutes: body.revisionDailyMinutes } })]
+        ...(body.revisionDailyMinutes !== undefined || body.revisionWeeklyOvertimeMinutes !== undefined
+          ? [prisma.settings.update({
+              where: { id: 1 },
+              data: {
+                ...(body.revisionDailyMinutes !== undefined && { revisionDailyMinutes: body.revisionDailyMinutes }),
+                ...(body.revisionWeeklyOvertimeMinutes !== undefined && { revisionWeeklyOvertimeMinutes: body.revisionWeeklyOvertimeMinutes }),
+              },
+            })]
           : []),
       ]);
       return this.getSettings();

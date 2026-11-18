@@ -94,10 +94,14 @@ export function taskService(prisma: PrismaClient, clock: Clock) {
         data.scheduledDate = i2d(p.scheduledDate);
         data.rescheduleCount = { increment: 1 };
       }
-      if (t.revisionScheduleId && p.status === "DONE" && t.status !== "DONE")
-        throw new HttpError(409, "ATTEMPT_REQUIRED", "A revision is completed by recording a recall attempt, not by ticking it.");
-      if (t.revisionScheduleId && p.status === "SKIPPED")
-        throw new HttpError(409, "REVISION_NOT_SKIPPABLE", "A revision stays due until you attempt it. Move it to another day instead.");
+      // A revision task's status follows its attempts (spec §9.3): it cannot be ticked, skipped or reopened by hand.
+      if (t.revisionScheduleId && p.status !== undefined && p.status !== t.status) {
+        if (p.status === "DONE")
+          throw new HttpError(409, "ATTEMPT_REQUIRED", "A revision is completed by recording a recall attempt, not by ticking it.");
+        if (p.status === "SKIPPED")
+          throw new HttpError(409, "REVISION_NOT_SKIPPABLE", "A revision stays due until you attempt it. Move it to another day instead.");
+        throw new HttpError(409, "REVISION_RECORDED", "This revision is recorded with its attempt and stays in the history. Revise the unit again instead.");
+      }
       if (p.status !== undefined && p.status !== t.status) {
         data.status = p.status;
         data.completedAt = p.status === "DONE" ? clock.now() : null;

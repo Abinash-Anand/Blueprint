@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — High-Level Design"
 subtitle: "Architecture of the local-first full-stack application"
-version: "1.2"
+version: "1.4"
 date: "18 November 2026"
 ---
 
@@ -50,6 +50,7 @@ flowchart LR
     subgraph Views
       TODAY["Today<br/>(Mission Control)"]
       WEEK["Week"]
+      REV["Revision"]
       CITY["City map"]
       PROG["Progress & timeline"]
     end
@@ -85,7 +86,8 @@ Revision (SRS §3.9) follows the same pattern and adds no new infrastructure: on
 flowchart TB
   MAIN["main.tsx"] --> APPX["App.tsx<br/>view state · selected topic"]
   APPX --> SIDE["Sidebar<br/>brand · overall · Today card · Next up · layer groups"]
-  APPX --> TABS["ViewTabs<br/>Today · Week · City · Progress"]
+  APPX --> TABS["ViewTabs<br/>Today · Week · Revision (badge) · City · Progress"]
+  APPX --> RVV["RevisionView<br/>due · overdue · weak · upcoming · history · analytics"]
   APPX --> TV["TodayView"]
   APPX --> WV["WeekView"]
   APPX --> CM["CityMap"]
@@ -93,7 +95,7 @@ flowchart TB
   CM --> TP["TopicPanel"]
   TP --> RB["RevisionBox<br/>units · history · questions"]
   TV --> TR["TaskRow · TimeLogForm · TaskEditor"]
-  RB & TR & TV --> RD["RecallDialog<br/>prompt → answer → reveal → assess"]
+  RB & TR & TV & RVV --> RD["RecallDialog<br/>prompt → answer → reveal → assess"]
   CM --> ENG["map/geometry.ts<br/>map/render.ts<br/>map/camera.ts"]
   APPX --> CTX["AppDataProvider"]
   CTX --> API["api/client.ts"]
@@ -106,7 +108,7 @@ flowchart TB
 | Map | The original SVG-string renderer is ported to typed, pure modules (`geometry.ts`, `render.ts`). `CityMap` owns pan, zoom and fly through refs and injects the rendered SVG into one `<g>`. This keeps the visuals exactly the same and keeps rendering fast. |
 | State | React context (`AppDataProvider`) holds the curriculum and progress from the server and exposes `refresh()`. View-local state (the day being viewed, open editors) stays in components. There is no Redux or React Query (C-3). |
 | Data flow | Every mutation is a REST call, followed by a re-fetch of the affected summaries. Sub-topic ticks update the UI optimistically for instant floors, and roll back on error. |
-| Recall | One `RecallDialog` serves checkpoints, single revisions and interleaved sessions. It is rendered in a portal above the app, keeps the expected answer out of the page until the learner presses *Reveal*, and submits through the same `mutate()` path as every other change. The topic panel gets a compact *Recall and revision* box rather than a new navigation section (spec §14). |
+| Recall | One `RecallDialog` serves checkpoints, single revisions and interleaved sessions. It is rendered in a portal above the app, keeps the expected answer out of the page until the learner presses *Reveal*, and submits through the same `mutate()` path as every other change. The topic panel keeps a compact *Recall and revision* box per topic; the **Revision** view gives the cross-topic picture (due, overdue, weak, upcoming, history, analytics) and is the one place revision analytics appear, apart from learning and demonstration progress. The tab badge and the sidebar line are derived from the Today summary that is already loaded, so indicators need no extra polling. |
 | Routing | A single page with a view switcher. The view is kept in the URL hash (`#/today`, `#/city/be.api`) so that reload and back work without a router library. |
 
 # 5. Backend architecture
@@ -120,7 +122,7 @@ flowchart TB
   APP --> R3["sessions.routes"]
   APP --> R4["summary.routes<br/>today · week · progress"]
   APP --> R5["schedule.routes<br/>stages · settings"]
-  APP --> R6["revision.routes<br/>attempts · corrections · checkpoints · prompts"]
+  APP --> R6["revision.routes<br/>overview · attempts · corrections · checkpoints · prompts"]
   R1 & R2 & R3 & R4 & R5 & R6 --> S["*.service.ts"]
   S --> D["domain/<br/>dates · progress · planner · reschedule · revision"]
   S --> P["db.ts (PrismaClient)"]
@@ -136,6 +138,8 @@ flowchart TB
 | Errors | A typed `HttpError(status, code, message)`. The central handler maps Prisma `P2025` to `404`, and anything else to `500` without leaking internals. |
 | Clock | `Clock` is injected into `createApp`. Production uses the system time converted to Berlin. Tests and demos can set `APP_TODAY=YYYY-MM-DD` (FR-CAL-08, AC-08). |
 | Seeding | `prisma/seed.ts` upserts the curriculum and its 83 revision prompts, generates the plan only when no plan tasks exist (FR-CUR-09, scheduling rule 7), and backfills revision schedules for anything learned before revision existed. Every step is idempotent. |
+| Revision workload | Revision counts inside the planned day and week (SRS BR-18): free time first, then a daily (30 min) and weekly (120 min) over-target allowance, both stored in `Settings`. Placement only reads learning load; it never moves learning tasks. |
+| Revision integrity | Attempts for one unit are serialised with `SELECT … FOR UPDATE` on the schedule row inside the attempt transaction; one attempt per unit per day; a partial unique index keeps one open task per unit; a unique-key violation maps to `409 CONFLICT`, never `500`. |
 | Revision scheduling | Event-driven inside the request that changes learning state: ticking a sub-topic, demonstrating a topic, recording an attempt or confirming a correction runs `syncTopic` (eligibility) and `planOpenRevisions` (placement) in the same transaction. No background jobs or timers are needed. |
 
 # 6. Database architecture
@@ -241,7 +245,9 @@ sequenceDiagram
 | CityMap | Isometric map, pan, zoom, fly, building selection, car, signposts | FR-MAP-*, FR-CAR-* |
 | TopicPanel | Topic details, sub-topic checklist, demonstration, schedule a task | FR-MAP-04/06/10 |
 | RevisionBox | Per-unit revision status, *Check* and *Revise*, correction, history, questions | FR-REV-16 |
-| RecallDialog | Prompt, answer from memory, reveal, assessment, correction; single unit or interleaved session | FR-REV-06/07/17 |
+| RecallDialog | Three steps (Retrieve → Compare → Assess) with a step indicator, inputs kept across steps, no default score; single unit or interleaved session | FR-REV-06/07/17 |
+| RevisionStatus | Shared status vocabulary (one primary state + Weak flag) used by the topic panel, Revision view and Today rows | FR-REV-24 |
+| RevisionView | Revision section: counts, correction / overdue / due / weak / upcoming lists, session, history, recall analytics, allowance | FR-REV-15, FR-REV-19–21 |
 | TodayView | Mission Control: tasks, target, time log, carried over, rest or buffer day | FR-TODAY-* |
 | WeekView | Seven-day grid, totals, milestones | FR-WEEK-* |
 | ProgressView | Hours, per-district progress, learned vs demonstrated, stage timeline and delays | FR-PROG-*, FR-CAL-05 |
@@ -251,7 +257,7 @@ sequenceDiagram
 | Summary service | Today, week and progress aggregates | FR-TODAY, FR-WEEK, FR-PROG |
 | Schedule service | Stages, weekly targets, settings | FR-CAL-07, FR-SET-* |
 | Planner (domain) | Generate the initial plan from the curriculum and stages | §6 of the SRS |
-| Revision service | Eligibility sync, placement, attempts, corrections, checkpoints, prompts, topic revision view | FR-REV-01–12 |
+| Revision service | Eligibility sync, placement, attempts, corrections, checkpoints, prompts, topic revision view; read-only overview for the Revision section (`overview.ts`) | FR-REV-01–12, FR-REV-19–21 |
 | Revision engine (domain) | `applyAttempt`, `placeRevisions`, `revisionOrder`, `interleave`, status derivation | BR-14–BR-18 |
 
 # 9. Technology choices
@@ -276,7 +282,7 @@ sequenceDiagram
 - **Verbs:** `GET` reads, `POST` creates or runs actions, `PATCH` makes partial updates, `DELETE` removes.
 - **Status codes:** `200` OK, `201` Created, `204` No Content, `400` validation error, `404` not found, `409` business-rule conflict (for example deleting a plan task), `500` unexpected error.
 - **Error body:** `{ "error": { "code": "VALIDATION_ERROR", "message": "...", "details": [...] } }`.
-- **Resource groups:** curriculum, tasks, sessions, summaries (today, week, progress), stages, settings, revision (topic revision view, attempts, corrections), checkpoints, prompts, health. All of them are specified in `LLD.md` §4.
+- **Resource groups:** curriculum, tasks, sessions, summaries (today, week, progress), stages, settings, revision (overview, topic revision view, attempts, corrections), checkpoints, prompts, health. All of them are specified in `LLD.md` §4.
 
 # 11. Local Docker deployment
 

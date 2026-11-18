@@ -42,6 +42,8 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   else if (err?.type === "entity.too.large") e = new HttpError(413, "PAYLOAD_TOO_LARGE", "Request body is too large");
   else if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") e = notFound("Record");
   else if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2003") e = new HttpError(400, "INVALID_REFERENCE", "Referenced record does not exist");
+  else if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002")
+    e = new HttpError(409, "CONFLICT", "That change conflicts with existing data (for example a second open revision task). Reload and try again.");
   else if (err instanceof Prisma.PrismaClientUnknownRequestError && /check constraint/i.test(err.message))
     e = new HttpError(400, "CONSTRAINT_VIOLATION", "Value violates a database constraint");
   else {

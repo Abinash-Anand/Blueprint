@@ -4,6 +4,7 @@ import type { Task } from "../api/types";
 import { KIND_LABEL, dayMonth, hm, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { RecallDialog } from "./RecallDialog";
+import { RevisionStatus } from "./RevisionStatus";
 
 interface Props {
   task: Task;
@@ -68,16 +69,21 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
                 {t.topic.name}
               </button>
             )}
-            <span>{KIND_LABEL[t.kind]}</span>
+            <span className={`tag kind ${t.kind.toLowerCase()}`}>{KIND_LABEL[t.kind]}</span>
             {t.loggedMinutes > 0 && <span>{hm(t.loggedMinutes)} logged</span>}
-            {overdue > 0 && <span className="delayed">{plural(overdue, "day")} overdue</span>}
             {rv ? (
-              rv.dueDate !== t.scheduledDate && <span>due {dayMonth(rv.dueDate)}</span>
+              <RevisionStatus
+                x={{ correctionPending: rv.correctionPending && !done, nextDueDate: rv.dueDate, completed: done }}
+                today={today}
+                weak={rv.weak}
+                extra={rv.overdueDays > 0 ? `due ${dayMonth(rv.dueDate)}` : undefined}
+              />
             ) : (
-              t.originalDate !== t.scheduledDate && <span>planned {dayMonth(t.originalDate)}</span>
+              <>
+                {overdue > 0 && <span className="delayed">{plural(overdue, "day")} overdue</span>}
+                {t.originalDate !== t.scheduledDate && <span>planned {dayMonth(t.originalDate)}</span>}
+              </>
             )}
-            {rv?.weak && <span className="tag ink">Weak</span>}
-            {rv?.correctionPending && <span className="tag ink">Correction pending</span>}
             {compact && t.scheduledDate !== today && <span>on {dayMonth(t.scheduledDate)}</span>}
             {skipped && <span>skipped</span>}
             {t.subtopic && !rv && (
@@ -94,7 +100,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
             )}
             {!rv && <button className="btn" onClick={() => open("log")} aria-expanded={mode === "log"}>Log time</button>}
             <button className="btn" onClick={() => open("move")} aria-expanded={mode === "move"}>Reschedule</button>
-            <button className="btn" onClick={() => open("edit")} aria-expanded={mode === "edit"}>Edit</button>
+            {!rv && <button className="btn" onClick={() => open("edit")} aria-expanded={mode === "edit"}>Edit</button>}
             {rv ? null : t.source === "PLAN" ? (
               <button className="btn" onClick={() => void mutate(() => api.patchTask(t.id, { status: skipped ? "TODO" : "SKIPPED" }))}>
                 {skipped ? "Unskip" : "Skip"}

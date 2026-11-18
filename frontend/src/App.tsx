@@ -3,6 +3,7 @@ import { api } from "./api/client";
 import type { Today } from "./api/types";
 import { CityMap, type Focus } from "./components/CityMap";
 import { ProgressView } from "./components/ProgressView";
+import { RevisionView } from "./components/RevisionView";
 import { Sidebar } from "./components/Sidebar";
 import { TodayView } from "./components/TodayView";
 import { WeekView } from "./components/WeekView";
@@ -11,17 +12,18 @@ import { shortDate } from "./lib/format";
 import { layout } from "./map/geometry";
 import { useAppData } from "./state/AppData";
 
-type View = "today" | "week" | "city" | "progress";
+type View = "today" | "week" | "revision" | "city" | "progress";
 const VIEWS: { id: View; label: string }[] = [
   { id: "today", label: "Today" },
   { id: "week", label: "Week" },
+  { id: "revision", label: "Revision" },
   { id: "city", label: "City" },
   { id: "progress", label: "Progress" },
 ];
 
 interface Route { view: View; param: string | null }
 
-/** Hash routing without a router library: #/today[/date], #/week[/date], #/city[/topic], #/progress */
+/** Hash routing without a router library: #/today[/date], #/week[/date], #/revision, #/city[/topic], #/progress */
 export function parseHash(hash: string): Route {
   const [, v, p] = hash.replace(/^#/, "").split("/");
   const known = VIEWS.find((x) => x.id === v);
@@ -77,6 +79,14 @@ export function App() {
     setFocus({ kind: "district", idx, n: ++nonce.current });
   }, [go, route]);
 
+  const openRevision = useCallback(() => {
+    setSideOpen(false);
+    go({ view: "revision", param: null });
+  }, [go]);
+  // In-app indicator (FR-REV-22): revisions due by today, from the same Today summary the sidebar uses.
+  const revDue = today?.revision.dueCount ?? 0;
+  const revOverdue = today?.revision.overdueCount ?? 0;
+
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setSideOpen(false);
     addEventListener("keydown", esc);
@@ -106,20 +116,32 @@ export function App() {
         onOpenTopic={openTopic}
         onOpenDistrict={openDistrict}
         onOpenToday={() => { setSideOpen(false); go({ view: "today", param: null }); }}
+        onOpenRevision={openRevision}
       />
       <div className="main">
         <header className="vbar">
           <button className="btn menu" aria-label="Open districts" onClick={() => setSideOpen(true)}>☰</button>
           <nav className="tabs" role="tablist" aria-label="Views">
-            {VIEWS.map((v) => (
-              <button key={v.id} role="tab" aria-selected={view === v.id} onClick={() => go({ view: v.id, param: v.id === "city" ? param && view === "city" ? param : null : null })}>
-                {v.label}
-              </button>
-            ))}
+            {VIEWS.map((v) => {
+              const badge = v.id === "revision" && revDue > 0;
+              return (
+                <button
+                  key={v.id}
+                  role="tab"
+                  aria-selected={view === v.id}
+                  aria-label={badge ? `Revision, ${revDue} due${revOverdue ? `, ${revOverdue} overdue` : ""}` : undefined}
+                  onClick={() => go({ view: v.id, param: v.id === "city" ? param && view === "city" ? param : null : null })}
+                >
+                  {v.label}
+                  {badge && <span className={`tbadge${revOverdue ? " late" : ""}`} aria-hidden="true">{revDue}</span>}
+                </button>
+              );
+            })}
           </nav>
           <span className="vdate">{today ? `${shortDate(today.today)} · Europe/Berlin` : ""}</span>
         </header>
-        {view === "today" && <TodayView date={param} onDate={(d) => go({ view: "today", param: d }, true)} onOpenTopic={openTopic} />}
+        {view === "today" && <TodayView date={param} onDate={(d) => go({ view: "today", param: d }, true)} onOpenTopic={openTopic} onOpenRevision={openRevision} />}
+        {view === "revision" && <RevisionView onOpenTopic={openTopic} />}
         {view === "week" && (
           <WeekView date={param} onDate={(d) => go({ view: "week", param: d }, true)} onOpenDay={(d) => go({ view: "today", param: d === today?.today ? null : d })} onOpenTopic={openTopic} />
         )}
@@ -136,7 +158,7 @@ export function App() {
             onClose={() => go({ view: "city", param: null }, true)}
           />
         )}
-        {view === "progress" && <ProgressView onOpenDistrict={openDistrict} onOpenTopic={openTopic} />}
+        {view === "progress" && <ProgressView onOpenDistrict={openDistrict} onOpenRevision={openRevision} />}
       </div>
       <div className={`scrim${sideOpen ? " on" : ""}`} onClick={() => setSideOpen(false)} />
       {notice && (

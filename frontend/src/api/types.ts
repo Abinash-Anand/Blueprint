@@ -243,6 +243,9 @@ export interface Today {
     plannedMinutes: number;
     learningMinutes: number;
     dailyAllowanceMinutes: number;
+    weeklyOvertimeMinutes: number;
+    overTargetMinutes: number;
+    weekOverTargetMinutes: number;
     competing: boolean;
     dueCount: number;
     overdueCount: number;
@@ -267,6 +270,7 @@ export interface WeekDay {
   revisionTasks: number;
   revisionPlannedMinutes: number;
   revisionDoneMinutes: number;
+  overTargetMinutes: number;
 }
 
 export interface Week {
@@ -282,7 +286,10 @@ export interface Week {
     tasksRemaining: number;
     remainingMinutes: number;
   };
-  revision: { plannedMinutes: number; doneMinutes: number; dueThisWeek: number; overdue: number };
+  revision: {
+    plannedMinutes: number; doneMinutes: number; upcomingMinutes: number; dueThisWeek: number; overdue: number;
+    overTargetMinutes: number; dailyAllowanceMinutes: number; weeklyOvertimeMinutes: number;
+  };
   milestones: { date: ISODate; type: "PRACTICE" | "STAGE_END"; title: string; topicId: string | null; stageId: string | null; done: boolean }[];
   tasks: Task[];
 }
@@ -347,4 +354,41 @@ export interface Progress {
       lastScore: number | null; consecutiveFailures: number; nextDueDate: ISODate | null;
     }[];
   };
+}
+
+export interface RevisionUnitRow {
+  scheduleId: number;
+  topicId: string;
+  topicName: string;
+  districtId: string;
+  subtopicId: number | null;
+  scope: RevisionScope;
+  label: string;
+  status: RevisionStatus;
+  nextDueDate: ISODate | null;
+  overdueDays: number;
+  lastAttemptDate: ISODate | null;
+  lastScore: number | null;
+  consecutiveSuccesses: number;
+  weak: boolean;
+  correctionPending: boolean;
+  pendingAttemptId: number | null;
+  openTask: { id: number; scheduledDate: ISODate } | null;
+}
+
+/** GET /revision/overview: the Revision section (read-only, derived from the one schedule table). */
+export interface RevisionOverview {
+  today: ISODate;
+  upcomingDays: number;
+  dailyAllowanceMinutes: number;
+  weeklyOvertimeMinutes: number;
+  counts: { due: number; overdue: number; upcoming: number; later: number; weak: number; awaitingCorrection: number; active: number; paused: number };
+  overdue: RevisionUnitRow[];
+  due: RevisionUnitRow[];
+  upcoming: RevisionUnitRow[];
+  weak: RevisionUnitRow[];
+  awaitingCorrection: RevisionUnitRow[];
+  session: { topicId: string; scope: RevisionScope; subtopicId: number | null }[];
+  history: (Attempt & { topicId: string; topicName: string })[];
+  checkpoints: { id: number; topicId: string; topicName: string; subtopicId: number; label: string; result: CheckpointResult; neededAssistance: boolean; gaps: string; date: ISODate }[];
 }

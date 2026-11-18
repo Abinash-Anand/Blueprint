@@ -1,7 +1,8 @@
 /**
- * Active recall dialog (Revision spec §6, §9): prompt → retrieve from memory → reveal → assess → correct.
+ * Active recall dialog (Revision spec §6, §9; refinement §2.1/§2.3): three steps, Retrieve → Compare → Assess.
  * Used for scheduled revision (one unit or an interleaved session) and for checkpoints during initial learning.
- * The expected answer is hidden until the learner reveals it.
+ * The expected answer stays hidden until the learner moves past Retrieve; moving between steps keeps every input;
+ * no score is preselected and Save stays disabled until one is chosen.
  */
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -18,16 +19,22 @@ export interface RecallItem {
   mode: "revision" | "checkpoint";
 }
 
-type Step = "prompt" | "check" | "done";
+type Step = "retrieve" | "compare" | "assess" | "done";
+const STEPS: { id: Exclude<Step, "done">; label: string }[] = [
+  { id: "retrieve", label: "Retrieve" },
+  { id: "compare", label: "Compare" },
+  { id: "assess", label: "Assess" },
+];
 
 export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose: () => void }) {
   const { mutate, topicById } = useAppData();
   const [index, setIndex] = useState(0);
   const [rev, setRev] = useState<TopicRevision | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [step, setStep] = useState<Step>("prompt");
+  const [step, setStep] = useState<Step>("retrieve");
   const [choice, setChoice] = useState(0);
   const [method, setMethod] = useState<RetrievalMethod>("CONCEPTUAL");
+  const [changing, setChanging] = useState(false);
   const [response, setResponse] = useState("");
   const [score, setScore] = useState<0 | 1 | 2 | 3 | null>(null);
   const [result, setResult] = useState<CheckpointResult | null>(null);
@@ -42,8 +49,10 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   const box = useRef<HTMLDivElement>(null);
+  const stepRef = useRef<HTMLDivElement>(null);
 
   const item = items[index];
+  const dirty = response.trim() !== "" || mistakes.trim() !== "" || score !== null || result !== null;
 
   useEffect(() => {
     let live = true;
@@ -67,18 +76,24 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
     };
   }, [item.topicId, item.scope, item.subtopicId, item.mode, reload]);
 
-  // Focus once on open; a parent re-render (new onClose identity) must not steal focus from the textarea.
+  // Focus once on open. Escape exits, but never discards typed work silently.
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   useEffect(() => {
     box.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !dirtyRef.current && closeRef.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  useEffect(() => {
+    if (step !== "retrieve") stepRef.current?.focus();
+  }, [step]);
 
   const reset = () => {
-    setStep("prompt");
+    setStep("retrieve");
+    setChanging(false);
     setResponse("");
     setScore(null);
     setResult(null);
@@ -100,9 +115,11 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
   const pending = isRevision && unit?.schedule?.correctionPending;
   const pendingAttempt = pending ? rev?.attempts.find((a) => a.id === unit?.schedule?.pendingAttemptId) : undefined;
   const ref = option ? (option.promptId ? { promptId: option.promptId } : { templateKey: option.templateKey! }) : null;
+  const assessed = isRevision ? score !== null : result !== null;
+  const canSave = !busy && !!ref && assessed && (!isRevision || !failed || mistakes.trim().length > 0);
 
   const save = async () => {
-    if (!unit || !ref) return;
+    if (!unit || !ref || !canSave) return;
     setBusy(true);
     if (isRevision && score !== null) {
       const minutes = Number(duration);
@@ -125,7 +142,7 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
       if (r) {
         setOutcome(
           r.correctionPending && !r.nextDueDate
-            ? "Recorded. Correct the gap (re-read the material, then confirm it in the topic panel) and the next attempt is scheduled for the following study day."
+            ? "Recorded. Go back to the material for the gap, then confirm the correction; the retry is scheduled for the next study day after that."
             : `Recorded as "${scoreLabel(score)}"${r.effectiveScore !== score ? " (counted as Recalled because hints or notes were used)" : ""}. ` +
                 `Next revision due ${shortDate(r.nextDueDate!)}${r.nextTaskDate && r.nextTaskDate !== r.nextDueDate ? `, planned for ${shortDate(r.nextTaskDate)}` : ""}.` +
                 (r.correctionPending ? " Confirm the correction before that attempt." : ""),
@@ -164,18 +181,29 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
     setIndex((i) => i + 1);
   };
 
-  const canSave =
-    !busy && !!ref && (isRevision ? score !== null : result !== null) && (!failed || !isRevision || mistakes.trim().length > 0);
+  const exitLabel = items.length > 1 ? "Exit session" : "Close";
+  const stepIndex = STEPS.findIndex((s) => s.id === step);
+  const showSteps = !!unit && step !== "done" && !(isRevision && (!unit.eligible || pending));
 
   return createPortal(
-    <div className="overlay" role="presentation">
+    <div className="overlay focus" role="presentation">
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="recall-title" tabIndex={-1} ref={box}>
-        <button className="close" aria-label="Close" onClick={onClose}>×</button>
+        <button className="close" aria-label={exitLabel} title={dirty ? "Exit (your answer is discarded)" : exitLabel} onClick={onClose}>×</button>
         <div className="kick">
           {isRevision ? "Revision" : "Recall check"}
           {items.length > 1 && ` · ${index + 1} of ${items.length}`} · {topicName}
         </div>
         <h2 id="recall-title">{unit?.label ?? "…"}</h2>
+        {(showSteps || (!unit && !loadError)) && (
+          <ol className="rd-steps" aria-label="Steps">
+            {STEPS.map((s, i) => (
+              <li key={s.id} className={i === stepIndex ? "on" : i < stepIndex ? "past" : ""} aria-current={i === stepIndex ? "step" : undefined}>
+                <span>{i < stepIndex ? "✓" : i + 1}</span>
+                {s.label}
+              </li>
+            ))}
+          </ol>
+        )}
 
         {loadError ? (
           <div className="empty">{loadError}</div>
@@ -205,7 +233,8 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
         ) : pending ? (
           <>
             <p className="rd-note">
-              Your last attempt here needs a correction first. Go back to the material, fix the misunderstanding, then confirm.
+              Your last attempt here needs a correction first. Go back to the material and fix the misunderstanding. Confirming it does not count as
+              a successful recall: the next attempt does.
             </p>
             {pendingAttempt?.mistakes && <div className="rd-box"><b>What was missing</b><p>{pendingAttempt.mistakes}</p></div>}
             <div className="rd-acts">
@@ -213,110 +242,129 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
               <button className="btn" onClick={onClose}>Later</button>
             </div>
           </>
-        ) : (
-          <>
-            <div className="rd-row">
-              <label>
-                Prompt
-                <select className="inp" value={choice} disabled={step !== "prompt"} onChange={(e) => {
-                  const i = Number(e.target.value);
-                  setChoice(i);
-                  setMethod(unit.options[i].retrievalMethod);
-                }}>
-                  {unit.options.map((o, i) =>
-                    o.isActive ? (
-                      <option key={i} value={i}>
-                        {o.title} · {SOURCE_LABEL[o.source]}{o.uses ? ` · used ${o.uses}×` : ""}
-                      </option>
-                    ) : null,
-                  )}
-                </select>
-              </label>
-              <label>
-                Method
-                <select className="inp" value={method} disabled={step !== "prompt"} onChange={(e) => setMethod(e.target.value as RetrievalMethod)}>
-                  {Object.entries(METHOD_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-              </label>
+        ) : step === "retrieve" ? (
+          <div className="rd-step">
+            <div className="rd-meta">
+              <span>{METHOD_LABEL[method]} · {option?.title} ({option ? SOURCE_LABEL[option.source] : ""})</span>
+              <button className="link" aria-expanded={changing} onClick={() => setChanging((x) => !x)}>{changing ? "Keep this question" : "Change question"}</button>
             </div>
+            {changing && (
+              <div className="rd-row">
+                <label>
+                  Prompt
+                  <select className="inp" value={choice} onChange={(e) => {
+                    const i = Number(e.target.value);
+                    setChoice(i);
+                    setMethod(unit.options[i].retrievalMethod);
+                  }}>
+                    {unit.options.map((o, i) =>
+                      o.isActive ? (
+                        <option key={i} value={i}>
+                          {o.title} · {SOURCE_LABEL[o.source]}{o.uses ? ` · used ${o.uses}×` : ""}
+                        </option>
+                      ) : null,
+                    )}
+                  </select>
+                </label>
+                <label>
+                  Method
+                  <select className="inp" value={method} onChange={(e) => setMethod(e.target.value as RetrievalMethod)}>
+                    {Object.entries(METHOD_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </label>
+              </div>
+            )}
             <p className="rd-q">{option?.content}</p>
             <label className="rd-field">
-              Your answer, from memory {method === "VISUAL" ? "(describe what you drew, or the key relationships)" : method === "PRACTICAL" ? "(paste the code or describe what you built)" : "(optional: key points are enough)"}
-              <textarea className="inp" value={response} maxLength={5000} readOnly={step !== "prompt"} onChange={(e) => setResponse(e.target.value)} rows={5} />
+              Your answer, from memory {method === "VISUAL" ? "(describe what you drew, or the key relationships)" : method === "PRACTICAL" ? "(paste the code or describe what you built)" : "(key points are enough)"}
+              <textarea className="inp" value={response} maxLength={5000} onChange={(e) => setResponse(e.target.value)} rows={6} autoFocus />
             </label>
-
-            {step === "prompt" ? (
-              <>
-                <p className="rd-hint">Close the notes and answer first. The expected answer stays hidden until you reveal it.</p>
-                <div className="rd-acts">
-                  <button className="btn primary" onClick={() => setStep("check")}>Reveal the expected answer</button>
-                  <button className="btn" onClick={onClose}>Cancel</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="rd-box">
-                  <b>What a full answer covers</b>
-                  <p>{option?.expectedAnswer}</p>
-                </div>
-                <fieldset className="rd-scale">
-                  <legend>{isRevision ? "How well did you retrieve it?" : "How did it go?"}</legend>
-                  {isRevision
-                    ? SCORES.map((s) => (
-                        <label key={s.score} className={score === s.score ? "on" : ""}>
-                          <input type="radio" name="score" checked={score === s.score} onChange={() => setScore(s.score)} />
-                          <span><b>{s.score} · {s.label}</b><small>{s.help}</small></span>
-                        </label>
-                      ))
-                    : CHECKPOINT_RESULTS.map((c) => (
-                        <label key={c.result} className={result === c.result ? "on" : ""}>
-                          <input type="radio" name="result" checked={result === c.result} onChange={() => setResult(c.result)} />
-                          <span><b>{c.label}</b></span>
-                        </label>
-                      ))}
-                </fieldset>
-                <div className="rd-checks">
-                  {isRevision ? (
-                    <>
-                      <label><input type="checkbox" checked={usedHints} onChange={(e) => setUsedHints(e.target.checked)} /> I used hints</label>
-                      <label><input type="checkbox" checked={usedNotes} onChange={(e) => setUsedNotes(e.target.checked)} /> I looked at notes or docs</label>
-                    </>
-                  ) : (
-                    <label><input type="checkbox" checked={assisted} onChange={(e) => setAssisted(e.target.checked)} /> I needed help or the material</label>
-                  )}
-                </div>
-                <label className="rd-field">
-                  {failed || (!isRevision && result === "PARTIAL") ? "What was missing or wrong?" : "Mistakes or gaps (optional)"}
-                  {isRevision && failed && <span className="req"> required</span>}
-                  <textarea className="inp" value={mistakes} maxLength={2000} onChange={(e) => setMistakes(e.target.value)} rows={2} />
-                </label>
-                {isRevision && failed && (
-                  <label className="rd-checks">
-                    <span>
-                      <input type="checkbox" checked={corrected} onChange={(e) => setCorrected(e.target.checked)} /> I've gone back to the material and
-                      corrected my understanding
-                    </span>
-                  </label>
-                )}
-                {isRevision && (
-                  <div className="rd-row">
-                    <label>
-                      Minutes spent (optional)
-                      <input className="inp" type="number" min={1} max={720} value={duration} onChange={(e) => setDuration(e.target.value)} style={{ width: 110 }} />
+            <p className="rd-hint">Close your notes and answer first. The expected answer appears in the next step.</p>
+            <div className="rd-acts">
+              <button className="btn primary" onClick={() => setStep("compare")}>Continue to comparison</button>
+              <button className="btn" onClick={onClose}>{exitLabel}</button>
+            </div>
+          </div>
+        ) : step === "compare" ? (
+          <div className="rd-step" ref={stepRef} tabIndex={-1}>
+            <div className="rd-compare">
+              <div className="rd-box">
+                <b>Your answer</b>
+                <p className={response.trim() ? "rd-answer" : "m"}>{response.trim() || "No written answer (answered aloud or on paper)."}</p>
+              </div>
+              <div className="rd-box">
+                <b>What a full answer covers</b>
+                <p>{option?.expectedAnswer}</p>
+              </div>
+            </div>
+            <label className="rd-field">
+              What's missing, wrong or incomplete?
+              <textarea className="inp" value={mistakes} maxLength={2000} onChange={(e) => setMistakes(e.target.value)} rows={3} />
+            </label>
+            <div className="rd-acts">
+              <button className="btn primary" onClick={() => setStep("assess")}>Continue to assessment</button>
+              <button className="btn" onClick={() => setStep("retrieve")}>Back</button>
+            </div>
+          </div>
+        ) : (
+          <div className="rd-step" ref={stepRef} tabIndex={-1}>
+            <fieldset className="rd-scale">
+              <legend>{isRevision ? "How well did you retrieve it? Choose one." : "How did it go? Choose one."}</legend>
+              {isRevision
+                ? SCORES.map((s) => (
+                    <label key={s.score} className={score === s.score ? "on" : ""}>
+                      <input type="radio" name="score" checked={score === s.score} onChange={() => setScore(s.score)} />
+                      <span><b>{s.score} · {s.label}</b><small>{s.help}</small></span>
                     </label>
-                    <label className="grow">
-                      Comment (optional)
-                      <input className="inp" value={comment} maxLength={1000} onChange={(e) => setComment(e.target.value)} />
+                  ))
+                : CHECKPOINT_RESULTS.map((c) => (
+                    <label key={c.result} className={result === c.result ? "on" : ""}>
+                      <input type="radio" name="result" checked={result === c.result} onChange={() => setResult(c.result)} />
+                      <span><b>{c.label}</b></span>
                     </label>
-                  </div>
-                )}
-                <div className="rd-acts">
-                  <button className="btn primary" disabled={!canSave} onClick={() => void save()}>Save {isRevision ? "attempt" : "checkpoint"}</button>
-                  <button className="btn" onClick={onClose}>Cancel</button>
-                </div>
-              </>
+                  ))}
+            </fieldset>
+            <div className="rd-checks">
+              {isRevision ? (
+                <>
+                  <label><input type="checkbox" checked={usedHints} onChange={(e) => setUsedHints(e.target.checked)} /> I used hints</label>
+                  <label><input type="checkbox" checked={usedNotes} onChange={(e) => setUsedNotes(e.target.checked)} /> I looked at notes or docs</label>
+                </>
+              ) : (
+                <label><input type="checkbox" checked={assisted} onChange={(e) => setAssisted(e.target.checked)} /> I needed help or the material</label>
+              )}
+            </div>
+            <label className="rd-field">
+              {failed ? "What was missing or wrong?" : "Mistakes or gaps (optional)"}
+              {isRevision && failed && <span className="req"> required for a score of 0 or 1</span>}
+              <textarea className="inp" value={mistakes} maxLength={2000} onChange={(e) => setMistakes(e.target.value)} rows={2} />
+            </label>
+            {isRevision && failed && (
+              <label className="rd-checks">
+                <span>
+                  <input type="checkbox" checked={corrected} onChange={(e) => setCorrected(e.target.checked)} /> I've gone back to the material and corrected
+                  my understanding (this is not a successful recall; the next attempt is)
+                </span>
+              </label>
             )}
-          </>
+            {isRevision && (
+              <div className="rd-row">
+                <label>
+                  Minutes spent (optional)
+                  <input className="inp" type="number" min={1} max={720} value={duration} onChange={(e) => setDuration(e.target.value)} style={{ width: 110 }} />
+                </label>
+                <label className="grow">
+                  Comment (optional)
+                  <input className="inp" value={comment} maxLength={1000} onChange={(e) => setComment(e.target.value)} />
+                </label>
+              </div>
+            )}
+            <div className="rd-acts">
+              <button className="btn primary" disabled={!canSave} onClick={() => void save()}>Save {isRevision ? "attempt" : "checkpoint"}</button>
+              <button className="btn" onClick={() => setStep("compare")}>Back</button>
+              {!assessed && <span className="rd-hint" style={{ margin: 0 }}>Choose a {isRevision ? "score" : "result"} to save.</span>}
+            </div>
+          </div>
         )}
       </div>
     </div>,

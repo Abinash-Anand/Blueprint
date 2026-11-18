@@ -55,9 +55,13 @@ describe("RecallDialog", () => {
     expect(screen.getByRole("dialog", { name: "Generics" })).toBeInTheDocument();
     expect(screen.queryByText("extends limits T")).not.toBeInTheDocument();
 
+    expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent(/1Retrieve.*2Compare.*3Assess/);
     fireEvent.change(screen.getByLabelText(/Your answer, from memory/), { target: { value: "T extends something" } });
-    fireEvent.click(screen.getByRole("button", { name: "Reveal the expected answer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to comparison" }));
+    // Step 2 shows the learner's answer next to the expected one.
     expect(screen.getByText("extends limits T")).toBeInTheDocument();
+    expect(screen.getByText("T extends something")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to assessment" }));
 
     const save = screen.getByRole("button", { name: "Save attempt" });
     expect(save).toBeDisabled(); // no score yet
@@ -81,7 +85,8 @@ describe("RecallDialog", () => {
     render(<RecallDialog items={[{ topicId: "fe.ts", scope: "SUBTOPIC", subtopicId: 11, mode: "checkpoint" }]} onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText(/Without notes, explain Generics/)).toBeInTheDocument());
     expect(screen.getByText(/Recall check/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Reveal the expected answer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to comparison" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to assessment" }));
     fireEvent.click(screen.getByLabelText("Partly"));
     fireEvent.click(screen.getByRole("button", { name: "Save checkpoint" }));
     await waitFor(() => expect(createCheckpoint).toHaveBeenCalledWith(expect.objectContaining({ templateKey: "explain", result: "PARTIAL", subtopicId: 11 })));
@@ -91,5 +96,24 @@ describe("RecallDialog", () => {
   it("explains why a unit that isn't learned yet can't be revised", async () => {
     render(<RecallDialog items={[{ topicId: "fe.ts", scope: "TOPIC", subtopicId: null, mode: "revision" }]} onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText(/starts once two sub-topics are learned/)).toBeInTheDocument());
+  });
+
+  it("keeps every input when moving between steps and selects no score by default", async () => {
+    render(<RecallDialog items={[{ topicId: "fe.ts", scope: "SUBTOPIC", subtopicId: 11, mode: "revision" }]} onClose={() => {}} />);
+    const answer = await screen.findByLabelText(/Your answer, from memory/);
+    fireEvent.change(answer, { target: { value: "my recall" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to comparison" }));
+    fireEvent.change(screen.getByLabelText(/What's missing, wrong or incomplete/), { target: { value: "forgot keyof" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to assessment" }));
+    // The gap noted while comparing carries into the assessment; no score is preselected.
+    expect(screen.getByLabelText(/Mistakes or gaps/)).toHaveValue("forgot keyof");
+    for (const r of screen.getAllByRole("radio")) expect(r).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Save attempt" })).toBeDisabled();
+    expect(screen.getByText("Choose a score to save.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByLabelText(/Your answer, from memory/)).toHaveValue("my recall");
+    expect(screen.queryByText("extends limits T")).not.toBeInTheDocument(); // hidden again on the Retrieve step
+    expect(submitAttempt).not.toHaveBeenCalled();
   });
 });
