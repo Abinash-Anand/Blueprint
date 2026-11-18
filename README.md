@@ -134,6 +134,8 @@ Off by default. When on, a revision answer can be spoken (transcribed, then edit
 
 **Model and limits:** `gemini-3.8-flash` was chosen after the benchmark (no false passes). The free tier allows about 20 requests a day per model, resetting at 09:00 Berlin; set `AI_DAILY_REQUEST_LIMIT=18` so the app stops just before Google refuses. A voice revision uses two requests (transcription and check), a typed one uses one.
 
+**When Google is overloaded:** Google sometimes answers "high demand" (HTTP 503) for a model. The app then tries `gemini-2.5-flash` once (its own free quota, same provider, same data rules); the check records which model answered. Only if both are busy do you see "the AI provider is overloaded right now", and the revision carries on without AI. Set `AI_FALLBACK_MODEL` to another model, or to `none` to turn this off. Quota refusals and timeouts are never retried. `docker compose logs backend` shows each provider error with its HTTP status.
+
 **Benchmark the answer checker** (96 constructed cases, 12 questions × 8 variants; results in `backend/eval/results/`, git-ignored). On the free tier run it in parts, one question per day or so:
 
 ```bash

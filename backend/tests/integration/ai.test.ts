@@ -131,6 +131,51 @@ suite("AI check and voice", () => {
     expect(ok.body).toMatchObject({ id: row.id, status: "SUCCEEDED" });
   });
 
+  it("uses the fallback model once when the provider is overloaded, and only then", async () => {
+    const outage = (status: number) => Object.assign(new ProviderError("PROVIDER_ERROR", `Gemini returned ${status}`), { status });
+    const fake = fakeProvider();
+    const calls: string[] = [];
+    // The main model is overloaded (503); the fallback answers.
+    evalImpl = { name: "fake", evaluate: async (i) => { calls.push(i.model); if (i.model === "main-model") throw outage(503); return fake.evaluate(i); } };
+    const fb = createApp({ prisma, clock, ai: { config: { ...config, evaluationModel: "main-model", evaluationFallbackModel: "backup-model", transcriptionFallbackModel: "backup-model" }, providers } });
+    const ok = await request(fb).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "Generics during an outage." }).expect(201);
+    expect(ok.body.status).toBe("SUCCEEDED");
+    expect(calls).toEqual(["main-model", "backup-model"]);
+    expect(await prisma.revisionEvaluation.findUniqueOrThrow({ where: { id: ok.body.id } })).toMatchObject({ model: "backup-model" });
+    const ledger = await prisma.aiUsage.findMany({ where: { operation: "EVALUATE" }, orderBy: { id: "desc" }, take: 2 });
+    expect(ledger.map((u) => [u.model, u.outcome])).toEqual([["backup-model", "OK"], ["main-model", "PROVIDER_ERROR"]]);
+
+    // Both overloaded: a clear, retryable "busy" error, not a generic one.
+    calls.length = 0;
+    evalImpl = { name: "fake", evaluate: async (i) => { calls.push(i.model); throw outage(503); } };
+    const busy = await request(fb).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "Generics while both are busy." }).expect(503);
+    expect(busy.body.error).toMatchObject({ code: "AI_PROVIDER_BUSY", details: { retryable: true } });
+    expect(busy.body.error.message).toMatch(/overloaded/);
+    expect(calls).toEqual(["main-model", "backup-model"]);
+
+    // Not for a bad request, a timeout or a quota refusal: one call, no second model.
+    for (const [err, status] of [[outage(400), 502], [new ProviderError("TIMEOUT", "slow"), 504], [new ProviderError("RATE_LIMITED", "quota"), 429]] as const) {
+      calls.length = 0;
+      evalImpl = { name: "fake", evaluate: async (i) => { calls.push(i.model); throw err; } };
+      await request(fb).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: `Generics, no fallback ${status}.` }).expect(status);
+      expect(calls).toEqual(["main-model"]);
+    }
+
+    // Transcription falls back the same way.
+    const heard: string[] = [];
+    const speech = createApp({
+      prisma, clock,
+      ai: {
+        config: { ...config, transcriptionModel: "main-model", transcriptionFallbackModel: "backup-model" },
+        providers: { ...providers, transcription: { name: "fake", transcribe: async (i) => { heard.push(i.model); if (i.model === "main-model") throw outage(503); return { text: "Heard on the backup.", usage: {} }; } } },
+      },
+    });
+    const t = await request(speech).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(2)).expect(200);
+    expect(t.body.text).toBe("Heard on the backup.");
+    expect(heard).toEqual(["main-model", "backup-model"]);
+    evalImpl = fakeProvider();
+  });
+
   it("rejects invented evidence instead of showing it", async () => {
     evalImpl = {
       name: "fake",

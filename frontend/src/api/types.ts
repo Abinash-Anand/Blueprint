@@ -445,6 +445,8 @@ export interface AiStatus {
   transcriptionProvider: string;
   evaluationModel: string;
   transcriptionModel: string;
+  evaluationFallbackModel?: string | null;
+  transcriptionFallbackModel?: string | null;
   maxRecordingSeconds: number;
   maxAudioBytes: number;
   maxFollowUps: number;

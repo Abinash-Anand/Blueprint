@@ -432,7 +432,8 @@ input[type=checkbox]:active:not(:disabled),input[type=radio]:active:not(:disable
 .sind-d{color:var(--muted)}
 .fb{display:flex;gap:9px;align-items:flex-start;margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--tone-line);background:var(--tone-bg);color:var(--ink);font-size:13.5px;line-height:1.5;animation:reveal var(--dur-slow) var(--ease-out)}
 .fb>.si{color:var(--tone);font-size:16px;margin-top:2px}
-.fb-b{min-width:0}
+.fb-b{min-width:0;flex:1}
+.fb-x{margin:-2px -4px 0 4px;line-height:1}
 .fb-b p{margin:0}
 .lds{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--tone)}
 .lds.t-neutral{color:var(--muted)}

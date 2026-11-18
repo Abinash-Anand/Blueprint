@@ -122,3 +122,10 @@ it("renders a presentation exactly as given (the frontend does not reclassify)",
   render(<StatusBadge p={p} />);
   expect(screen.getByText("Delayed by 3 days").closest(".sb")).toHaveAttribute("data-state", "stage.delayed");
 });
+
+it("lets a stale error message be dismissed", () => {
+  const onDismiss = vi.fn();
+  render(<FeedbackMessage tone="danger" onDismiss={onDismiss}>Your recording couldn't be transcribed.</FeedbackMessage>);
+  screen.getByRole("button", { name: "Dismiss message" }).click();
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+});

@@ -16,7 +16,7 @@ import { SYSTEM_PROMPT, buildUserPrompt, transcriptionInstruction, vocabulary } 
 import { EvaluationResult, evaluationJsonSchema } from "./evaluation/schema.js";
 import { suggestScore, suggestedMistakes } from "./evaluation/score.js";
 import { VerificationError, type VerifiedCriterion, type VerifiedResult, verifyResult } from "./evaluation/verify.js";
-import { type AiProviders, ProviderError, type ProviderUsage, asProviderError } from "./providers/types.js";
+import { type AiProviders, ProviderError, type ProviderUsage, asProviderError, isProviderOutage } from "./providers/types.js";
 import { usageService } from "./usage.js";
 import { WavError, parseWav } from "./voice/wav.js";
 
@@ -44,7 +44,12 @@ interface StoredResult {
   downgraded: number;
 }
 
-const providerHttpError = (e: ProviderError) => {
+const providerHttpError = (e: ProviderError, op: "TRANSCRIBE" | "EVALUATE" = "EVALUATE") => {
+  // The provider is overloaded or down (after the fallback model was tried too): say so, it is not the learner's fault.
+  if (isProviderOutage(e)) {
+    const what = op === "TRANSCRIBE" ? "Your recording couldn't be transcribed" : "The AI check couldn't run";
+    return new HttpError(503, "AI_PROVIDER_BUSY", `${what}: the AI provider is overloaded right now (HTTP ${e.status}). Try again in a few minutes, or carry on without it.`, { retryable: true });
+  }
   switch (e.kind) {
     case "TIMEOUT":
       return new HttpError(504, "AI_TIMEOUT", "The AI check took too long. Try again, or carry on without it.", { retryable: true });
@@ -102,7 +107,31 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
     } catch (err) {
       const e = asProviderError(err);
       await usage.record(op, provider, model, {}, performance.now() - t0, e.kind);
+      // The cause in the server log (no request content, no key): kind and the provider's HTTP status.
+      console.warn(JSON.stringify({ level: "warn", msg: "AI provider error", op, provider, model, kind: e.kind, status: e.status ?? null }));
       throw e;
+    }
+  }
+
+  /**
+   * Calls the main model and, only if the provider reports an outage (HTTP 5xx), the fallback model once. Quota
+   * refusals, timeouts and invalid output are not retried: another model would not fix them, or would double the wait.
+   * The fallback is a second request: it passes the same limits and is recorded in the usage ledger like any other.
+   */
+  async function withFallback<T>(
+    op: "TRANSCRIBE" | "EVALUATE",
+    provider: string,
+    model: string,
+    fallbackModel: string | null,
+    run: (model: string, signal: AbortSignal) => Promise<T & { usage: ProviderUsage }>,
+  ) {
+    try {
+      return { ...(await timed(op, provider, model, (signal) => run(model, signal))), model };
+    } catch (e) {
+      if (!(e instanceof ProviderError) || !fallbackModel || !isProviderOutage(e)) throw e;
+      await usage.check(op);
+      console.warn(JSON.stringify({ level: "warn", msg: "AI fallback model", op, from: model, to: fallbackModel, status: e.status ?? null }));
+      return { ...(await timed(op, provider, fallbackModel, (signal) => run(fallbackModel, signal))), model: fallbackModel };
     }
   }
 
@@ -147,6 +176,8 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
         transcriptionProvider: config.transcriptionProvider,
         evaluationModel: config.evaluationModel,
         transcriptionModel: config.transcriptionModel,
+        evaluationFallbackModel: config.evaluationFallbackModel,
+        transcriptionFallbackModel: config.transcriptionFallbackModel,
         maxRecordingSeconds: config.maxRecordingSeconds,
         maxAudioBytes: config.maxAudioBytes,
         maxFollowUps: config.maxFollowUps,
@@ -181,12 +212,12 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
       const terms = await unitTerms(scheduleId);
       const p = providers.transcription;
       try {
-        const r = await timed("TRANSCRIBE", p.name, config.transcriptionModel, (signal) =>
-          p.transcribe({ audio, mimeType: "audio/wav", audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms), model: config.transcriptionModel, signal }),
+        const r = await withFallback("TRANSCRIBE", p.name, config.transcriptionModel, config.transcriptionFallbackModel, (model, signal) =>
+          p.transcribe({ audio, mimeType: "audio/wav", audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms), model, signal }),
         );
         return { text: r.text.slice(0, 5000), audioSeconds: Math.round(seconds * 10) / 10 };
       } catch (e) {
-        if (e instanceof ProviderError) throw providerHttpError(e);
+        if (e instanceof ProviderError) throw providerHttpError(e, "TRANSCRIBE");
         throw e;
       }
       // The audio buffer goes out of scope here; it is never written anywhere (I-5).
@@ -272,8 +303,9 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
       const p = providers.evaluation;
       let output: unknown;
       let latencyMs: number;
+      let usedModel = config.evaluationModel;
       try {
-        const r = await timed("EVALUATE", p.name, config.evaluationModel, (signal) =>
+        const r = await withFallback("EVALUATE", p.name, config.evaluationModel, config.evaluationFallbackModel, (model, signal) =>
           p.evaluate({
             system: SYSTEM_PROMPT,
             user: buildUserPrompt({
@@ -282,12 +314,13 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
               followUp: parent && parentResult ? { question: followUpQuestion!, answer: transcript, previous: parentResult.criteria.map((c) => ({ index: c.index, verdict: c.verdict })) } : undefined,
             }),
             jsonSchema: evaluationJsonSchema(),
-            model: config.evaluationModel,
+            model,
             signal,
           }),
         );
         output = r.output;
         latencyMs = r.latencyMs;
+        usedModel = r.model;
       } catch (e) {
         if (e instanceof ProviderError) {
           await fail(providerHttpError(e).code);
@@ -343,7 +376,8 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
       };
       const done = await prisma.revisionEvaluation.update({
         where: { id: row.id },
-        data: { status: "SUCCEEDED", result: stored as unknown as Prisma.InputJsonValue, suggestedScore, latencyMs, completedAt: clock.now() },
+        // The model that actually answered (the fallback when the main model was overloaded).
+        data: { status: "SUCCEEDED", result: stored as unknown as Prisma.InputJsonValue, suggestedScore, latencyMs, model: usedModel, completedAt: clock.now() },
       });
       return evaluationDTO(done, config.maxFollowUps, depth);
     },

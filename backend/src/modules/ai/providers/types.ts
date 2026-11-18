@@ -11,6 +11,8 @@ export interface ProviderUsage {
 export type ProviderErrorKind = "TIMEOUT" | "PROVIDER_ERROR" | "RATE_LIMITED" | "INVALID_OUTPUT";
 
 export class ProviderError extends Error {
+  /** HTTP status from the provider, when it answered with an error. */
+  status?: number;
   constructor(
     public kind: ProviderErrorKind,
     message: string,
@@ -18,6 +20,9 @@ export class ProviderError extends Error {
     super(message);
   }
 }
+
+/** The provider itself failed (HTTP 5xx: overloaded, unavailable, internal error): another model may still answer. */
+export const isProviderOutage = (e: ProviderError) => e.kind === "PROVIDER_ERROR" && (e.status ?? 0) >= 500;
 
 export interface TranscribeInput {
   audio: Buffer;

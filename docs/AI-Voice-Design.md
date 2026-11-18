@@ -349,7 +349,7 @@ Migration CHECKs, as in the revision migration: `suggestedScore` and `selfScore`
 | `POST /api/revision/evaluations` | `{ scheduleId, promptId?, promptText, transcript, parentId?, followUpQuestion? }` | `EvaluationDTO` | Dedupe by hash (§7.1). |
 | `POST /api/revision/attempts` (existing) | existing body + `evaluationId?`, `selfScore?`, `inputMode?` | existing | All existing rules unchanged; link checks in §5.3. |
 
-All new routes return the existing error envelope. New codes: `AI_DISABLED` (403), `AI_CONSENT_REQUIRED` (403), `AI_BUDGET_REACHED` (429), `AI_RATE_LIMITED` (429), `AI_TIMEOUT` (504, retryable), `AI_PROVIDER_ERROR` (502, retryable), `AI_INVALID_OUTPUT` (502, retryable), `AUDIO_TOO_LARGE` (413), `AUDIO_UNSUPPORTED` (415), `EVALUATION_IN_PROGRESS` (409, retryable), `EVALUATION_STALE` (409). Provider messages, prompts and stack traces are never returned.
+All new routes return the existing error envelope. New codes: `AI_DISABLED` (403), `AI_CONSENT_REQUIRED` (403), `AI_BUDGET_REACHED` (429), `AI_RATE_LIMITED` (429), `AI_TIMEOUT` (504, retryable), `AI_PROVIDER_BUSY` (503, retryable: the provider is overloaded, after the fallback model), `AI_PROVIDER_ERROR` (502, retryable), `AI_INVALID_OUTPUT` (502, retryable), `AUDIO_TOO_LARGE` (413), `AUDIO_UNSUPPORTED` (415), `EVALUATION_IN_PROGRESS` (409, retryable), `EVALUATION_STALE` (409). Provider messages, prompts and stack traces are never returned.
 
 ```json
 {
@@ -619,6 +619,8 @@ Free-tier conditions:
 - **Quota:** Google sets the daily request limit per project and shows it in AI Studio; it has been reduced before and may change. `AI_DAILY_REQUEST_LIMIT` stops the app just below it, and a provider 429 shows as `AI_RATE_LIMITED`. In both cases the revision continues without AI (I-4). Expected use is 5–15 calls a day.
 - **Data:** free-tier inputs may be used by Google and read by human reviewers (§8.3). Revision answers are low-sensitivity, but the recordings are the learner's voice; the consent notice says so, and moving to the paid tier removes that use.
 - **Acceptance:** Gemini becomes the production evaluator only after it meets the §9.3 gates, with particular attention to false passes on vague, partial and misconceived answers.
+
+**Same-provider fallback (added 18 Nov 2026).** On the first live day, `gemini-3.8-flash` answered every call with HTTP 503 "high demand" while `gemini-2.5-flash` answered normally. When the provider reports an outage (HTTP 5xx) for the main model, the app now tries `AI_FALLBACK_MODEL` once (default `gemini-2.5-flash`; `none` turns it off). This is not the cross-provider failover rejected above: it stays with Google under the same notice and data terms, and each evaluation stores the model that actually answered (`RevisionEvaluation.model`), so analytics can tell them apart. Quota refusals (429), timeouts, bad requests and invalid output are never retried: another model would not fix them, or would double the wait. The fallback is a second request: it passes the same hourly and daily limits and is recorded in `AiUsage`. If both models fail, the learner sees `AI_PROVIDER_BUSY` ("the AI provider is overloaded right now") and the revision continues without AI (I-4). Each provider error is logged with its kind and HTTP status (no content, no key).
 
 `AI_ENABLED=false` (the default) leaves the application exactly as it is today. The health check never depends on the provider.
 

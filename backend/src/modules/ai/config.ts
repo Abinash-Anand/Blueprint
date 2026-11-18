@@ -10,6 +10,12 @@ export interface AiConfig {
   transcriptionProvider: ProviderName;
   evaluationModel: string;
   transcriptionModel: string;
+  /**
+   * Tried once when the provider reports a server-side failure (HTTP 5xx, e.g. Gemini's 503 "high demand") for the main
+   * model. Never for quota refusals, timeouts, bad requests or invalid output. null = no fallback.
+   */
+  evaluationFallbackModel: string | null;
+  transcriptionFallbackModel: string | null;
   geminiApiKey?: string;
   anthropicApiKey?: string;
   language: string;
@@ -35,6 +41,16 @@ const DEFAULT_MODELS: Record<ProviderName, string> = {
   anthropic: "claude-haiku-5-5",
 };
 
+/** Fallback when the main model is overloaded: Gemini 2.5 Flash has its own free quota and answered every benchmark case it ran. */
+const DEFAULT_FALLBACK: Record<ProviderName, string | null> = { fake: null, gemini: "gemini-2.5-flash", anthropic: null };
+
+/** AI_FALLBACK_MODEL: unset = the provider's default, "none" = off; a fallback equal to the main model is pointless. */
+const fallback = (v: string | undefined, p: ProviderName, main: string): string | null => {
+  const raw = v?.trim();
+  const m = raw === undefined || raw === "" ? DEFAULT_FALLBACK[p] : raw.toLowerCase() === "none" ? null : raw;
+  return m && m !== main ? m : null;
+};
+
 const num = (v: string | undefined, d: number, min = 0, max = Number.MAX_SAFE_INTEGER) => {
   if (v === undefined || v.trim() === "") return d;
   const n = Number(v);
@@ -53,12 +69,16 @@ export function loadAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
   // Claude has no speech-to-text, so transcription stays on Gemini unless set otherwise.
   const transcriptionProvider = provider(env.AI_TRANSCRIPTION_PROVIDER, evaluationProvider === "anthropic" ? "gemini" : evaluationProvider);
   if (transcriptionProvider === "anthropic") throw new Error("AI_TRANSCRIPTION_PROVIDER cannot be anthropic: Claude has no speech-to-text");
+  const evaluationModel = env.AI_EVALUATION_MODEL?.trim() || DEFAULT_MODELS[evaluationProvider];
+  const transcriptionModel = env.AI_TRANSCRIPTION_MODEL?.trim() || DEFAULT_MODELS[transcriptionProvider];
   return {
     enabled: env.AI_ENABLED === "true",
     evaluationProvider,
     transcriptionProvider,
-    evaluationModel: env.AI_EVALUATION_MODEL?.trim() || DEFAULT_MODELS[evaluationProvider],
-    transcriptionModel: env.AI_TRANSCRIPTION_MODEL?.trim() || DEFAULT_MODELS[transcriptionProvider],
+    evaluationModel,
+    transcriptionModel,
+    evaluationFallbackModel: fallback(env.AI_FALLBACK_MODEL, evaluationProvider, evaluationModel),
+    transcriptionFallbackModel: fallback(env.AI_FALLBACK_MODEL, transcriptionProvider, transcriptionModel),
     geminiApiKey: env.GEMINI_API_KEY?.trim() || undefined,
     anthropicApiKey: env.ANTHROPIC_API_KEY?.trim() || undefined,
     language: env.AI_LANGUAGE?.trim() || "en",
