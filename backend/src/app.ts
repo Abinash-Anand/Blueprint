@@ -1,6 +1,7 @@
 import express from "express";
 import type { PrismaClient } from "@prisma/client";
 import type { Clock } from "./lib/clock.js";
+import { presentationCatalog } from "./domain/presentation.js";
 import { requestGuard } from "./lib/guard.js";
 import { errorHandler, notFoundRoute, requestLog } from "./lib/http.js";
 import { AI_DISABLED, type AiConfig } from "./modules/ai/config.js";
@@ -37,6 +38,10 @@ export function createApp(input: Omit<Deps, "ai"> & { ai?: Deps["ai"] }) {
     } catch {
       res.status(503).json({ status: "unavailable", today: deps.clock.today() });
     }
+  });
+  // The semantic presentation contract (LLD §4.4): tones, variants, icons and every state's style, versioned.
+  api.get("/presentation", (_req, res) => {
+    res.json(presentationCatalog());
   });
   api.use(curriculumRoutes(deps));
   api.use(taskRoutes(deps));

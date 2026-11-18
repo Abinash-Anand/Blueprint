@@ -36,10 +36,10 @@ const baseStatus: AiStatus = {
 };
 
 const evaluation = (over: Partial<AiEvaluation> = {}): AiEvaluation => ({
-  id: 40, parentId: null, rootId: 40, status: "SUCCEEDED", errorCode: null, transcript: "Generics keep the type.", suggestedScore: 1, relevant: true,
+  id: 40, parentId: null, rootId: 40, status: "SUCCEEDED", errorCode: null, transcript: "Generics keep the type.", suggestedScore: 1, suggestion: pres("ai.suggestion", "ai", "Suggests 1 · Struggled"), relevant: true,
   criteria: [
-    { index: 0, text: "What it is", verdict: "COVERED", evidence: "keep the type", recoveredInFollowUp: false },
-    { index: 1, text: "the problem it solves", verdict: "MISSING", evidence: null, recoveredInFollowUp: false },
+    { index: 0, text: "What it is", verdict: "COVERED", presentation: pres("verdict.covered", "success", "Covered"), evidence: "keep the type", recoveredInFollowUp: false },
+    { index: 1, text: "the problem it solves", verdict: "MISSING", presentation: pres("verdict.missing", "neutral", "Missing"), evidence: null, recoveredInFollowUp: false },
   ],
   misconceptions: [], feedback: "You said what it is. Say which problem it solves.", followUpQuestion: "What goes wrong without generics?",
   suggestedMistakes: "Missing: the problem it solves.", assisted: false, createdAt: "2026-11-19T08:00:00Z", ...over,
@@ -49,8 +49,8 @@ const evaluate = vi.fn(async (b: { parentId?: number; transcript: string }) =>
   b.parentId
     ? evaluation({ id: 41, parentId: 40, rootId: 40, transcript: b.transcript, assisted: true, followUpQuestion: null, suggestedMistakes: "Missing: the problem it solves. Recalled only after the follow-up question: the problem it solves.",
         criteria: [
-          { index: 0, text: "What it is", verdict: "COVERED", evidence: "keep the type", recoveredInFollowUp: false },
-          { index: 1, text: "the problem it solves", verdict: "COVERED", evidence: "lose the type", recoveredInFollowUp: true },
+          { index: 0, text: "What it is", verdict: "COVERED", presentation: pres("verdict.covered", "success", "Covered"), evidence: "keep the type", recoveredInFollowUp: false },
+          { index: 1, text: "the problem it solves", verdict: "COVERED", presentation: pres("verdict.covered", "success", "Covered"), evidence: "lose the type", recoveredInFollowUp: true },
         ] })
     : evaluation({ transcript: b.transcript }),
 );
@@ -72,6 +72,7 @@ vi.mock("../state/AppData", () => ({
 }));
 
 import { RecallDialog } from "../components/RecallDialog";
+import { pres } from "./fixtures";
 
 const open = async () => {
   render(<RecallDialog items={[{ topicId: "fe.ts", scope: "SUBTOPIC", subtopicId: 11, mode: "revision" }]} onClose={() => {}} />);

@@ -5,6 +5,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { addDays, diffDays } from "../../domain/dates.js";
 import { type RevisionCandidate, displayStatus, interleave, isWeak, revisionOrder } from "../../domain/revision.js";
+import { attentionPresentation, checkpointPresentation, revisionPresentation } from "../../domain/presentation.js";
 import { d2i } from "../../db.js";
 import type { Clock } from "../../lib/clock.js";
 import { attemptDTO, revisionPolicy } from "./service.js";
@@ -42,6 +43,8 @@ export function revisionOverview(prisma: PrismaClient, clock: Clock) {
 
     const units = schedules.map((s) => {
       const due = s.nextDueDate ? d2i(s.nextDueDate) : null;
+      const lastAttemptDate = s.lastAttemptDate ? d2i(s.lastAttemptDate) : null;
+      const weak = isWeak(s, policy);
       return {
         scheduleId: s.id,
         topicId: s.topicId,
@@ -53,10 +56,11 @@ export function revisionOverview(prisma: PrismaClient, clock: Clock) {
         status: displayStatus({ nextDueDate: due, correctionPending: s.correctionPending, suspended: false }, today),
         nextDueDate: due,
         overdueDays: due && due < today ? diffDays(due, today) : 0,
-        lastAttemptDate: s.lastAttemptDate ? d2i(s.lastAttemptDate) : null,
+        lastAttemptDate,
         lastScore: s.lastScore,
         consecutiveSuccesses: s.consecutiveSuccesses,
-        weak: isWeak(s, policy),
+        weak,
+        presentation: revisionPresentation({ correctionPending: s.correctionPending, nextDueDate: due, lastAttemptDate, weak }, today),
         correctionPending: s.correctionPending,
         pendingAttemptId: s.correctionPending ? (s.attempts[0]?.id ?? null) : null,
         openTask: s.tasks[0] ? { id: s.tasks[0].id, scheduledDate: d2i(s.tasks[0].scheduledDate) } : null,
@@ -94,6 +98,7 @@ export function revisionOverview(prisma: PrismaClient, clock: Clock) {
         due: due.length, overdue: overdue.length, upcoming: upcoming.length, later, weak: weak.length,
         awaitingCorrection: awaitingCorrection.length, active: units.length, paused: suspended,
       },
+      attention: attentionPresentation(due.length + overdue.length, overdue.length),
       overdue, due, upcoming, weak, awaitingCorrection, session,
       history: attempts.map((a) => ({
         ...attemptDTO({ ...a, schedule: { scope: a.schedule.scope, topic: a.schedule.topic, subtopic: a.schedule.subtopic } }),
@@ -102,7 +107,7 @@ export function revisionOverview(prisma: PrismaClient, clock: Clock) {
       })),
       checkpoints: checkpoints.map((c) => ({
         id: c.id, topicId: c.topicId, topicName: c.topic.name, subtopicId: c.subtopicId, label: c.subtopic.name,
-        result: c.result, neededAssistance: c.neededAssistance, gaps: c.gaps, date: d2i(c.date),
+        result: c.result, presentation: checkpointPresentation(c.result), neededAssistance: c.neededAssistance, gaps: c.gaps, date: d2i(c.date),
       })),
     };
   };

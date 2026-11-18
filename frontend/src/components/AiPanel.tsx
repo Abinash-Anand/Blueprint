@@ -4,17 +4,12 @@
  * chooses the score in the Assess step; nothing here saves anything.
  */
 import { useState } from "react";
-import type { AiEvaluation, AiStatus, Verdict } from "../api/types";
+import type { CSSProperties } from "react";
+import type { AiEvaluation, AiStatus } from "../api/types";
 import { scoreLabel } from "../lib/format";
+import { FeedbackMessage, LoadingState, StatusBadge } from "./Status";
 import { Recorder, canRecord } from "./voice/Recorder";
 import { canSpeak, speak } from "./voice/speak";
-
-const VERDICT: Record<Verdict, { label: string; cls: string }> = {
-  COVERED: { label: "Covered", cls: "ok" },
-  PARTIAL: { label: "Partly", cls: "part" },
-  MISSING: { label: "Missing", cls: "miss" },
-  INCORRECT: { label: "Incorrect", cls: "bad" },
-};
 
 export function AiConsent({ status, onAccept, busy }: { status: AiStatus; onAccept: () => void; busy: boolean }) {
   const [open, setOpen] = useState(false);
@@ -70,15 +65,15 @@ export function AiPanel({
     <section className="rv-ai" aria-label="AI check">
       <div className="rv-ai-head">
         <b>AI check</b>
-        <span>
-          Suggests <strong>{evaluation.suggestedScore} · {scoreLabel(evaluation.suggestedScore ?? 0)}</strong>
-          {shown.assisted && " · a point came back only after the follow-up (counts as a hint)"}
+        <span className="sind">
+          <StatusBadge p={evaluation.suggestion} fallback={`Suggests ${evaluation.suggestedScore} · ${scoreLabel(evaluation.suggestedScore ?? 0)}`} />
+          {shown.assisted && <span>a point came back only after the follow-up (counts as a hint)</span>}
         </span>
       </div>
       <ul className="rv-crit">
-        {shown.criteria.map((c) => (
-          <li key={c.index}>
-            <span className={`rv-v ${VERDICT[c.verdict].cls}`}>{VERDICT[c.verdict].label}</span>
+        {shown.criteria.map((c, i) => (
+          <li key={c.index} style={{ "--i": i } as CSSProperties}>
+            <StatusBadge p={c.presentation} fallback={c.verdict.toLowerCase()} />
             <span>
               {c.text}
               {c.evidence && <q>{c.evidence}</q>}
@@ -111,11 +106,12 @@ export function AiPanel({
           {canRecord() && <Recorder scheduleId={scheduleId} maxSeconds={Math.min(60, status.maxRecordingSeconds)} maxBytes={status.maxAudioBytes} label="Answer by voice" onTranscript={(t) => setAnswer((a) => (a ? `${a} ${t}` : t))} />}
           <textarea className="inp" aria-label="Your follow-up answer" value={answer} maxLength={2000} rows={2} onChange={(e) => setAnswer(e.target.value)} />
           <div className="rd-acts" style={{ marginTop: 6 }}>
-            <button className="btn" disabled={busy || !answer.trim()} onClick={() => onFollowUp(answer.trim())}>{busy ? "Checking…" : "Check follow-up answer"}</button>
+            <button className="btn" aria-busy={busy} disabled={busy || !answer.trim()} onClick={() => onFollowUp(answer.trim())}>{busy ? "Checking…" : "Check follow-up answer"}</button>
+            {busy && <LoadingState tone="ai" text="Checking your follow-up answer…" />}
           </div>
         </div>
       )}
-      {error && <p className="rv-err" role="alert">{error}</p>}
+      {error && <FeedbackMessage tone="danger">{error}</FeedbackMessage>}
       <p className="rd-hint">A suggestion, not a verdict: you choose the score next.</p>
     </section>
   );

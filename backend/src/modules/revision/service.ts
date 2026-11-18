@@ -4,6 +4,7 @@
  * Nothing here touches Subtopic.completedAt, Topic.demonstratedAt or district progress (REV-15, REV-16).
  */
 import type { CheckpointResult, Prisma, PrismaClient, RetrievalMethod, RevisionScope } from "@prisma/client";
+import { checkpointPresentation, outcomePresentation, revisionPresentation } from "../../domain/presentation.js";
 import { type ISODate, addDays, berlinDate } from "../../domain/dates.js";
 import {
   REVISION_POLICY, type RecallScore, type RevisionPolicy, applyAttempt, displayStatus, dueAfterCorrection, firstDueDate,
@@ -515,6 +516,13 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
             ? {
                 id: s.id,
                 status: displayStatus({ nextDueDate: s.nextDueDate ? d2i(s.nextDueDate) : null, correctionPending: s.correctionPending, suspended: !!s.suspendedAt }, today),
+                presentation: revisionPresentation(
+                  {
+                    suspended: !!s.suspendedAt, correctionPending: s.correctionPending, nextDueDate: s.nextDueDate ? d2i(s.nextDueDate) : null,
+                    lastAttemptDate: s.lastAttemptDate ? d2i(s.lastAttemptDate) : null, weak: isWeak(s, policy),
+                  },
+                  today,
+                ),
                 nextDueDate: s.nextDueDate ? d2i(s.nextDueDate) : null,
                 lastAttemptDate: s.lastAttemptDate ? d2i(s.lastAttemptDate) : null,
                 lastScore: s.lastScore,
@@ -559,6 +567,7 @@ export const attemptDTO = (a: AttemptRow) => ({
   promptId: a.promptId,
   promptText: a.promptText,
   score: a.score,
+  presentation: outcomePresentation(a.score),
   effectiveScore: a.effectiveScore,
   retrievalMethod: a.retrievalMethod,
   attemptedAt: a.attemptedAt.toISOString(),
@@ -580,7 +589,7 @@ export const attemptDTO = (a: AttemptRow) => ({
 
 const checkpointDTO = (c: Prisma.LearningCheckpointGetPayload<object>) => ({
   id: c.id, topicId: c.topicId, subtopicId: c.subtopicId, promptId: c.promptId, promptText: c.promptText,
-  result: c.result, neededAssistance: c.neededAssistance, gaps: c.gaps, response: c.response,
+  result: c.result, presentation: checkpointPresentation(c.result), neededAssistance: c.neededAssistance, gaps: c.gaps, response: c.response,
   date: d2i(c.date), completedAt: c.completedAt.toISOString(),
 });
 

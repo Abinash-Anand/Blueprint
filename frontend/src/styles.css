@@ -225,7 +225,6 @@ textarea.inp{resize:vertical;min-height:54px;width:100%}
 .stage .pr{font-size:12px;color:var(--muted)}
 .stage .st{justify-self:end;text-align:right}
 .stage .edit{grid-column:1/-1}
-.delayed{font-weight:650;color:var(--ink)}
 
 .notice{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:#f6f4ef;font-size:13px;padding:9px 14px;border-radius:9px;z-index:40;box-shadow:0 10px 30px rgba(40,40,35,.18);display:flex;gap:10px;align-items:center}
 .notice button{border:0;background:none;color:#f6f4ef;opacity:.7;cursor:pointer;font-size:15px}
@@ -284,7 +283,6 @@ textarea.inp{resize:vertical;min-height:54px;width:100%}
 
 /* revision section and indicators (Revision enhancement) */
 .tbadge{display:inline-block;min-width:17px;height:17px;line-height:17px;margin-left:6px;padding:0 5px;border-radius:99px;background:var(--soft);border:1px solid var(--line);color:var(--ink);font-size:11px;text-align:center;font-variant-numeric:tabular-nums;vertical-align:1px}
-.tbadge.late{background:var(--accent);border-color:var(--accent);color:#fff}
 .tabs button[aria-selected="true"] .tbadge{border-color:#bdb7ab}
 .next .revdue{display:block;border:0;background:none;padding:0;margin-top:8px;color:var(--accent);cursor:pointer;font-size:13px;text-align:left;text-decoration:underline;text-underline-offset:2px;text-decoration-color:#a9b9c0}
 .rv-row .link{border:0;background:none;padding:0;color:var(--accent);cursor:pointer;font-size:12.5px;text-decoration:underline;text-underline-offset:2px;text-decoration-color:#a9b9c0}
@@ -293,13 +291,6 @@ textarea.inp{resize:vertical;min-height:54px;width:100%}
 .task .meta .tag.kind.practice{color:var(--ink);border-color:#bdb7ab}
 .task .meta .tag.kind.revision{color:var(--accent);border-color:#a9b9c0;background:#fff}
 
-/* shared revision status (refinement §2.2): one primary state + optional Weak flag */
-.rstat{display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px 6px;font-size:12px;color:var(--muted)}
-.rs{color:var(--muted)}
-.rs-overdue,.rs-correction{color:var(--ink);font-weight:650}
-.rs-due{color:var(--accent);font-weight:600}
-.rs-extra{color:var(--muted)}
-.rstat .rs-weak{font-size:10px;padding:1px 7px}
 /* three-step recall dialog (refinement §2.1, §2.3) */
 .overlay.focus{background:rgba(46,49,51,.45)}
 .rd-steps{display:flex;gap:6px 14px;flex-wrap:wrap;list-style:none;padding:0;margin:2px 0 14px;font-size:12px;color:var(--muted)}
@@ -346,9 +337,6 @@ textarea.inp{resize:vertical;min-height:54px;width:100%}
 @keyframes rvpulse{50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.rv-dot.on{animation:none}}
 .rv-live{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-variant-numeric:tabular-nums}
-.rv-level{display:inline-block;width:70px;height:5px;background:#dcd8cf;border-radius:99px;overflow:hidden}
-.rv-level i{display:block;height:100%;background:var(--accent)}
-.rv-err{color:#9a4a3f;font-size:12.5px;margin:6px 0 0}
 .rv-ai-note{margin-top:10px;font-size:13px;line-height:1.5;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
 .rv-notice p{margin:8px 0 0}
 .rv-notice .btn{margin-top:8px}
@@ -364,11 +352,6 @@ textarea.inp{resize:vertical;min-height:54px;width:100%}
 .rv-crit li{display:grid;grid-template-columns:78px minmax(0,1fr);gap:8px;font-size:13px;line-height:1.45}
 .rv-crit q,.rv-mis q{display:block;color:var(--muted);font-size:12.5px;margin-top:1px}
 .rv-crit em{color:var(--muted);font-size:12px}
-.rv-v{font-size:11px;border-radius:6px;padding:1px 6px;text-align:center;align-self:start;border:1px solid var(--line);background:var(--paper)}
-.rv-v.ok{color:#3f6150;border-color:#b9cdbf;background:#eef3ef}
-.rv-v.part{color:#7a5f2e;border-color:#ddcfb0;background:#f6f1e6}
-.rv-v.miss{color:var(--muted)}
-.rv-v.bad{color:#9a4a3f;border-color:#e0c3bd;background:#f7ecea}
 .rv-mis li{font-size:13px;line-height:1.45;border-left:2px solid #e0c3bd;padding-left:8px}
 .rv-fb{font-size:13.5px;line-height:1.5;margin:10px 0 0}
 .rv-fu{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
@@ -376,4 +359,167 @@ textarea.inp{resize:vertical;min-height:54px;width:100%}
 .rv-fu textarea{width:100%;margin-top:6px}
 .rv-cmp{font-size:13px;color:var(--muted);margin:0 0 4px}
 .rv-cmp b{color:var(--ink);font-weight:600}
-@media (max-width:480px){.rv-crit li{grid-template-columns:minmax(0,1fr)}.rv-v{justify-self:start}}
+@media (max-width:480px){.rv-crit li{grid-template-columns:minmax(0,1fr)}}
+
+/* =====================================================================
+   Part 3 — design tokens: semantic tones, motion, elevation, focus (LLD §4.6)
+   Tones carry meaning from the backend's presentation metadata; nothing here
+   decides what a state means. Muted on purpose: same paper, ink and accent.
+   ===================================================================== */
+:root{
+  /* semantic tones: fg = text and icon (at least 4.5:1 on paper and on its soft bg), bg = soft fill, line = border */
+  --success:#3f6150; --success-bg:#eaf1ec; --success-line:#b9cdbf;
+  --warning:#76592a; --warning-bg:#f6efe1; --warning-line:#dccb9f;
+  --danger:#9a4a3f;  --danger-bg:#f7eae7;  --danger-line:#e0c3bd;
+  --info:#3f5a66;    --info-bg:#eaf0f2;    --info-line:#b4c4cb;
+  --neutral:#62666a; --neutral-bg:#efece6; --neutral-line:#d8d3c9;
+  --ai:#57507a;      --ai-bg:#efedf5;      --ai-line:#cdc7de;
+
+  /* motion */
+  --dur-fast:120ms; --dur-base:180ms; --dur-slow:260ms;
+  --ease-standard:cubic-bezier(.2,0,0,1); --ease-out:cubic-bezier(0,0,.2,1); --ease-in:cubic-bezier(.4,0,1,1);
+  /* elevation: lift distance and shadow per level */
+  --lift-1:-1px; --lift-2:-2px;
+  --shadow-1:0 1px 2px rgba(40,40,35,.06); --shadow-2:0 4px 14px rgba(40,40,35,.09); --shadow-3:0 18px 50px rgba(40,40,35,.22);
+  /* focus: one visible ring everywhere */
+  --focus-ring:0 0 0 2px var(--paper),0 0 0 4px #7f97a2;
+  interpolate-size:allow-keywords;
+}
+/* Reduced motion: no movement, no decorative animation; state changes stay instant and visible. */
+@media (prefers-reduced-motion:reduce){
+  :root{--dur-fast:0ms;--dur-base:0ms;--dur-slow:0ms;--lift-1:0px;--lift-2:0px}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0ms!important;scroll-behavior:auto!important}
+}
+
+/* ---------- focus and controls ---------- */
+:where(button,a,summary,input,select,textarea,[tabindex]):focus-visible{outline:none;box-shadow:var(--focus-ring)}
+.btn{transition:background-color var(--dur-fast) var(--ease-standard),border-color var(--dur-fast) var(--ease-standard),color var(--dur-fast) var(--ease-standard),box-shadow var(--dur-fast) var(--ease-standard),transform var(--dur-fast) var(--ease-standard);position:relative}
+.btn:hover:not(:disabled){border-color:#c9c3b7}
+.btn:active:not(:disabled){transform:translateY(1px);box-shadow:inset 0 1px 2px rgba(40,40,35,.08)}
+.btn.primary:hover:not(:disabled){border-color:#344c56}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.danger{color:var(--danger)}
+.btn.danger:hover:not(:disabled){background:var(--danger-bg);border-color:var(--danger-line)}
+/* loading: the label stays (no layout shift), a spinner sits in front, input is blocked by disabled */
+.btn[aria-busy="true"]{cursor:progress}
+.btn[aria-busy="true"]::before{content:"";display:inline-block;width:.8em;height:.8em;margin:0 6px -1px 0;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+.inp{transition:border-color var(--dur-fast) var(--ease-standard),box-shadow var(--dur-fast) var(--ease-standard),background-color var(--dur-fast)}
+.inp:hover:not(:disabled):not(:focus){border-color:#c9c3b7}
+.inp:focus,.inp:focus-visible{outline:none;border-color:#7f97a2;box-shadow:0 0 0 3px rgba(127,151,162,.25)}
+.inp[aria-invalid="true"]{border-color:var(--danger-line);box-shadow:0 0 0 3px rgba(154,74,63,.12)}
+.inp:disabled{background:var(--soft);color:var(--muted);cursor:not-allowed}
+input[type=checkbox],input[type=radio]{transition:transform var(--dur-fast) var(--ease-standard)}
+input[type=checkbox]:active:not(:disabled),input[type=radio]:active:not(:disabled){transform:scale(.92)}
+.link,.rv-say{transition:color var(--dur-fast),text-decoration-color var(--dur-fast)}
+.close,.x{transition:background-color var(--dur-fast),color var(--dur-fast)}
+
+/* ---------- semantic status: badge, indicator, feedback, loading ---------- */
+.t-success{--tone:var(--success);--tone-bg:var(--success-bg);--tone-line:var(--success-line)}
+.t-warning{--tone:var(--warning);--tone-bg:var(--warning-bg);--tone-line:var(--warning-line)}
+.t-danger{--tone:var(--danger);--tone-bg:var(--danger-bg);--tone-line:var(--danger-line)}
+.t-info{--tone:var(--info);--tone-bg:var(--info-bg);--tone-line:var(--info-line)}
+.t-neutral{--tone:var(--neutral);--tone-bg:var(--neutral-bg);--tone-line:var(--neutral-line)}
+.t-ai{--tone:var(--ai);--tone-bg:var(--ai-bg);--tone-line:var(--ai-line)}
+.si{flex:none;vertical-align:-.125em}
+.sb{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;line-height:1.45;border-radius:99px;padding:1px 8px 1px 6px;white-space:nowrap;color:var(--tone);background:transparent;border:1px solid transparent;transition:color var(--dur-base) var(--ease-standard),background-color var(--dur-base) var(--ease-standard),border-color var(--dur-base) var(--ease-standard)}
+.sb.v-soft{background:var(--tone-bg);border-color:var(--tone-line)}
+.sb.v-solid{background:var(--tone);border-color:var(--tone);color:#fff}
+.sb.v-outline{border-color:var(--tone-line);background:#fff}
+.sb.v-plain{padding:0;border-radius:0;font-size:12px}
+.sb.v-plain.t-neutral{color:var(--muted)}
+.sb.v-soft.t-danger,.sb.v-solid,.sb.v-soft.t-warning{font-weight:600}
+.sind{display:inline-flex;flex-wrap:wrap;align-items:center;gap:3px 6px;font-size:12px;color:var(--muted)}
+.sind-d{color:var(--muted)}
+.fb{display:flex;gap:9px;align-items:flex-start;margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--tone-line);background:var(--tone-bg);color:var(--ink);font-size:13.5px;line-height:1.5;animation:reveal var(--dur-slow) var(--ease-out)}
+.fb>.si{color:var(--tone);font-size:16px;margin-top:2px}
+.fb-b{min-width:0}
+.fb-b p{margin:0}
+.lds{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--tone)}
+.lds.t-neutral{color:var(--muted)}
+.spin{display:inline-block;width:13px;height:13px;border:1.5px solid var(--tone-line);border-top-color:var(--tone);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none;border-style:dotted;border-color:var(--tone)}.btn[aria-busy="true"]::before{animation:none;border-style:dotted}}
+@keyframes reveal{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+
+/* ---------- surfaces: cards, panels, dialogs, popovers ---------- */
+.card{transition:border-color var(--dur-base) var(--ease-standard),box-shadow var(--dur-base) var(--ease-standard),transform var(--dur-base) var(--ease-standard)}
+/* only surfaces you can act on lift; a static card never pretends to be a button */
+.wday,.card.interactive{transition:border-color var(--dur-base) var(--ease-standard),box-shadow var(--dur-base) var(--ease-standard),transform var(--dur-base) var(--ease-standard)}
+.wday:hover,.card.interactive:hover{transform:translateY(var(--lift-1));box-shadow:var(--shadow-2)}
+.wday:active,.card.interactive:active{transform:none;box-shadow:var(--shadow-1)}
+.tasks .task{transition:background-color var(--dur-base) var(--ease-standard)}
+.tasks .task:hover{background:#fdfcfa}
+.task .ttl{transition:color var(--dur-base) var(--ease-standard)}
+.panel{animation:panel-in var(--dur-slow) var(--ease-out)}
+@keyframes panel-in{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+@keyframes panel-up{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@media (max-width:820px){.panel{animation-name:panel-up}}
+.overlay{animation:fade var(--dur-slow) var(--ease-out)}
+.overlay .dialog{animation:dialog-in var(--dur-slow) var(--ease-out);box-shadow:var(--shadow-3)}
+@keyframes dialog-in{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+.overlay.leaving{pointer-events:none;opacity:0;transition:opacity var(--dur-base) var(--ease-in)}
+.overlay.leaving .dialog{transform:translateY(6px) scale(.99);transition:transform var(--dur-base) var(--ease-in)}
+.notice{animation:toast-in var(--dur-slow) var(--ease-out)}
+@keyframes toast-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translateX(-50%)}}
+.tip{transition:opacity var(--dur-fast) var(--ease-standard)}
+.form{animation:reveal var(--dur-base) var(--ease-out)}
+.rv-notice{animation:reveal var(--dur-base) var(--ease-out)}
+/* district groups open smoothly where the browser can animate details (progressive enhancement) */
+details.dist::details-content{height:0;overflow:clip;transition:height var(--dur-slow) var(--ease-standard),content-visibility var(--dur-slow) allow-discrete}
+details.dist[open]::details-content{height:auto}
+details.dist{transition:border-color var(--dur-base),box-shadow var(--dur-base)}
+details.dist[open]{box-shadow:var(--shadow-1)}
+details.dist summary:hover .dname{color:var(--accent)}
+.blist button{transition:background-color var(--dur-fast) var(--ease-standard)}
+
+/* ---------- navigation: sliding tab indicator ---------- */
+.tabs{position:relative;isolation:isolate}
+.tabs button{position:relative;z-index:1;transition:color var(--dur-base) var(--ease-standard)}
+.tabs.has-ind button[aria-selected="true"]{background:none;box-shadow:none}
+.tab-ind{position:absolute;z-index:0;top:3px;bottom:3px;left:0;width:var(--w,0);transform:translateX(var(--x,0));background:#fff;border-radius:99px;box-shadow:0 1px 2px rgba(40,40,35,.08);transition:transform var(--dur-slow) var(--ease-standard),width var(--dur-slow) var(--ease-standard);pointer-events:none}
+.tbadge{transition:background-color var(--dur-base),border-color var(--dur-base),color var(--dur-base)}
+.tbadge.t-danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.tbadge.t-info{background:var(--info-bg);border-color:var(--info-line);color:var(--info)}
+
+/* ---------- progress bars animate their value ---------- */
+.bar i,.dbar i,.mini i,.sbar i{transition:width var(--dur-slow) var(--ease-standard),background-color var(--dur-base)}
+.chart .col i{transition:height var(--dur-slow) var(--ease-standard)}
+
+/* ---------- map: restrained interaction states (no idle motion) ---------- */
+.bld .vis{transition:transform var(--dur-base) var(--ease-standard)}
+.bld .face{transition:filter var(--dur-base) var(--ease-standard)}
+.bld:hover .vis,.bld:focus-visible .vis{transform:translateY(-3px)}
+.bld:hover .face,.bld:focus-visible .face{filter:brightness(1.05)}
+.bld.sel .vis{transform:translateY(-2px)}
+.bld.sel.enter .vis{animation:bld-select var(--dur-slow) var(--ease-out)}
+@keyframes bld-select{from{transform:none}to{transform:translateY(-2px)}}
+.bld:focus-visible{box-shadow:none}
+.badge circle{transition:stroke-width var(--dur-fast)}
+.badge:hover circle,.badge:focus-visible circle{stroke-width:2.4}
+.badge:focus-visible{box-shadow:none}
+@media (prefers-reduced-motion:reduce){.bld:hover .vis,.bld:focus-visible .vis,.bld.sel .vis{transform:none}}
+.chip b{font-variant-numeric:tabular-nums}
+
+/* ---------- revision and AI ---------- */
+.rd-scale label,.rv-self label{transition:border-color var(--dur-fast) var(--ease-standard),box-shadow var(--dur-fast) var(--ease-standard),background-color var(--dur-fast)}
+.rd-scale label:hover,.rv-self label:hover{border-color:#bdb7ab}
+.rd-steps li span{transition:background-color var(--dur-base),border-color var(--dur-base),color var(--dur-base)}
+.rd-step{animation:reveal var(--dur-base) var(--ease-out)}
+.rv-live.rec{color:var(--danger);font-weight:600}
+.rv-wave{display:inline-flex;align-items:center;gap:2px;height:16px}
+.rv-wave i{display:block;width:3px;height:16px;border-radius:2px;background:var(--danger);opacity:.75;transform:scaleY(var(--l,.12));transform-origin:center;transition:transform 90ms linear}
+.rv-ai{animation:reveal var(--dur-slow) var(--ease-out);border-color:var(--ai-line)}
+.rv-ai-head b{color:var(--ai)}
+.rv-crit li{grid-template-columns:96px minmax(0,1fr);animation:reveal var(--dur-slow) var(--ease-out) both;animation-delay:calc(var(--i,0) * 40ms)}
+.rv-crit .sb{justify-self:start;align-self:start}
+.rv-fu{animation:reveal var(--dur-slow) var(--ease-out)}
+.rv-mis li{border-left-color:var(--danger-line)}
+.rv-loading{display:block;margin-top:12px;padding:10px 12px;border:1px dashed var(--ai-line);border-radius:10px;background:var(--ai-bg)}
+.rv-skel{display:grid;gap:6px;margin-top:8px}
+.rv-skel i{display:block;height:8px;border-radius:99px;background:linear-gradient(90deg,var(--ai-line),#e6e2ef,var(--ai-line));background-size:200% 100%;animation:shimmer 1.4s ease-in-out infinite}
+.rv-skel i:nth-child(2){width:80%}
+.rv-skel i:nth-child(3){width:60%}
+@keyframes shimmer{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.rv-skel i{animation:none}}
+@media (max-width:480px){.rv-crit li{grid-template-columns:minmax(0,1fr)}}

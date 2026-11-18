@@ -14,11 +14,11 @@ const overview: RevisionOverview = {
   dailyAllowanceMinutes: 30,
   weeklyOvertimeMinutes: 120,
   counts: { due: 1, overdue: 1, upcoming: 1, later: 0, weak: 1, awaitingCorrection: 1, active: 4, paused: 0 },
-  overdue: [unit({ scheduleId: 2, label: "Utility types", subtopicId: 12, status: "OVERDUE", nextDueDate: "2026-11-17", overdueDays: 2, weak: true, lastAttemptDate: "2026-11-16", lastScore: 1 })],
+  overdue: [unit({ scheduleId: 2, label: "Utility types", subtopicId: 12, status: "OVERDUE", nextDueDate: "2026-11-17", overdueDays: 2, weak: true, lastAttemptDate: "2026-11-16", lastScore: 1, presentation: pres("revision.overdue", "danger", "2 days overdue", [WEAK]) })],
   due: [unit({})],
-  upcoming: [unit({ scheduleId: 3, label: "TypeScript (whole topic)", scope: "TOPIC", subtopicId: null, status: "SCHEDULED", nextDueDate: "2026-11-21" })],
-  weak: [unit({ scheduleId: 2, label: "Utility types", subtopicId: 12, status: "OVERDUE", weak: true })],
-  awaitingCorrection: [unit({ scheduleId: 4, label: "Narrowing", subtopicId: 13, status: "SCHEDULED", correctionPending: true, pendingAttemptId: 99 })],
+  upcoming: [unit({ scheduleId: 3, label: "TypeScript (whole topic)", scope: "TOPIC", subtopicId: null, status: "SCHEDULED", nextDueDate: "2026-11-21", presentation: pres("revision.upcoming", "neutral", "Next 21 Nov") })],
+  weak: [unit({ scheduleId: 2, label: "Utility types", subtopicId: 12, status: "OVERDUE", weak: true, presentation: pres("revision.overdue", "danger", "2 days overdue", [WEAK]) })],
+  awaitingCorrection: [unit({ scheduleId: 4, label: "Narrowing", subtopicId: 13, status: "SCHEDULED", correctionPending: true, pendingAttemptId: 99, presentation: pres("revision.correction", "warning", "Correct the gap first") })],
   session: [
     { topicId: "fe.ts", scope: "SUBTOPIC", subtopicId: 12 },
     { topicId: "fe.ts", scope: "SUBTOPIC", subtopicId: 11 },
@@ -51,6 +51,7 @@ vi.mock("../state/AppData", () => ({
 }));
 
 import { RevisionView } from "../components/RevisionView";
+import { pres, WEAK } from "./fixtures";
 
 describe("RevisionView (Revision section)", () => {
   it("lists overdue, due, upcoming, weak and correction units, history and analytics", async () => {

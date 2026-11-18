@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { type ISODate, diffDays } from "../../domain/dates.js";
 import { d2i } from "../../db.js";
+import { revisionPresentation, taskPresentation } from "../../domain/presentation.js";
 import { REVISION_POLICY, isWeak } from "../../domain/revision.js";
 
 export const taskInclude = {
@@ -21,6 +22,10 @@ export const taskOrder: Prisma.TaskOrderByWithRelationInput[] = [
 
 export function taskDTO(t: TaskRow, today: ISODate) {
   const scheduled = d2i(t.scheduledDate);
+  const overdueDays = t.status === "TODO" && scheduled < today ? diffDays(scheduled, today) : 0;
+  const due = d2i(t.originalDate);
+  const weak = t.revisionSchedule ? isWeak(t.revisionSchedule, REVISION_POLICY) : false;
+  const correctionPending = t.revisionSchedule?.correctionPending ?? false;
   return {
     id: t.id,
     // Revision tasks are named after their unit as it is now, so a curriculum rename never leaves a stale title.
@@ -37,7 +42,8 @@ export function taskDTO(t: TaskRow, today: ISODate) {
     scheduledDate: scheduled,
     rescheduleCount: t.rescheduleCount,
     completedAt: t.completedAt?.toISOString() ?? null,
-    overdueDays: t.status === "TODO" && scheduled < today ? diffDays(scheduled, today) : 0,
+    overdueDays,
+    presentation: taskPresentation({ status: t.status, overdueDays }),
     topic: t.topic,
     subtopic: t.subtopic ? { id: t.subtopic.id, name: t.subtopic.name, completed: t.subtopic.completedAt !== null } : null,
     stageId: t.stageId,
@@ -46,11 +52,12 @@ export function taskDTO(t: TaskRow, today: ISODate) {
       ? {
           scheduleId: t.revisionSchedule.id,
           scope: t.revisionSchedule.scope,
-          weak: isWeak(t.revisionSchedule, REVISION_POLICY),
-          correctionPending: t.revisionSchedule.correctionPending,
+          weak,
+          correctionPending,
           lastScore: t.revisionSchedule.lastScore,
-          dueDate: d2i(t.originalDate),
-          overdueDays: t.status === "TODO" && d2i(t.originalDate) < today ? diffDays(d2i(t.originalDate), today) : 0,
+          dueDate: due,
+          overdueDays: t.status === "TODO" && due < today ? diffDays(due, today) : 0,
+          presentation: revisionPresentation({ correctionPending: correctionPending && t.status !== "DONE", nextDueDate: due, completed: t.status === "DONE", weak }, today),
         }
       : null,
   };

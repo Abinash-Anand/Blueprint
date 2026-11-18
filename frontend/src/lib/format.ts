@@ -45,12 +45,6 @@ export function monthRange(start: string, end: string): string {
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 export const PRIORITY_LABEL = { CORE: "Core", IMPORTANT: "Important", OPTIONAL: "Optional" } as const;
-export const STATUS_LABEL = {
-  NOT_STARTED: "Not started",
-  IN_PROGRESS: "In progress",
-  LEARNED: "Learned",
-  DEMONSTRATED: "Demonstrated",
-} as const;
 export const KIND_LABEL = { STUDY: "Study", PRACTICE: "Practice", REVISION: "Revision" } as const;
 
 /** Four-level recall assessment (Revision spec §7). "Mastered this attempt" on purpose: one success is not mastery. */

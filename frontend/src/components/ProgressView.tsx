@@ -6,8 +6,8 @@ import { INK, mix } from "../lib/color";
 import { dayMonth, hours1, monthName, pct, plural, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { Loading, Stat } from "./ui";
+import { StatusBadge } from "./Status";
 
-const STATUS_TEXT = { UPCOMING: "Upcoming", ON_TRACK: "On track", BEHIND: "Behind", DELAYED: "Delayed", COMPLETE: "Complete" } as const;
 
 export function ProgressView({ onOpenDistrict, onOpenRevision }: { onOpenDistrict: (idx: number) => void; onOpenRevision: () => void }) {
   const { progress: p, curriculum, districtById } = useAppData();
@@ -79,7 +79,7 @@ export function ProgressView({ onOpenDistrict, onOpenRevision }: { onOpenDistric
                         <span style={{ fontSize: 12, color: "var(--muted)" }}>{d.coreDemonstrated}/{d.coreTotal}</span>
                       </td>
                       <td className="n">{hours1(d.actualMinutes)} <span style={{ color: "var(--muted)" }}>/ {hours1(d.plannedMinutes)}</span></td>
-                      <td className="n">{d.passed ? <span className="tag solid">Passed</span> : i === p.road.currentDistrictIndex ? <span className="tag ink">Current</span> : null}</td>
+                      <td className="n"><StatusBadge p={d.presentation} fallback={d.passed ? "Passed" : i === p.road.currentDistrictIndex ? "Current" : undefined} /></td>
                     </tr>
                   );
                 })}
@@ -179,10 +179,7 @@ function Timeline({ p }: { p: Progress }) {
               </div>
             </div>
             <div className="st">
-              <span className={`tag ${s.status === "COMPLETE" ? "solid" : s.status === "DELAYED" || s.status === "BEHIND" ? "ink" : ""}`}>
-                {STATUS_TEXT[s.status]}
-                {s.status === "DELAYED" ? ` by ${plural(s.delayDays, "day")}` : ""}
-              </span>
+              <StatusBadge p={s.presentation} fallback={s.status.toLowerCase().replace("_", " ")} />
               {s.overdueTasks > 0 && <div className="dt">{plural(s.overdueTasks, "task")} overdue</div>}
               <div>
                 <button className="btn" style={{ padding: "2px 8px", fontSize: 12, marginTop: 4 }} onClick={() => setEdit(edit?.id === s.id ? null : { id: s.id, start: s.startDate, end: s.endDate })}>
