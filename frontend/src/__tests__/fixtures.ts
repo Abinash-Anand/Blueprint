@@ -1,4 +1,10 @@
-import type { District, Topic } from "../api/types";
+import type { District, Presentation, Tone, Topic } from "../api/types";
+
+/** Presentation metadata as the backend sends it (LLD §4.4); the frontend only renders it. */
+export const pres = (state: string, tone: Tone, label: string, flags?: Presentation[]): Presentation => ({
+  state, tone, variant: "soft", icon: "circle", label, ...(flags ? { flags } : {}),
+});
+export const WEAK = pres("revision.weak", "warning", "Weak");
 
 export function topic(id: string, over: Partial<Topic> = {}): Topic {
   return {

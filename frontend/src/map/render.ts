@@ -10,6 +10,10 @@ export interface RenderState {
   /** Learned sub-topics per topic id. */
   floors: (topicId: string) => number;
   selectedId: string | null;
+  /** The selection just changed: play the short selection lift once (not on every redraw). */
+  selectionEnter?: boolean;
+  /** The backend's presentation state per topic (e.g. "topic.demonstrated"), exposed as data-state for styling hooks. */
+  stateOf?: (topicId: string) => string | undefined;
   currentTopicId: string | null;
   /** Checkpoint passed per district index. */
   passed: boolean[];
@@ -84,14 +88,20 @@ export function buildingSVG(b: Building, st: RenderState): string {
   const H = BASE + n * FH, h = BASE + k * FH;
   const { x0, y0, x1, y1 } = b;
   const label = `${b.block.district.name}: ${t.name}, ${k} of ${n} floors${demonstrated ? ", demonstrated" : ""}`;
-  let s = `<g class="bld" data-t="${esc(t.id)}" tabindex="0" role="button" aria-label="${esc(label)}">`;
-  if (t.id === st.selectedId) {
+  const sel = t.id === st.selectedId;
+  const state = st.stateOf?.(t.id);
+  let s =
+    `<g class="bld${sel ? " sel" : ""}${sel && st.selectionEnter ? " enter" : ""}" data-t="${esc(t.id)}"` +
+    `${state ? ` data-state="${esc(state)}"` : ""} tabindex="0" role="button" aria-label="${esc(label)}"${sel ? ' aria-current="true"' : ""}>`;
+  // The ground outline stays put; the building itself (.vis) lifts on hover and selection, the hit area never moves.
+  if (sel) {
     const e = 0.2;
     s += `<polygon fill="none" stroke="${INK}" stroke-width="1.6" points="${P([iso(x0 - e, y0 - e), iso(x1 + e, y0 - e), iso(x1 + e, y1 + e), iso(x0 - e, y1 + e)])}"/>`;
   } else if (t.id === st.currentTopicId) {
     const e = 0.22;
     s += `<polygon class="curring" fill="none" stroke="${ACCENT}" stroke-width="1.5" stroke-dasharray="4 3" points="${P([iso(x0 - e, y0 - e), iso(x1 + e, y0 - e), iso(x1 + e, y1 + e), iso(x0 - e, y1 + e)])}"/>`;
   }
+  s += `<g class="vis">`;
   if (k === 0) {
     s += box(x0, y0, x1, y1, 0, BASE, mix(c, PAPER, 0.55), mix(c, PAPER, 0.35), mix(c, PAPER, 0.2), "face");
   } else {
@@ -113,7 +123,7 @@ export function buildingSVG(b: Building, st: RenderState): string {
       `M${P([iso(x0, y0, H)])} L${P([iso(x1, y0, H)])} L${P([iso(x1, y1, H)])} L${P([iso(x0, y1, H)])} Z ` +
       `M${P([iso(x0, y1, h)])} L${P([iso(x0, y1, H)])} M${P([iso(x1, y1, h)])} L${P([iso(x1, y1, H)])} M${P([iso(x1, y0, h)])} L${P([iso(x1, y0, H)])}"/>`;
   }
-  s += `<polygon class="hit" points="${P([iso(x0, y1), iso(x1, y1), iso(x1, y0), iso(x1, y0, H + 0.1), iso(x0, y0, H + 0.1), iso(x0, y1, H + 0.1)])}"/>`;
+  s += `</g><polygon class="hit" points="${P([iso(x0, y1), iso(x1, y1), iso(x1, y0), iso(x1, y0, H + 0.1), iso(x0, y0, H + 0.1), iso(x0, y1, H + 0.1)])}"/>`;
   return s + "</g>";
 }
 

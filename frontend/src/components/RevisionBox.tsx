@@ -5,23 +5,18 @@ import type { RetrievalMethod, RevisionUnit, TopicRevision } from "../api/types"
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SOURCE_LABEL, dayMonth, scoreLabel } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { type RecallItem, RecallDialog } from "./RecallDialog";
-import { RevisionStatus } from "./RevisionStatus";
+import { StatusBadge, StatusIndicator } from "./Status";
 
 /** Status line of one unit: the shared revision status, plus the last attempt (date and score). */
-function UnitStatus({ u, today }: { u: RevisionUnit; today: string }) {
+function UnitStatus({ u }: { u: RevisionUnit }) {
   const s = u.schedule;
   if (!s || (!u.eligible && s.status !== "SUSPENDED")) {
-    return <span className="rstat"><span className="rs rs-upcoming">{u.scope === "TOPIC" ? "Starts after two sub-topics are learned" : "Not learned yet"}</span></span>;
+    return <StatusIndicator fallback={u.scope === "TOPIC" ? "Starts after two sub-topics are learned" : "Not learned yet"} />;
   }
   const planned = s.openTask && s.nextDueDate && s.openTask.scheduledDate !== s.nextDueDate ? `planned ${dayMonth(s.openTask.scheduledDate)}` : "";
   const last = s.lastAttemptDate ? `last ${dayMonth(s.lastAttemptDate)}: ${scoreLabel(s.lastScore)}` : "";
   return (
-    <RevisionStatus
-      x={{ suspended: s.status === "SUSPENDED", correctionPending: s.correctionPending, nextDueDate: s.nextDueDate, lastAttemptDate: s.lastAttemptDate }}
-      today={today}
-      weak={s.weak}
-      extra={[planned, last].filter(Boolean).join(" · ") || undefined}
-    />
+    <StatusIndicator p={s.presentation} fallback={s.status.toLowerCase()} detail={[planned, last].filter(Boolean).join(" · ") || undefined} />
   );
 }
 
@@ -68,7 +63,7 @@ export function RevisionBox({ topicId }: { topicId: string }) {
             <li key={u.unit} className={u.scope === "TOPIC" ? "whole" : ""}>
               <div className="rl-main">
                 <span className="rl-name">{u.scope === "TOPIC" ? "Whole topic" : u.label}</span>
-                <UnitStatus u={u} today={rev.today} />
+                <UnitStatus u={u} />
               </div>
               <div className="rl-acts">
                 {u.scope === "SUBTOPIC" && (
@@ -103,7 +98,7 @@ export function RevisionBox({ topicId }: { topicId: string }) {
           {rev.attempts.map((a) => (
             <li key={`a${a.id}`}>
               <div>
-                <b>{dayMonth(a.attemptDate)}</b> · {a.label} · <span className={a.score <= 1 ? "delayed" : ""}>{a.score} {scoreLabel(a.score)}</span>
+                <b>{dayMonth(a.attemptDate)}</b> · {a.label} · <StatusBadge p={a.presentation} fallback={`${a.score} ${scoreLabel(a.score)}`} />
                 <span className="m"> · {METHOD_LABEL[a.retrievalMethod]}{a.usedHints || a.usedNotes ? " · with help" : ""}</span>
               </div>
               {a.mistakes && <div className="m">Gap: {a.mistakes}{a.score <= 1 ? (a.correctionCompleted ? " · corrected" : " · not corrected yet") : ""}</div>}

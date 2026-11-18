@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client";
 import type { Today } from "./api/types";
 import { CityMap, type Focus } from "./components/CityMap";
@@ -7,6 +7,7 @@ import { RevisionView } from "./components/RevisionView";
 import { Sidebar } from "./components/Sidebar";
 import { TodayView } from "./components/TodayView";
 import { WeekView } from "./components/WeekView";
+import { toneOf } from "./components/Status";
 import { Loading } from "./components/ui";
 import { shortDate } from "./lib/format";
 import { layout } from "./map/geometry";
@@ -39,6 +40,8 @@ export function App() {
   const [sideOpen, setSideOpen] = useState(false);
   const [focus, setFocus] = useState<Focus | null>(null);
   const nonce = useRef(0);
+  const tabsRef = useRef<HTMLElement>(null);
+  const indRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const on = () => setRoute(parseHash(location.hash));
@@ -87,6 +90,24 @@ export function App() {
   const revDue = today?.revision.dueCount ?? 0;
   const revOverdue = today?.revision.overdueCount ?? 0;
 
+  // Sliding indicator under the active tab: measured, then moved with a transform (no layout work while it moves).
+  const ready = !!curriculum && !!progress;
+  useLayoutEffect(() => {
+    const nav = tabsRef.current, ind = indRef.current;
+    if (!nav || !ind) return;
+    const place = () => {
+      const b = nav.querySelector<HTMLElement>('[aria-selected="true"]');
+      if (!b) return;
+      ind.style.setProperty("--x", `${b.offsetLeft}px`);
+      ind.style.setProperty("--w", `${b.offsetWidth}px`);
+    };
+    place();
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(place) : null;
+    ro?.observe(nav);
+    nav.querySelectorAll("button").forEach((b) => ro?.observe(b));
+    return () => ro?.disconnect();
+  }, [route.view, ready, today?.revision.dueCount]);
+
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setSideOpen(false);
     addEventListener("keydown", esc);
@@ -121,7 +142,8 @@ export function App() {
       <div className="main">
         <header className="vbar">
           <button className="btn menu" aria-label="Open districts" onClick={() => setSideOpen(true)}>☰</button>
-          <nav className="tabs" role="tablist" aria-label="Views">
+          <nav className="tabs has-ind" role="tablist" aria-label="Views" ref={tabsRef}>
+            <span className="tab-ind" ref={indRef} aria-hidden="true" />
             {VIEWS.map((v) => {
               const badge = v.id === "revision" && revDue > 0;
               return (
@@ -133,7 +155,7 @@ export function App() {
                   onClick={() => go({ view: v.id, param: v.id === "city" ? param && view === "city" ? param : null : null })}
                 >
                   {v.label}
-                  {badge && <span className={`tbadge${revOverdue ? " late" : ""}`} aria-hidden="true">{revDue}</span>}
+                  {badge && <span className={`tbadge t-${toneOf(today?.revision.attention?.tone ?? (revOverdue ? "danger" : "info"))}`} aria-hidden="true">{revDue}</span>}
                 </button>
               );
             })}

@@ -10,11 +10,27 @@ export type RevisionStatus = "SCHEDULED" | "DUE" | "OVERDUE" | "AWAITING_CORRECT
 export type PromptSource = "CURRICULUM" | "TEMPLATE" | "LEARNER";
 export type CheckpointResult = "RECALLED" | "PARTIAL" | "NOT_RECALLED";
 
+/**
+ * Semantic presentation from the backend (LLD §4.4, GET /api/presentation). The backend decides what a state means;
+ * the frontend only maps tone/variant/icon to its design tokens. Unknown values fall back to neutral.
+ */
+export type Tone = "success" | "warning" | "danger" | "info" | "neutral" | "ai";
+export type Variant = "solid" | "soft" | "outline" | "plain";
+export interface Presentation {
+  state: string;
+  tone: Tone;
+  variant: Variant;
+  icon: string;
+  label: string;
+  flags?: Presentation[];
+}
+
 export interface Subtopic {
   id: number;
   position: number;
   name: string;
   completedAt: string | null;
+  presentation?: Presentation;
 }
 
 export interface Resource {
@@ -33,6 +49,7 @@ export interface Topic {
   estimatedHours: number;
   exercise: string;
   status: TopicStatus;
+  presentation?: Presentation;
   demonstratedAt: string | null;
   demonstrationNote: string | null;
   needsReview: boolean;
@@ -87,6 +104,7 @@ export interface Task {
   rescheduleCount: number;
   completedAt: string | null;
   overdueDays: number;
+  presentation?: Presentation;
   topic: { id: string; name: string; districtId: string } | null;
   subtopic: { id: number; name: string; completed: boolean } | null;
   stageId: string | null;
@@ -99,6 +117,7 @@ export interface Task {
     lastScore: number | null;
     dueDate: ISODate;
     overdueDays: number;
+    presentation?: Presentation;
   } | null;
 }
 
@@ -126,6 +145,7 @@ export interface RevisionUnit {
   schedule: {
     id: number;
     status: RevisionStatus;
+    presentation?: Presentation;
     nextDueDate: ISODate | null;
     lastAttemptDate: ISODate | null;
     lastScore: number | null;
@@ -149,6 +169,7 @@ export interface Attempt {
   promptId: number | null;
   promptText: string;
   score: number;
+  presentation?: Presentation;
   effectiveScore: number;
   retrievalMethod: RetrievalMethod;
   attemptedAt: string;
@@ -176,6 +197,7 @@ export interface Checkpoint {
   promptId: number | null;
   promptText: string;
   result: CheckpointResult;
+  presentation?: Presentation;
   neededAssistance: boolean;
   gaps: string;
   response: string;
@@ -254,6 +276,7 @@ export interface Today {
     overdueCount: number;
     weakCount: number;
     awaitingCorrection: number;
+    attention?: Presentation;
     backlog: { count: number; oldestDue: ISODate | null };
     optional: Task[];
     sessionTaskIds: number[];
@@ -290,10 +313,10 @@ export interface Week {
     remainingMinutes: number;
   };
   revision: {
-    plannedMinutes: number; doneMinutes: number; upcomingMinutes: number; dueThisWeek: number; overdue: number;
+    plannedMinutes: number; doneMinutes: number; upcomingMinutes: number; dueThisWeek: number; overdue: number; attention?: Presentation;
     overTargetMinutes: number; dailyAllowanceMinutes: number; weeklyOvertimeMinutes: number;
   };
-  milestones: { date: ISODate; type: "PRACTICE" | "STAGE_END"; title: string; topicId: string | null; stageId: string | null; done: boolean }[];
+  milestones: { date: ISODate; type: "PRACTICE" | "STAGE_END"; title: string; topicId: string | null; stageId: string | null; done: boolean; presentation?: Presentation }[];
   tasks: Task[];
 }
 
@@ -311,6 +334,7 @@ export interface DistrictProgress {
   coreDemonstrated: number;
   roadFraction: number;
   passed: boolean;
+  presentation?: Presentation;
   plannedMinutes: number;
   actualMinutes: number;
 }
@@ -333,6 +357,7 @@ export interface Progress {
   road: Road;
   stages: (Stage & {
     status: StageStatus;
+    presentation?: Presentation;
     delayDays: number;
     tasksTotal: number;
     tasksDone: number;
@@ -369,6 +394,7 @@ export interface RevisionUnitRow {
   scope: RevisionScope;
   label: string;
   status: RevisionStatus;
+  presentation?: Presentation;
   nextDueDate: ISODate | null;
   overdueDays: number;
   lastAttemptDate: ISODate | null;
@@ -387,6 +413,7 @@ export interface RevisionOverview {
   dailyAllowanceMinutes: number;
   weeklyOvertimeMinutes: number;
   counts: { due: number; overdue: number; upcoming: number; later: number; weak: number; awaitingCorrection: number; active: number; paused: number };
+  attention?: Presentation;
   overdue: RevisionUnitRow[];
   due: RevisionUnitRow[];
   upcoming: RevisionUnitRow[];
@@ -394,7 +421,7 @@ export interface RevisionOverview {
   awaitingCorrection: RevisionUnitRow[];
   session: { topicId: string; scope: RevisionScope; subtopicId: number | null }[];
   history: (Attempt & { topicId: string; topicName: string })[];
-  checkpoints: { id: number; topicId: string; topicName: string; subtopicId: number; label: string; result: CheckpointResult; neededAssistance: boolean; gaps: string; date: ISODate }[];
+  checkpoints: { id: number; topicId: string; topicName: string; subtopicId: number; label: string; result: CheckpointResult; presentation?: Presentation; neededAssistance: boolean; gaps: string; date: ISODate }[];
 }
 
 /** AI design §4.5. */
@@ -434,11 +461,13 @@ export interface AiEvaluation {
   parentId: number | null;
   rootId: number;
   status: "PENDING" | "SUCCEEDED" | "FAILED";
+  presentation?: Presentation;
   errorCode: string | null;
   transcript: string;
   suggestedScore: 0 | 1 | 2 | 3 | null;
+  suggestion?: Presentation | null;
   relevant: boolean | null;
-  criteria: { index: number; text: string; verdict: Verdict; evidence: string | null; recoveredInFollowUp: boolean }[];
+  criteria: { index: number; text: string; verdict: Verdict; presentation?: Presentation; evidence: string | null; recoveredInFollowUp: boolean }[];
   misconceptions: { claim: string; correction: string; verified: boolean }[];
   feedback: string;
   followUpQuestion: string | null;

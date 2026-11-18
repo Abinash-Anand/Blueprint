@@ -6,6 +6,7 @@
  */
 import { createHash } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { evaluationPresentation, suggestionPresentation, verdictPresentation } from "../../domain/presentation.js";
 import type { Clock } from "../../lib/clock.js";
 import { HttpError, notFound } from "../../lib/http.js";
 import { resolvePrompt } from "../revision/service.js";
@@ -65,11 +66,15 @@ export function evaluationDTO(e: EvalRow, maxFollowUps: number, depth: number) {
     parentId: e.parentId,
     rootId: r?.rootId ?? e.id,
     status: e.status,
+    presentation: evaluationPresentation(e.status),
     errorCode: e.errorCode,
     transcript: e.transcript,
     suggestedScore: e.suggestedScore,
+    suggestion: suggestionPresentation(e.suggestedScore),
     relevant: r?.relevant ?? null,
-    criteria: (r?.criteria ?? []).map((c) => ({ index: c.index, text: c.text, verdict: c.verdict, evidence: c.evidence, recoveredInFollowUp: c.recoveredInFollowUp })),
+    criteria: (r?.criteria ?? []).map((c) => ({
+      index: c.index, text: c.text, verdict: c.verdict, presentation: verdictPresentation(c.verdict), evidence: c.evidence, recoveredInFollowUp: c.recoveredInFollowUp,
+    })),
     misconceptions: r?.misconceptions ?? [],
     feedback: r?.feedback ?? "",
     followUpQuestion: depth < maxFollowUps ? (r?.followUpQuestion ?? null) : null,

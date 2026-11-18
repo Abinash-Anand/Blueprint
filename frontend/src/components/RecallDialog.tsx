@@ -11,10 +11,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError, api } from "../api/client";
-import type { AiEvaluation, AiStatus, CheckpointResult, RetrievalMethod, RevisionScope, TopicRevision } from "../api/types";
+import type { AiEvaluation, AiStatus, CheckpointResult, Presentation, RetrievalMethod, RevisionScope, TopicRevision } from "../api/types";
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SCORES, SOURCE_LABEL, scoreLabel, shortDate } from "../lib/format";
+import { useExit } from "../lib/motion";
 import { useAppData } from "../state/AppData";
 import { AiConsent, AiPanel } from "./AiPanel";
+import { FeedbackMessage, LoadingState, StatusBadge, toneOf } from "./Status";
 import { Loading } from "./ui";
 import { Recorder, canRecord } from "./voice/Recorder";
 import { canSpeak, speak, stopSpeaking } from "./voice/speak";
@@ -54,7 +56,7 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
   const [corrected, setCorrected] = useState(false);
   const [duration, setDuration] = useState("");
   const [comment, setComment] = useState("");
-  const [outcome, setOutcome] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<{ text: string; p?: Presentation } | null>(null);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   const [ai, setAi] = useState<AiStatus | null>(null);
@@ -65,6 +67,8 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<"TYPED" | "SPOKEN">("TYPED");
+  // Exit transition: the overlay stops taking input at once and unmounts when its short fade ends.
+  const { leaving, close } = useExit(onClose);
   const box = useRef<HTMLDivElement>(null);
   const stepRef = useRef<HTMLDivElement>(null);
 
@@ -107,8 +111,8 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
   useEffect(() => () => stopSpeaking(), []);
 
   // Focus once on open. Escape exits, but never discards typed work silently.
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  const closeRef = useRef(close);
+  closeRef.current = close;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   useEffect(() => {
@@ -225,13 +229,15 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
         }),
       );
       if (r) {
-        setOutcome(
-          r.correctionPending && !r.nextDueDate
-            ? "Recorded. Go back to the material for the gap, then confirm the correction; the retry is scheduled for the next study day after that."
-            : `Recorded as "${scoreLabel(score)}"${r.effectiveScore !== score ? " (counted as Recalled because hints or notes were used)" : ""}. ` +
+        setOutcome({
+          p: r.attempt.presentation,
+          text:
+            r.correctionPending && !r.nextDueDate
+              ? "Recorded. Go back to the material for the gap, then confirm the correction; the retry is scheduled for the next study day after that."
+              : `Recorded as "${scoreLabel(score)}"${r.effectiveScore !== score ? " (counted as Recalled because hints or notes were used)" : ""}. ` +
                 `Next revision due ${shortDate(r.nextDueDate!)}${r.nextTaskDate && r.nextTaskDate !== r.nextDueDate ? `, planned for ${shortDate(r.nextTaskDate)}` : ""}.` +
                 (r.correctionPending ? " Confirm the correction before that attempt." : ""),
-        );
+        });
         setStep("done");
       }
     } else if (!isRevision && result && item.subtopicId) {
@@ -242,11 +248,13 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
         }),
       );
       if (r) {
-        setOutcome(
-          result === "RECALLED"
-            ? "Checkpoint recorded. Mark the sub-topic as learned when you're confident; that stays your decision."
-            : "Checkpoint recorded. Go back to the material for the gaps you noted, then try again.",
-        );
+        setOutcome({
+          p: r.presentation,
+          text:
+            result === "RECALLED"
+              ? "Checkpoint recorded. Mark the sub-topic as learned when you're confident; that stays your decision."
+              : "Checkpoint recorded. Go back to the material for the gaps you noted, then try again.",
+        });
         setStep("done");
       }
     }
@@ -271,9 +279,9 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
   const showSteps = !!unit && step !== "done" && !(isRevision && (!unit.eligible || pending));
 
   return createPortal(
-    <div className="overlay focus" role="presentation">
+    <div className={`overlay focus${leaving ? " leaving" : ""}`} role="presentation">
       <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="recall-title" tabIndex={-1} ref={box}>
-        <button className="close" aria-label={exitLabel} title={dirty ? "Exit (your answer is discarded)" : exitLabel} onClick={onClose}>×</button>
+        <button className="close" aria-label={exitLabel} title={dirty ? "Exit (your answer is discarded)" : exitLabel} onClick={close}>×</button>
         <div className="kick">
           {isRevision ? "Revision" : "Recall check"}
           {items.length > 1 && ` · ${index + 1} of ${items.length}`} · {topicName}
@@ -296,14 +304,19 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
           <Loading />
         ) : step === "done" ? (
           <>
-            <p className="rd-note">{outcome}</p>
+            {outcome && (
+              <FeedbackMessage tone={toneOf(outcome.p?.tone ?? "success")} icon={outcome.p?.icon}>
+                {outcome.p && <p><StatusBadge p={outcome.p} /></p>}
+                <p className="rd-note">{outcome.text}</p>
+              </FeedbackMessage>
+            )}
             <div className="rd-acts">
               {index + 1 < items.length ? (
                 <button className="btn primary" onClick={next}>Next: {items.length - index - 1} left</button>
               ) : (
-                <button className="btn primary" onClick={onClose}>Done</button>
+                <button className="btn primary" onClick={close}>Done</button>
               )}
-              {index + 1 < items.length && <button className="btn" onClick={onClose}>Stop here</button>}
+              {index + 1 < items.length && <button className="btn" onClick={close}>Stop here</button>}
             </div>
           </>
         ) : isRevision && !unit.eligible ? (
@@ -313,7 +326,7 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
                 ? "Topic-level revision starts once two sub-topics are learned (or the topic is demonstrated)."
                 : "This sub-topic isn't marked as learned yet. Use a recall check while you study it; revision starts after you mark it learned."}
             </p>
-            <div className="rd-acts"><button className="btn" onClick={onClose}>Close</button></div>
+            <div className="rd-acts"><button className="btn" onClick={close}>Close</button></div>
           </>
         ) : pending ? (
           <>
@@ -324,7 +337,7 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
             {pendingAttempt?.mistakes && <div className="rd-box"><b>What was missing</b><p>{pendingAttempt.mistakes}</p></div>}
             <div className="rd-acts">
               <button className="btn primary" disabled={busy} onClick={() => void confirmCorrection()}>I've corrected it</button>
-              <button className="btn" onClick={onClose}>Later</button>
+              <button className="btn" onClick={close}>Later</button>
             </div>
           </>
         ) : step === "retrieve" ? (
@@ -392,13 +405,19 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
                     </label>
                   ))}
                 </fieldset>
-                {aiError && <p className="rv-err" role="alert">{aiError}</p>}
+                {aiError && <FeedbackMessage tone="danger">{aiError}</FeedbackMessage>}
+                {aiBusy && (
+                  <div className="rv-loading">
+                    <LoadingState tone="ai" text="Checking your answer against the expected points…" />
+                    <div className="rv-skel" aria-hidden="true"><i /><i /><i /></div>
+                  </div>
+                )}
                 <div className="rd-acts">
-                  <button className="btn primary" disabled={aiBusy || selfScore === null} onClick={() => void checkWithAi()}>
+                  <button className="btn primary" aria-busy={aiBusy} disabled={aiBusy || selfScore === null} onClick={() => void checkWithAi()}>
                     {aiBusy ? "Checking…" : "Check with AI"}
                   </button>
                   <button className="btn" onClick={() => setStep("compare")}>Continue without AI</button>
-                  <button className="btn" onClick={onClose}>{exitLabel}</button>
+                  <button className="btn" onClick={close}>{exitLabel}</button>
                   {selfScore === null && <span className="rd-hint" style={{ margin: 0 }}>Choose your own score first.</span>}
                 </div>
               </>
@@ -407,7 +426,7 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
                 <p className="rd-hint">Close your notes and answer first. The expected answer appears in the next step.</p>
                 <div className="rd-acts">
                   <button className="btn primary" onClick={() => setStep("compare")}>Continue to comparison</button>
-                  <button className="btn" onClick={onClose}>{exitLabel}</button>
+                  <button className="btn" onClick={close}>{exitLabel}</button>
                 </div>
               </>
             )}
@@ -503,7 +522,7 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
               </div>
             )}
             <div className="rd-acts">
-              <button className="btn primary" disabled={!canSave} onClick={() => void save()}>Save {isRevision ? "attempt" : "checkpoint"}</button>
+              <button className="btn primary" aria-busy={busy} disabled={!canSave} onClick={() => void save()}>Save {isRevision ? "attempt" : "checkpoint"}</button>
               <button className="btn" onClick={() => setStep("compare")}>Back</button>
               {!assessed && <span className="rd-hint" style={{ margin: 0 }}>Choose a {isRevision ? "score" : "result"} to save.</span>}
             </div>

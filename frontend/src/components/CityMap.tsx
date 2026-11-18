@@ -8,7 +8,8 @@ import { esc } from "../lib/color";
 import { PRIORITY_LABEL, monthRange } from "../lib/format";
 import { BASE, FH, type Building, type Layout, cityBox, districtBox, iso } from "../map/geometry";
 import { renderCity, roadSVG } from "../map/render";
-import { type CarPos, carPosition } from "../map/vehicle";
+import { type CarPos, alongPath, carPath, carPosition, pathLength } from "../map/vehicle";
+import { MOTION, easeInOut, prefersReducedMotion, useAnimatedNumber } from "../lib/motion";
 import { TopicPanel } from "./TopicPanel";
 
 export interface Focus {
@@ -34,7 +35,7 @@ interface View { cx: number; cy: number; k: number }
 let savedView: View | null = null; // camera survives switching tabs
 
 const clampK = (k: number) => Math.max(0.3, Math.min(2.6, k));
-const reduceMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+const reduceMotion = prefersReducedMotion;
 
 /** Month signposts from the main stages of each district (plus the parallel track). */
 function signposts(c: Curriculum): string[][] {
@@ -83,10 +84,9 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
       applyView();
       return;
     }
-    const s = { ...view.current }, t0 = performance.now(), dur = 650;
+    const s = { ...view.current }, t0 = performance.now(), dur = MOTION.travel;
     const step = (t: number) => {
-      let p = Math.min(1, (t - t0) / dur);
-      p = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+      const p = easeInOut(Math.min(1, (t - t0) / dur));
       view.current = { cx: s.cx + (cx - s.cx) * p, cy: s.cy + (cy - s.cy) * p, k: s.k + (k - s.k) * p };
       applyView();
       anim.current = p < 1 ? requestAnimationFrame(step) : null;
@@ -146,14 +146,24 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
     return m;
   }, [curriculum]);
   const passed = useMemo(() => L.blocks.map((b) => progress.districts.find((d) => d.id === b.district.id)?.passed ?? false), [L, progress]);
+  const states = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of curriculum.districts) for (const t of d.topics) if (t.presentation) m.set(t.id, t.presentation.state);
+    return m;
+  }, [curriculum]);
+  const drawnSelection = useRef<string | null | undefined>(undefined);
 
   const draw = useCallback((car: CarPos) => {
     if (!layerRef.current) return;
+    const selectionEnter = drawnSelection.current !== undefined && drawnSelection.current !== selectedId;
+    drawnSelection.current = selectedId;
     layerRef.current.innerHTML = renderCity(
       L,
       {
         floors: (id) => floors.get(id) ?? 0,
         selectedId,
+        selectionEnter,
+        stateOf: (id) => states.get(id),
         currentTopicId,
         passed,
         currentIdx: progress.road.currentDistrictIndex,
@@ -162,25 +172,28 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
       },
       road,
     );
-  }, [L, floors, selectedId, currentTopicId, passed, progress.road.currentDistrictIndex, signs, road]);
+  }, [L, floors, selectedId, currentTopicId, passed, progress.road.currentDistrictIndex, signs, road, states]);
 
-  // Draw, easing the car to its new position when it moves within the same road segment.
+  // Draw, driving the car along the road to its new position when progress changes (across districts too).
   useEffect(() => {
     const target = carPosition(L, progress.road);
     const idx = progress.road.currentDistrictIndex;
     const prev = carShown.current;
     if (carAnim.current) cancelAnimationFrame(carAnim.current);
-    if (!prev || prev.idx !== idx || reduceMotion() || (prev.pos.x === target.x && prev.pos.y === target.y)) {
+    if (!prev || reduceMotion() || (prev.idx === idx && prev.pos.x === target.x && prev.pos.y === target.y)) {
       carShown.current = { pos: target, idx };
       draw(target);
       return;
     }
-    const from = prev.pos, t0 = performance.now(), dur = 650;
+    const path = carPath(L, prev, { pos: target, idx });
+    // Longer trips take a little longer, never more than travelMax.
+    const dur = Math.min(MOTION.travelMax, MOTION.travel + pathLength(path) * 25);
+    const t0 = performance.now();
     const step = (t: number) => {
-      let p = Math.min(1, (t - t0) / dur);
-      p = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
-      const pos = { ...target, x: from.x + (target.x - from.x) * p, y: from.y + (target.y - from.y) * p };
-      carShown.current = { pos, idx };
+      const p = easeInOut(Math.min(1, (t - t0) / dur));
+      const pos = p < 1 ? alongPath(path, p, target.ax) : target;
+      // The car belongs to the segment it is on, so a stop mid-way (a new change) resumes from the right place.
+      carShown.current = { pos, idx: p < 1 ? (p < 0.5 ? prev.idx : idx) : idx };
       draw(pos);
       carAnim.current = p < 1 ? requestAnimationFrame(step) : null;
     };
@@ -340,6 +353,7 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
   const mid = () => [svgRef.current!.clientWidth / 2, svgRef.current!.clientHeight / 2] as const;
   const road0 = progress.road;
   const curDistrict = L.blocks[road0.currentDistrictIndex]?.district;
+  const roadPct = useAnimatedNumber(road0.overall * 100);
 
   return (
     <main className="map" aria-label="City map">
@@ -348,7 +362,8 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
       </svg>
       <div className="topbar">
         <span className="chip">
-          Road <b>{Math.round(road0.overall * 100)}%</b>
+          Road <b aria-hidden="true">{Math.round(roadPct)}%</b>
+          <span className="sr">{Math.round(road0.overall * 100)}%</span>
           {curDistrict ? <> · checkpoint {road0.currentDistrictIndex + 1}: {curDistrict.name}</> : <> · goal reached</>}
         </span>
         <span className="chip hint">Drag or scroll to travel · Ctrl + scroll to zoom · Click a building</span>

@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { subtopicPresentation, topicPresentation } from "../../domain/presentation.js";
 import { topicStatus } from "../../domain/progress.js";
 import type { Clock } from "../../lib/clock.js";
 import { notFound } from "../../lib/http.js";
@@ -16,6 +17,11 @@ type TopicRow = Prisma.TopicGetPayload<{ include: typeof topicInclude }>;
 
 export function topicDTO(t: TopicRow, agg?: TopicAggregates) {
   const learned = t.subtopics.filter((s) => s.completedAt).length;
+  const status = topicStatus({
+    id: t.id, priority: t.priority, estimatedHours: t.estimatedHours,
+    subtopicsTotal: t.subtopics.length, subtopicsLearned: learned, demonstrated: !!t.demonstratedAt,
+    doneTasks: agg?.doneTasks ?? 0, loggedMinutes: agg?.loggedMinutes ?? 0,
+  });
   return {
     id: t.id,
     districtId: t.districtId,
@@ -25,15 +31,14 @@ export function topicDTO(t: TopicRow, agg?: TopicAggregates) {
     priority: t.priority,
     estimatedHours: t.estimatedHours,
     exercise: t.exercise,
-    status: topicStatus({
-      id: t.id, priority: t.priority, estimatedHours: t.estimatedHours,
-      subtopicsTotal: t.subtopics.length, subtopicsLearned: learned, demonstrated: !!t.demonstratedAt,
-      doneTasks: agg?.doneTasks ?? 0, loggedMinutes: agg?.loggedMinutes ?? 0,
-    }),
+    status,
+    presentation: topicPresentation(status, t.needsReview),
     demonstratedAt: t.demonstratedAt?.toISOString() ?? null,
     demonstrationNote: t.demonstrationNote,
     needsReview: t.needsReview,
-    subtopics: t.subtopics.map((s) => ({ id: s.id, position: s.position, name: s.name, completedAt: s.completedAt?.toISOString() ?? null })),
+    subtopics: t.subtopics.map((s) => ({
+      id: s.id, position: s.position, name: s.name, completedAt: s.completedAt?.toISOString() ?? null, presentation: subtopicPresentation(!!s.completedAt),
+    })),
     resources: t.resources.map((r) => ({ label: r.label, url: r.url, kind: r.kind })),
     dependsOn: t.dependsOn.map((d) => d.dependsOnId),
     plannedMinutes: agg?.plannedMinutes ?? 0,

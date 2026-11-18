@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — Low-Level Design"
 subtitle: "Schema, API, modules and algorithms"
-version: "1.5"
+version: "1.6"
 date: "18 November 2026"
 ---
 
@@ -384,6 +384,7 @@ interface ErrorBody { error: { code: string; message: string; details?: unknown 
 | Method and path | Purpose | Request | Success | Errors |
 |---|---|---|---|---|
 | `GET /health` | Liveness and database check | — | `200 {status:"ok", today}` | `503` if the database is down |
+| `GET /presentation` | The semantic presentation contract (§4.4): version, tones, variants, icons and every state's style | — | `200 {version, tones, variants, icons, states}` | — |
 | `GET /curriculum` | Full curriculum with learner state | — | `200 CurriculumDTO` | — |
 | `PATCH /subtopics/:id` | Learn or unlearn a floor | `{completed: boolean}` | `200 {id, completedAt}` | `400`, `404` |
 | `PATCH /topics/:id` | Demonstration and review flag | `{demonstrated?: boolean, demonstrationNote?: string ≤ 500, needsReview?: boolean}` | `200 TopicDTO` | `400`, `404` |
@@ -557,6 +558,39 @@ interface AttemptResultDTO {
 }
 ```
 
+## 4.4 Semantic presentation
+
+The backend decides what a state *means* for display; the frontend only renders it. One pure module, `backend/src/domain/presentation.ts`, maps every domain state to presentation metadata, and every endpoint that shows the state uses the same function. No colours are sent: tones are semantic tokens and the palette lives in the frontend's CSS variables.
+
+```ts
+interface Presentation {
+  state: string;          // stable key, e.g. "revision.overdue"
+  tone: "success" | "warning" | "danger" | "info" | "neutral" | "ai";
+  variant: "solid" | "soft" | "outline" | "plain";   // emphasis: solid strongest, plain = text only
+  icon: string;           // from a fixed set: check, check-circle, circle, half, clock, calendar, alert-circle, …
+  label: string;          // complete text; colour is never the only signal
+  flags?: Presentation[]; // secondary states next to the primary one (e.g. Weak)
+}
+```
+
+`GET /presentation` returns `{version, tones, variants, icons, states}` (version 1). Tones, variants, icons and states are only ever added; a removed or renamed field bumps the version. Clients treat an unknown tone as neutral and an unknown variant as soft.
+
+| Domain | Field | States → tone |
+|---|---|---|
+| Task | `TaskDTO.presentation` | done → success · overdue (to do, scheduled before today) → danger · to do → info (plain) · skipped → neutral |
+| Topic | `TopicDTO.presentation` | demonstrated → success (solid) · learned, in progress → info · not started → neutral; flag *Needs review* → warning |
+| Sub-topic | `subtopics[].presentation` | learned → success · not learned → neutral |
+| Revision unit | `RevisionUnitRow`, `RevisionUnit.schedule`, `TaskDTO.revision` `.presentation` | one primary state in this order: paused → neutral · correct the gap first → warning · revision recorded (finished task) / done today → success · overdue → danger · due today → info · upcoming → neutral; flag *Weak* → warning |
+| Recall outcome | `Attempt.presentation` | 0 Forgot → danger · 1 Struggled → warning · 2 Recalled → success · 3 Mastered this attempt → success (solid) |
+| Recall check | `Checkpoint.presentation` | recalled → success · partly → warning · couldn't recall → danger |
+| Attention | `Today.revision.attention`, `RevisionOverview.attention`, `Week.revision.attention` | any overdue → danger · due → info · nothing due → neutral |
+| District | `DistrictProgress.presentation` | passed → success · current → info · not reached → neutral (Blueprint has no locked districts) |
+| Stage | `stages[].presentation` | complete → success · on track → info · behind → warning · delayed (by N days) → danger · upcoming → neutral |
+| Milestone | `milestones[].presentation` | done → success · practice overdue → danger · stage end passed → neutral · planned → info |
+| AI | `AiEvaluation.presentation`, `.suggestion`, `criteria[].presentation` | checking, suggestion → ai · failed → danger; verdicts covered → success · partly → warning · missing → neutral · incorrect → danger. The **ai** tone is reserved for AI output so a suggestion never looks like the learner's own result. |
+
+The presentation is derived only: it reads the same values the endpoint already returns and changes no learning, scheduling, scoring, district or car logic. `RevisionStatus.tsx` (the former client-side status rules) is gone; its cases are now backend unit tests.
+
 # 5. Validation rules
 
 | Field | Rule |
@@ -629,7 +663,7 @@ Each router builds its handlers from injected dependencies (`{prisma, clock}`), 
 frontend/src/
 ├── main.tsx                 # mount <App/>
 ├── App.tsx                  # shell: Sidebar | main (ViewTabs + active view), hash routing
-├── styles.css               # original tokens & components + new view styles
+├── styles.css               # original tokens & components, view styles, Part 3: tone, motion, elevation and focus tokens
 ├── api/
 │   ├── client.ts            # request<T>(), ApiError, endpoint functions
 │   └── types.ts             # DTO types (mirror LLD §4)
@@ -637,11 +671,12 @@ frontend/src/
 │   └── AppData.tsx          # context: curriculum, progress, refresh(), toggleSubtopic()
 ├── lib/
 │   ├── format.ts            # hours "1 h 30", dates "Tue 17 Nov", month ranges
+│   ├── motion.ts            # MOTION durations, easeInOut, prefersReducedMotion, useAnimatedNumber, useExit
 │   ├── layers.ts            # layer names (05 Consolidation added)
 │   └── color.ts             # hx, mix, esc (from original)
 ├── map/
 │   ├── geometry.ts          # constants, iso(), layout(districts) → blocks, waypoints
-│   ├── vehicle.ts           # carPosition(layout, road) — pure
+│   ├── vehicle.ts           # carPosition(layout, road), carPath / alongPath (car follows the road) — pure
 │   └── render.ts            # renderCity(layout, state) → SVG string (camera lives in CityMap)
 └── components/
     ├── Sidebar.tsx          # brand, overall, TodayCard, NextUp, district cards
@@ -653,12 +688,22 @@ frontend/src/
     ├── RevisionBox.tsx      # topic panel: units, Check / Revise / Corrected, history, questions
     ├── RecallDialog.tsx     # prompt → answer → reveal → assess → correct; single unit or session
     ├── RevisionView.tsx     # Revision section: lists, session, history, recall analytics, allowances
-    ├── RevisionStatus.tsx   # shared status vocabulary (one primary state + Weak flag)
+    ├── Status.tsx           # StatusBadge, StatusIndicator, SemanticIcon, FeedbackMessage, LoadingState (render §4.4 metadata)
     ├── WeekView.tsx
     ├── ProgressView.tsx     # hours, districts, learned vs demonstrated, timeline
     ├── ui.tsx               # Bar, Stat, Loading
-    └── __tests__/           # vehicle, render, format, TodayView, RecallDialog, RevisionView, RevisionStatus
+    └── __tests__/           # vehicle, render, format, Status (tones, fallbacks, motion), TodayView, RecallDialog, RevisionView, AiRecall
 ```
+
+## 7.1 Design tokens, components and motion
+
+**Tones.** `styles.css` Part 3 defines `--success`, `--warning`, `--danger`, `--info`, `--neutral` and `--ai`, each with `-bg` (soft fill) and `-line` (border). They are muted versions of the existing palette; the text colour of each tone is at least 4.5:1 on paper and on its own soft fill. A `.t-<tone>` class sets `--tone`, `--tone-bg` and `--tone-line`, and every status component reads only those. `StatusBadge` renders icon + label (`.sb.v-solid|soft|outline|plain`), `StatusIndicator` adds flags and detail text, `FeedbackMessage` is announced as `alert` (danger) or `status`, and `LoadingState` is a polite live region. Buttons keep their variants: default, `primary` (accent) and `danger` (destructive, tinted only on hover); disabled is 50 % with `not-allowed`, and `aria-busy` shows a spinner without changing the label.
+
+**Motion tokens.** `--dur-fast` 120 ms (hover, press, focus), `--dur-base` 180 ms (badges, tabs, reveals, dialog exit), `--dur-slow` 260 ms (dialogs, panels, progress bars), `--ease-standard`, `--ease-out`, `--ease-in`, `--lift-1`/`--lift-2` and `--shadow-1..3`, and one `--focus-ring` for every focusable element. `lib/motion.ts` mirrors the durations for script-driven motion (camera and car 650 ms, the car across districts at most 1.6 s).
+
+**What moves.** Buttons press by 1 px; only clickable cards lift; the active tab's indicator slides under the tabs (transform only); badges cross-fade colour when their state changes; progress bars animate their width; dialogs fade and rise in, and fade out while no longer taking input; the topic panel slides in; forms, steps, AI results and the follow-up reveal by 4 px; AI criteria reveal 40 ms apart. On the map, a building lifts 3 px on hover or focus (its hit area stays put) and the selected one 2 px, once, when selected; the car drives along the road, round the corners, when progress changes; the road percentage counts to its new value (screen readers get the final value). Nothing moves while idle except the existing current-position ring and the recording dot while recording.
+
+**Reduced motion.** `prefers-reduced-motion: reduce` sets every duration and lift to 0 and stops animations; the camera and car jump, counters show the final value, dialogs close at once, spinners become a static dotted ring. No action ever waits for an animation.
 
 # 8. State management
 
@@ -1039,3 +1084,11 @@ Design source: `docs/AI-Voice-Design.md` v2.2. Migration `20261118180000_ai_revi
 | Live data | Backup `backups/engineering-city-20261118-pre-ai.dump` (verified, 150 entries) before migration `20261118180000_ai_revision`. |
 | Benchmark, live Gemini (18 Nov 2026, free tier) | `gemini-2.5-flash`: 7 TypeScript cases × 3 runs answered before the daily quota (~20 requests) ran out: all correct, identical across runs, p50 5.5 s. `gemini-3.8-flash`: 19 of 24 cases answered: all correct, 0 false passes of 12, 2 of 2 injections ignored, p50 6.3 s / p95 24.2 s, 3 provider outages (timeouts, 503) of 22 calls. 3.8 Flash chosen with `AI_REQUEST_TIMEOUT_MS=60000` and Nginx 75 s. The set was then grown to 96 cases (12 prompts, all districts) and a speech-term test (`eval/speech.ts`, 60 terms) added; both run in parts on the free quota. Review fixes: explicit error kinds per call (model, timeout, provider, setup, quota, skipped), untested-case listing, safe result filenames, exact recording matching, hints identical to a topic-level revision, sub-topic revisions now also get the topic's curriculum question as spelling hints, `recordings/` git-ignored. Backend 131 / 131, frontend 25 / 25, both builds pass. |
 | Browser (test stack on port 8092, fake provider) | Notice/consent, *Answer by voice* and *Read aloud* shown; *Check with AI* disabled until a self-score; per-point verdicts with quotes, feedback and follow-up; gaps pre-filled; Assess shows "Your first guess: 2 · AI suggestion: 1"; the learner's 2 was saved with a 3-day interval and the link; analytics rows correct; foreign Host dropped, cross-site POST 403, WAV upload transcribed through Nginx. Microphone capture itself was not exercised (no microphone in the test browser). |
+
+## 14.6 Verification results (semantic presentation and motion, 18 Nov 2026)
+
+| Suite | Result |
+|---|---|
+| Backend (unit + integration) | 149 / 149 passed. New: every state in the catalogue uses a known tone, variant and icon and no colour value; every tone is used; the ai tone only for AI states; every task status, topic status, revision state (order and Weak flag), score, check result, stage status, milestone, attention level, evaluation status and verdict maps as in §4.4. Integration: `GET /presentation` matches the module; every view carries valid metadata; a unit's revision state is identical in the topic view, the overview and its task; it turns overdue the next day; an attempt's outcome follows the chosen score; the road and district results are unchanged. |
+| Frontend | 37 / 37 passed. New: badges for all six tones and four variants, fallbacks for unknown or missing metadata, flags and detail, feedback roles, loading state, exit transition (immediate with reduced motion, never twice), counters off with reduced motion, motion and tone tokens present with a zero-duration reduced-motion override, the car's path along the road forwards and backwards, building lift without moving the hit area. |
+| Browser (throwaway stack on port 8089, fake AI, own database; removed afterwards) | Today: overdue badges, done and skipped states. Week and Progress: milestone, district and stage badges. City: hover lifts the building 3 px, the selection 2 px, `data-state` from the topic's presentation. Revision: upcoming "Next 19 Nov"; dialog fade-in and exit (input blocked at once, unmounted after the fade); AI loading state and skeleton, staggered results, ai-toned suggestion, verdicts change from Missing to Covered after the follow-up; saved attempt shown as success feedback. Keyboard focus ring visible; tab indicator aligned with the active tab. Reduced motion checked through the served CSS rules and unit tests (the test browser cannot emulate the preference). |

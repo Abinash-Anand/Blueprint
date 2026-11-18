@@ -5,6 +5,7 @@ import type { PrismaClient } from "@prisma/client";
 import {
   type ISODate, addDays, diffDays, eachDay, isoWeekday, maxDate, minDate, monthKey, weekStart,
 } from "../../domain/dates.js";
+import { attentionPresentation, districtPresentation, milestonePresentation, stagePresentation } from "../../domain/presentation.js";
 import { currentTopicId, districtFraction, districtPassed, roadProgress } from "../../domain/progress.js";
 import { eligibleDays, reservedDates, type PlanStage } from "../../domain/planner.js";
 import { interleave, isWeak, overTarget } from "../../domain/revision.js";
@@ -125,6 +126,7 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
             competing: target > 0 && revMinutes > 0 && planned > target,
             dueCount: due.length,
             overdueCount: due.filter((s) => d2i(s.nextDueDate!) < day).length,
+            attention: attentionPresentation(due.length, due.filter((s) => d2i(s.nextDueDate!) < day).length),
             weakCount: schedules.filter((s) => isWeak(s, policy)).length,
             awaitingCorrection: schedules.filter((s) => s.correctionPending).length,
             backlog: { count: backlogCount, oldestDue: optional[0] ? d2i(optional[0].originalDate) : null },
@@ -194,7 +196,9 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
             date: s.dto.endDate, type: "STAGE_END" as const, title: `${s.dto.name} ends`,
             topicId: null, stageId: s.dto.id, done: false,
           })),
-      ].sort((a, b) => a.date.localeCompare(b.date));
+      ]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((m) => ({ ...m, presentation: milestonePresentation(m, today) }));
 
       return {
         weekStart: ws,
@@ -216,6 +220,7 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           upcomingMinutes: sum(live.filter((t) => isRevision(t) && t.status === "TODO" && d2i(t.scheduledDate) >= today), (t) => t.estimatedMinutes),
           dueThisWeek: revDueInWeek,
           overdue: revOverdue,
+          attention: attentionPresentation(0, revOverdue), // overdue across all weeks
           overTargetMinutes: sum(days, (d) => d.overTargetMinutes),
           dailyAllowanceMinutes: policy.dailyBudgetMinutes,
           weeklyOvertimeMinutes: policy.weeklyOvertimeMinutes,
@@ -271,7 +276,8 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
 
       const ws = weekStart(today);
       const topicDistrict = (id: string | null) => (id ? learning.topicNames.get(id)?.districtId : undefined);
-      const districts = learning.districts.map((d) => {
+      const road = roadProgress(learning.districts);
+      const districts = learning.districts.map((d, i) => {
         const core = d.topics.filter((t) => t.priority === "CORE");
         const learned = (t: (typeof d.topics)[number]) => t.subtopicsTotal > 0 && t.subtopicsLearned >= t.subtopicsTotal;
         return {
@@ -286,12 +292,12 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           coreDemonstrated: core.filter((t) => t.demonstrated).length,
           roadFraction: districtFraction(d),
           passed: districtPassed(d),
+          presentation: districtPresentation(districtPassed(d), i === road.currentDistrictIndex),
           plannedMinutes: sum(live.filter((t) => topicDistrict(t.topicId) === d.id), (t) => t.estimatedMinutes),
           actualMinutes: sum(sessions.filter((s) => topicDistrict(s.topicId) === d.id), (s) => s.minutes),
         };
       });
 
-      const road = roadProgress(learning.districts);
       const reserved = reservedDates(stages.map((s) => s.plan));
       const stageStatus = stages.map(({ dto, plan }) => {
         const st = tasks.filter((t) => t.stageId === dto.id);
@@ -307,10 +313,12 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           : today < dto.startDate ? "UPCOMING"
           : overdue.length > 0 ? "BEHIND"
           : "ON_TRACK";
+        const delayDays = status === "DELAYED" ? diffDays(dto.endDate, today) : 0;
         return {
           ...dto,
           status,
-          delayDays: status === "DELAYED" ? diffDays(dto.endDate, today) : 0,
+          presentation: stagePresentation(status, delayDays),
+          delayDays,
           tasksTotal: stLive.length,
           tasksDone: stLive.filter((t) => t.status === "DONE").length,
           minutesTotal: sum(stLive, (t) => t.estimatedMinutes),

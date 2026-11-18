@@ -4,7 +4,7 @@ import type { Task } from "../api/types";
 import { KIND_LABEL, dayMonth, hm, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { RecallDialog } from "./RecallDialog";
-import { RevisionStatus } from "./RevisionStatus";
+import { StatusBadge, StatusIndicator } from "./Status";
 
 interface Props {
   task: Task;
@@ -42,7 +42,8 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
   const skipped = t.status === "SKIPPED";
   const label = `${t.title}${t.topic ? ` (${t.topic.name})` : ""}`;
   const rv = t.revision;
-  const overdue = rv ? rv.overdueDays : t.overdueDays;
+  // The default "to do" state needs no badge; every other task state is shown as the backend presents it.
+  const taskState = t.presentation && t.presentation.state !== "task.todo" ? t.presentation : null;
 
   return (
     <li className={`task${done ? " done" : ""}${skipped ? " skipped" : ""}`}>
@@ -72,20 +73,15 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
             <span className={`tag kind ${t.kind.toLowerCase()}`}>{KIND_LABEL[t.kind]}</span>
             {t.loggedMinutes > 0 && <span>{hm(t.loggedMinutes)} logged</span>}
             {rv ? (
-              <RevisionStatus
-                x={{ correctionPending: rv.correctionPending && !done, nextDueDate: rv.dueDate, completed: done }}
-                today={today}
-                weak={rv.weak}
-                extra={rv.overdueDays > 0 ? `due ${dayMonth(rv.dueDate)}` : undefined}
-              />
+              <StatusIndicator p={rv.presentation} fallback={done ? "Done" : undefined} detail={rv.overdueDays > 0 ? `due ${dayMonth(rv.dueDate)}` : undefined} />
             ) : (
               <>
-                {overdue > 0 && <span className="delayed">{plural(overdue, "day")} overdue</span>}
+                {taskState && <StatusBadge p={taskState} />}
+                {!t.presentation && t.overdueDays > 0 && <StatusBadge fallback={`${plural(t.overdueDays, "day")} overdue`} />}
                 {t.originalDate !== t.scheduledDate && <span>planned {dayMonth(t.originalDate)}</span>}
               </>
             )}
             {compact && t.scheduledDate !== today && <span>on {dayMonth(t.scheduledDate)}</span>}
-            {skipped && <span>skipped</span>}
             {t.subtopic && !rv && (
               <label className="subchk" title="Ticks the floor in the curriculum. Separate from completing the task.">
                 <input type="checkbox" aria-label={`Sub-topic "${t.subtopic.name}" learned`} checked={t.subtopic.completed} onChange={(e) => void toggleSubtopic(t.topic!.id, t.subtopic!.id, e.target.checked)} />
@@ -106,7 +102,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
                 {skipped ? "Unskip" : "Skip"}
               </button>
             ) : (
-              <button className="btn" onClick={() => void mutate(() => api.deleteTask(t.id))}>Delete</button>
+              <button className="btn danger" onClick={() => void mutate(() => api.deleteTask(t.id))}>Delete</button>
             )}
           </div>
 

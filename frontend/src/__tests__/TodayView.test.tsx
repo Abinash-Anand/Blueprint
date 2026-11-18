@@ -12,7 +12,7 @@ const revisionTask = (id: number, title: string, over: Partial<Task> = {}) =>
   task({
     id, title, kind: "REVISION", source: "REVISION", estimatedMinutes: 10, stageId: null,
     subtopic: { id: 10 + id, name: title, completed: true },
-    revision: { scheduleId: id, scope: "SUBTOPIC", weak: false, correctionPending: false, lastScore: null, dueDate: "2026-11-17", overdueDays: 0 },
+    revision: { scheduleId: id, scope: "SUBTOPIC", weak: false, correctionPending: false, lastScore: null, dueDate: "2026-11-17", overdueDays: 0, presentation: pres("revision.due", "info", "Due today") },
     ...over,
   });
 
@@ -41,7 +41,12 @@ const withRevision: Today = {
   plannedMinutes: 260,
   tasks: [
     ...today.tasks,
-    revisionTask(3, "Generics", { revision: { scheduleId: 3, scope: "SUBTOPIC", weak: true, correctionPending: false, lastScore: 1, dueDate: "2026-11-15", overdueDays: 2 } }),
+    revisionTask(3, "Generics", {
+      revision: {
+        scheduleId: 3, scope: "SUBTOPIC", weak: true, correctionPending: false, lastScore: 1, dueDate: "2026-11-15", overdueDays: 2,
+        presentation: pres("revision.overdue", "danger", "2 days overdue", [WEAK]),
+      },
+    }),
     revisionTask(4, "Async programming with promises"),
   ],
   revision: { ...today.revision, plannedMinutes: 20, overTargetMinutes: 20, weekOverTargetMinutes: 20, competing: true, dueCount: 2, overdueCount: 1, weakCount: 1, sessionTaskIds: [3, 4] },
@@ -61,6 +66,7 @@ vi.mock("../state/AppData", () => ({
 }));
 
 import { TodayView } from "../components/TodayView";
+import { pres, WEAK } from "./fixtures";
 
 describe("TodayView (Mission Control)", () => {
   it("shows the date, current topic, target, actual time and tasks", async () => {

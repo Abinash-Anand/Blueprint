@@ -45,3 +45,16 @@ describe("city renderer", () => {
     expect(svg).toContain('class="car"');
   });
 });
+
+describe("map interaction states", () => {
+  it("lifts only the building, never its hit area, and marks the selection once", () => {
+    const L = layout(districts);
+    const plain = buildingSVG(L.route[0], base);
+    expect(plain).toMatch(/<g class="vis">[\s\S]*<\/g><polygon class="hit"/);
+    const sel = buildingSVG(L.route[0], { ...base, selectedId: "fe.a", selectionEnter: true, stateOf: () => "topic.in-progress" });
+    expect(sel).toContain('class="bld sel enter"');
+    expect(sel).toContain('data-state="topic.in-progress"');
+    expect(sel).toContain('aria-current="true"');
+    expect(buildingSVG(L.route[0], { ...base, selectedId: "fe.a" })).toContain('class="bld sel"');
+  });
+});

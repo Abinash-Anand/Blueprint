@@ -5,6 +5,7 @@ import type { Week } from "../api/types";
 import { addDays, dayMonth, hm, hours1, plural, weekdayShort } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { Bar, Loading, Stat } from "./ui";
+import { StatusBadge } from "./Status";
 
 interface Props {
   date: string | null;
@@ -114,7 +115,7 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
                 <li><span>Planned this week</span><span className="m">{hm(w.revision.plannedMinutes)} · {plural(w.revision.dueThisWeek, "unit")} due</span></li>
                 <li><span>Done</span><span className="m">{hm(w.revision.doneMinutes)}</span></li>
                 <li><span>Still to do this week</span><span className="m">{hm(w.revision.upcomingMinutes)}</span></li>
-                {w.revision.overdue > 0 && <li><span className="delayed">Overdue (all weeks)</span><span className="m">{plural(w.revision.overdue, "unit")}</span></li>}
+                {w.revision.overdue > 0 && <li><span>Overdue (all weeks)</span><StatusBadge p={w.revision.attention} fallback={`${plural(w.revision.overdue, "unit")} overdue`} /></li>}
                 <li>
                   <span>Over the 4 h days (learning + revision)</span>
                   <span className="m">{hm(w.revision.overTargetMinutes)} of {hm(w.revision.weeklyOvertimeMinutes)} allowed</span>
@@ -134,13 +135,13 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
               <ul className="list">
                 {w.milestones.map((m, i) => (
                   <li key={i}>
-                    <span>
-                      {m.done ? "✓ " : ""}
+                    <span className="sind">
                       {m.topicId ? (
                         <button className="btn" style={{ padding: "2px 8px", fontSize: 13 }} onClick={() => onOpenTopic(m.topicId!)}>{m.title}</button>
                       ) : (
                         <b>{m.title}</b>
                       )}
+                      <StatusBadge p={m.presentation} fallback={m.done ? "Done" : undefined} />
                     </span>
                     <span className="m">{m.type === "STAGE_END" ? "Stage deadline · " : "Practice · "}{weekdayShort(m.date)} {dayMonth(m.date)}</span>
                   </li>

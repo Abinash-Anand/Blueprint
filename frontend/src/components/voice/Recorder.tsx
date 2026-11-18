@@ -3,9 +3,12 @@
  * live; it stops by itself at the limit and never listens in the background. The recording is converted to WAV,
  * sent once for transcription and then dropped. Errors leave typing available.
  */
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api/client";
 import { toWav } from "../../lib/wav";
+import { FeedbackMessage, LoadingState } from "../Status";
+
+const BARS = 14;
 
 type State = "idle" | "recording" | "working";
 
@@ -27,7 +30,8 @@ export function Recorder({
 }) {
   const [state, setState] = useState<State>("idle");
   const [elapsed, setElapsed] = useState(0);
-  const [level, setLevel] = useState(0);
+  // Recent input levels (0..1), newest last: a live waveform that shows the microphone is really hearing you.
+  const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0));
   const [error, setError] = useState<string | null>(null);
   const rec = useRef<{ mr: MediaRecorder; stream: MediaStream; chunks: Blob[]; cancelled: boolean; timer: number; raf: number; ctx: AudioContext | null } | null>(null);
 
@@ -72,11 +76,17 @@ export function Recorder({
       an.fftSize = 512;
       r.ctx.createMediaStreamSource(stream).connect(an);
       const data = new Uint8Array(an.fftSize);
-      const tick = () => {
-        an.getByteTimeDomainData(data);
-        let peak = 0;
-        for (const x of data) peak = Math.max(peak, Math.abs(x - 128));
-        setLevel(peak / 128);
+      let last = 0;
+      const tick = (t = 0) => {
+        // About 12 samples a second: enough to read as a waveform, cheap enough not to re-render every frame.
+        if (t - last >= 80) {
+          last = t;
+          an.getByteTimeDomainData(data);
+          let peak = 0;
+          for (const x of data) peak = Math.max(peak, Math.abs(x - 128));
+          const v = Math.min(1, (peak / 128) * 1.8);
+          setLevels((l) => [...l.slice(1), v]);
+        }
         r.raf = requestAnimationFrame(tick);
       };
       tick();
@@ -84,6 +94,7 @@ export function Recorder({
       /* the level meter is optional */
     }
     setElapsed(0);
+    setLevels(Array(BARS).fill(0));
     setState("recording");
     mr.start();
   }
@@ -127,16 +138,18 @@ export function Recorder({
       )}
       {state === "recording" && (
         <>
-          <span className="rv-live" role="status">
+          <span className="rv-live rec" role="status">
             <span className="rv-dot on" aria-hidden="true" /> Recording {mmss(elapsed)} / {mmss(maxSeconds)}
-            <span className="rv-level" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.round(level * 160))}%` }} /></span>
+            <span className="rv-wave" aria-hidden="true">
+              {levels.map((l, i) => <i key={i} style={{ "--l": Math.max(0.12, l) } as CSSProperties} />)}
+            </span>
           </span>
           <button type="button" className="btn primary" onClick={stop}>Stop</button>
           <button type="button" className="btn" onClick={cancel}>Cancel</button>
         </>
       )}
-      {state === "working" && <span className="rv-live" role="status">Transcribing…</span>}
-      {error && <span className="rv-err" role="alert">{error}</span>}
+      {state === "working" && <LoadingState tone="ai" text="Transcribing your answer…" />}
+      {error && <FeedbackMessage tone="danger" className="rv-rec-err">{error}</FeedbackMessage>}
     </div>
   );
 }

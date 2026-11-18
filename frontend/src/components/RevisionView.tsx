@@ -9,7 +9,7 @@ import type { RevisionOverview, RevisionUnitRow } from "../api/types";
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SCORES, dayMonth, hm, monthName, pct, plural, scoreLabel, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { type RecallItem, RecallDialog } from "./RecallDialog";
-import { RevisionStatus } from "./RevisionStatus";
+import { StatusBadge, StatusIndicator } from "./Status";
 import { Loading, Stat } from "./ui";
 
 const asItem = (u: { topicId: string; scope: RevisionUnitRow["scope"]; subtopicId: number | null }): RecallItem => ({
@@ -25,11 +25,10 @@ function UnitRow({ u, today, onRevise, onOpenTopic }: { u: RevisionUnitRow; toda
           {u.label}{" "}
           <button className="link" onClick={() => onOpenTopic(u.topicId)} aria-label={`Open topic ${u.topicName}`}>{u.scope === "TOPIC" ? "open" : u.topicName}</button>
         </span>
-        <RevisionStatus
-          x={{ correctionPending: u.correctionPending, nextDueDate: u.nextDueDate, lastAttemptDate: u.lastAttemptDate }}
-          today={today}
-          weak={u.weak}
-          extra={[
+        <StatusIndicator
+          p={u.presentation}
+          fallback={u.status.toLowerCase()}
+          detail={[
             u.overdueDays > 0 ? `due ${shortDate(u.nextDueDate!)}` : "",
             u.lastAttemptDate ? `last ${dayMonth(u.lastAttemptDate)}: ${scoreLabel(u.lastScore)}` : "",
           ].filter(Boolean).join(" · ") || undefined}
@@ -110,7 +109,7 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
         </div>
 
         <div className="grid4">
-          <Stat label="Due now" value={now} detail={c.overdue ? <span className="delayed">{c.overdue} overdue</span> : "none overdue"} />
+          <Stat label="Due now" value={now} detail={c.overdue ? <StatusBadge p={o.attention} fallback={`${c.overdue} overdue`} /> : "none overdue"} />
           <Stat label="Weak" value={c.weak} detail="failed twice or more in a row" />
           <Stat label="Next 14 days" value={c.upcoming} detail={c.later ? `${c.later} later` : "nothing later yet"} />
           <Stat label="In revision" value={c.active} detail={c.paused ? `${c.paused} paused (unticked)` : `${c.awaitingCorrection} awaiting correction`} />
@@ -142,7 +141,7 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
                     <li key={h.key}>
                       <div>
                         <b>{dayMonth(h.date)}</b> · {h.a.label} <span className="m">({h.a.topicName})</span> ·{" "}
-                        <span className={h.a.score <= 1 ? "delayed" : ""}>{h.a.score} {scoreLabel(h.a.score)}</span>
+                        <StatusBadge p={h.a.presentation} fallback={`${h.a.score} ${scoreLabel(h.a.score)}`} />
                         <span className="m"> · {METHOD_LABEL[h.a.retrievalMethod]}{h.a.usedHints || h.a.usedNotes ? " · with help" : ""}</span>
                       </div>
                       {h.a.mistakes && <div className="m">Gap: {h.a.mistakes}{h.a.score <= 1 ? (h.a.correctionCompleted ? " · corrected" : " · not corrected yet") : ""}</div>}
