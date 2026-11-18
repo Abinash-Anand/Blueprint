@@ -3,13 +3,13 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { Progress } from "../api/types";
 import { INK, mix } from "../lib/color";
-import { SCORES, dayMonth, hm, hours1, monthName, pct, plural, shortDate } from "../lib/format";
+import { dayMonth, hours1, monthName, pct, plural, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { Loading, Stat } from "./ui";
 
 const STATUS_TEXT = { UPCOMING: "Upcoming", ON_TRACK: "On track", BEHIND: "Behind", DELAYED: "Delayed", COMPLETE: "Complete" } as const;
 
-export function ProgressView({ onOpenDistrict, onOpenTopic }: { onOpenDistrict: (idx: number) => void; onOpenTopic: (id: string) => void }) {
+export function ProgressView({ onOpenDistrict, onOpenRevision }: { onOpenDistrict: (idx: number) => void; onOpenRevision: () => void }) {
   const { progress: p, curriculum, districtById } = useAppData();
   if (!p || !curriculum) return <div className="view"><Loading /></div>;
 
@@ -134,89 +134,18 @@ export function ProgressView({ onOpenDistrict, onOpenTopic }: { onOpenDistrict: 
           </div>
         </div>
 
-        <RecallSection p={p} onOpenTopic={onOpenTopic} />
+        <div className="section">
+          <h3>Recall and revision</h3>
+          <div className="card soft rvcard">
+            <p>
+              Remembering is tracked separately from learning and demonstration, so it never changes the numbers above.{" "}
+              {p.revision.attempts ? `${plural(p.revision.attempts, "attempt")} so far, ${p.revision.dueToday + p.revision.overdue} due now.` : "No attempts yet."}{" "}
+              <button className="btn" style={{ padding: "2px 9px", fontSize: 12.5 }} onClick={onOpenRevision}>Open Revision</button>
+            </p>
+          </div>
+        </div>
 
         <Timeline p={p} />
-      </div>
-    </div>
-  );
-}
-
-/** Recall behaviour over time (Revision spec 14.4): descriptive only, no streaks or points. */
-function RecallSection({ p, onOpenTopic }: { p: Progress; onOpenTopic: (id: string) => void }) {
-  const { mutate } = useAppData();
-  const r = p.revision;
-  const [allowance, setAllowance] = useState<number | null>(null);
-  const maxDist = Math.max(1, ...r.distribution);
-  const months = r.monthly.filter((m) => m.attempts > 0);
-  return (
-    <div className="section">
-      <h3>Recall and revision</h3>
-      <div className="grid4">
-        <Stat label="Attempts" value={r.attempts} detail={r.attempts ? `${pct(r.successful / r.attempts)} recalled (score 2–3)` : "None yet"} />
-        <Stat label="Units in revision" value={r.activeUnits} detail={`${r.dueToday} due today`} />
-        <Stat label="Overdue" value={r.overdue} detail={r.awaitingCorrection ? `${plural(r.awaitingCorrection, "unit")} awaiting correction` : "Nothing awaiting correction"} />
-        <Stat label="Recall checks" value={r.checkpoints} detail="during initial study" />
-      </div>
-      <div className="card" style={{ marginTop: 10 }}>
-        <div className="kick" style={{ marginBottom: 6 }}>Scores</div>
-        <ul className="list dist">
-          {SCORES.map((s) => (
-            <li key={s.score}>
-              <span>{s.score} · {s.label}</span>
-              <span className="dbar"><i style={{ width: `${(r.distribution[s.score] / maxDist) * 100}%` }} /></span>
-              <span className="m">{r.distribution[s.score]}</span>
-            </li>
-          ))}
-        </ul>
-        {months.length > 0 && (
-          <>
-            <div className="kick" style={{ margin: "12px 0 6px" }}>By month</div>
-            <ul className="list">
-              {months.map((m) => (
-                <li key={m.month}>
-                  <span>{monthName(m.month)}</span>
-                  <span className="m">{plural(m.attempts, "attempt")} · {m.successful} recalled · average {m.averageScore!.toFixed(1)}</span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {r.weakUnits.length > 0 && (
-          <>
-            <div className="kick" style={{ margin: "12px 0 6px" }}>Weak: failed twice or more in a row</div>
-            <ul className="list">
-              {r.weakUnits.map((w) => (
-                <li key={w.scheduleId}>
-                  <span>{w.label}</span>
-                  <button className="btn" style={{ padding: "2px 8px", fontSize: 12.5 }} onClick={() => onOpenTopic(w.topicId)}>Open</button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        <div className="sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
-          Daily revision allowance on full days: <b style={{ color: "var(--ink)" }}>{hm(r.dailyAllowanceMinutes)}</b>
-          {allowance === null ? (
-            <button className="btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setAllowance(r.dailyAllowanceMinutes)}>Change</button>
-          ) : (
-            <>
-              <input className="inp" type="number" aria-label="Daily revision allowance in minutes" min={0} max={240} step={5} value={allowance} style={{ width: 80 }} onChange={(e) => setAllowance(Number(e.target.value))} />
-              <button
-                className="btn primary"
-                style={{ padding: "2px 8px", fontSize: 12 }}
-                disabled={allowance < 0 || allowance > 240 || allowance % 5 !== 0}
-                onClick={async () => {
-                  const ok = await mutate(() => api.patchSettings({ revisionDailyMinutes: allowance }));
-                  if (ok) setAllowance(null);
-                }}
-              >
-                Save
-              </button>
-            </>
-          )}
-          <span>Days with free capacity take more. New placements use it; already planned revisions stay where they are.</span>
-        </div>
       </div>
     </div>
   );

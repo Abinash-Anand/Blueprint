@@ -12,9 +12,10 @@ interface Props {
   date: string | null; // null = today
   onDate: (date: string | null) => void;
   onOpenTopic: (id: string) => void;
+  onOpenRevision?: () => void;
 }
 
-export function TodayView({ date, onDate, onOpenTopic }: Props) {
+export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) {
   const { version, mutate, topicById, districtById, progress } = useAppData();
   const [data, setData] = useState<Today | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +206,9 @@ export function TodayView({ date, onDate, onOpenTopic }: Props) {
               Revision{revToday.length > 0 && ` · ${plural(revToday.length, "unit")} · ${hm(rv.plannedMinutes)}`}
               {isToday && sessionItems.length > 1 && (
                 <button className="btn primary" onClick={() => setSession(sessionItems)}>Start revision session ({sessionItems.length})</button>
+              )}
+              {onOpenRevision && (
+                <button className="btn" style={sessionItems.length > 1 && isToday ? { marginLeft: 0 } : undefined} onClick={onOpenRevision}>All revisions</button>
               )}
             </h3>
             <div className="card soft rvcard">

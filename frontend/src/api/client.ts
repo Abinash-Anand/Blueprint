@@ -1,6 +1,6 @@
 import type {
   AttemptResult, Checkpoint, CheckpointResult, Curriculum, Progress, Prompt, RetrievalMethod, Session, Stage, Task, TaskKind,
-  TaskStatus, Today, Topic, TopicRevision, Week,
+  RevisionOverview, TaskStatus, Today, Topic, TopicRevision, Week,
 } from "./types";
 
 export class ApiError extends Error {
@@ -106,6 +106,7 @@ export const api = {
   deleteSession: (id: number) => request<void>("DELETE", `/sessions/${id}`),
   patchStage: (id: string, body: { startDate?: string; endDate?: string }) => request<Stage>("PATCH", `/stages/${id}`, body),
   patchSettings: (body: { revisionDailyMinutes?: number }) => request<{ revisionDailyMinutes: number }>("PATCH", "/settings", body),
+  revisionOverview: () => request<RevisionOverview>("GET", "/revision/overview"),
   topicRevision: (id: string) => request<TopicRevision>("GET", `/topics/${encodeURIComponent(id)}/revision`),
   submitAttempt: (body: AttemptInput) => request<AttemptResult>("POST", "/revision/attempts", body),
   correctAttempt: (id: number, mistakes?: string) =>

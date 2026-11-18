@@ -72,7 +72,7 @@ export function RevisionBox({ topicId }: { topicId: string }) {
                 <span className="rl-name">{u.scope === "TOPIC" ? "Whole topic" : u.label}</span>
                 <span className={`rl-st${s?.status === "OVERDUE" || s?.status === "AWAITING_CORRECTION" ? " warn" : ""}`}>
                   {statusText(u, rev.today)}
-                  {s?.lastScore !== null && s?.lastScore !== undefined && ` · last: ${scoreLabel(s.lastScore)}`}
+                  {s?.lastAttemptDate && ` · last ${dayMonth(s.lastAttemptDate)}: ${scoreLabel(s.lastScore)}`}
                 </span>
                 {s?.weak && <span className="tag ink">Weak</span>}
               </div>

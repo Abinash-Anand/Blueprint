@@ -68,7 +68,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
                 {t.topic.name}
               </button>
             )}
-            <span>{KIND_LABEL[t.kind]}</span>
+            <span className={`tag kind ${t.kind.toLowerCase()}`}>{KIND_LABEL[t.kind]}</span>
             {t.loggedMinutes > 0 && <span>{hm(t.loggedMinutes)} logged</span>}
             {overdue > 0 && <span className="delayed">{plural(overdue, "day")} overdue</span>}
             {rv ? (
@@ -94,7 +94,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
             )}
             {!rv && <button className="btn" onClick={() => open("log")} aria-expanded={mode === "log"}>Log time</button>}
             <button className="btn" onClick={() => open("move")} aria-expanded={mode === "move"}>Reschedule</button>
-            <button className="btn" onClick={() => open("edit")} aria-expanded={mode === "edit"}>Edit</button>
+            {!rv && <button className="btn" onClick={() => open("edit")} aria-expanded={mode === "edit"}>Edit</button>}
             {rv ? null : t.source === "PLAN" ? (
               <button className="btn" onClick={() => void mutate(() => api.patchTask(t.id, { status: skipped ? "TODO" : "SKIPPED" }))}>
                 {skipped ? "Unskip" : "Skip"}

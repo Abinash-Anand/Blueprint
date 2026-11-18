@@ -252,6 +252,37 @@ suite("Revision and active recall", () => {
     await request(app).patch("/api/settings").send({ revisionDailyMinutes: 30 }).expect(200);
   });
 
+  it("serves the Revision section overview from the one schedule, read-only and prioritised", async () => {
+    clock.date = "2026-12-09";
+    const tasksBefore = await prisma.task.count();
+    const o = (await request(app).get("/api/revision/overview").expect(200)).body;
+    expect(await prisma.task.count()).toBe(tasksBefore); // reading never schedules anything
+
+    type U = { scheduleId: number; nextDueDate: string | null; weak: boolean; correctionPending: boolean; topicId: string; status: string; pendingAttemptId: number | null };
+    const ids = (xs: U[]) => xs.map((u) => u.scheduleId);
+    expect(o.counts).toMatchObject({ overdue: o.overdue.length, due: o.due.length, upcoming: o.upcoming.length, weak: o.weak.length });
+    expect(o.counts.active).toBe(await prisma.revisionSchedule.count({ where: { suspendedAt: null } }));
+    for (const u of o.overdue as U[]) expect(u.nextDueDate! < "2026-12-09").toBe(true);
+    for (const u of o.due as U[]) expect(u.nextDueDate).toBe("2026-12-09");
+    for (const u of o.upcoming as U[]) expect(u.nextDueDate! > "2026-12-09" && u.nextDueDate! <= "2026-12-23").toBe(true);
+    // Each unit appears in exactly one of overdue / due / upcoming.
+    const all = [...ids(o.overdue), ...ids(o.due), ...ids(o.upcoming)];
+    expect(new Set(all).size).toBe(all.length);
+    // Overdue weak units come first.
+    const firstNonWeak = (o.overdue as U[]).findIndex((u) => !u.weak);
+    if (firstNonWeak >= 0) expect((o.overdue as U[]).slice(firstNonWeak).some((u) => u.weak)).toBe(false);
+    expect((o.weak as U[]).map((u) => u.topicId)).toContain("fe.ts");
+    // The session holds every due or overdue unit that is not blocked by a correction.
+    expect(o.session).toHaveLength([...o.overdue, ...o.due].filter((u: U) => !u.correctionPending).length);
+    for (const u of o.awaitingCorrection as U[]) expect(u.pendingAttemptId).not.toBeNull();
+    // History: newest first, every attempt with its topic.
+    expect(o.history.length).toBe(Math.min(50, await prisma.revisionAttempt.count()));
+    const times = o.history.map((a: { attemptedAt: string }) => a.attemptedAt);
+    expect([...times].sort().reverse()).toEqual(times);
+    expect(o.history[0]).toHaveProperty("topicName");
+    expect(o.checkpoints.length).toBeGreaterThan(0);
+  });
+
   it("re-seeding keeps schedules, attempts and tasks (idempotent)", async () => {
     const counts = async () => ({
       tasks: await prisma.task.count(), schedules: await prisma.revisionSchedule.count(),

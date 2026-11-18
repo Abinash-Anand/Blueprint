@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — Low-Level Design"
 subtitle: "Schema, API, modules and algorithms"
-version: "1.2"
+version: "1.3"
 date: "18 November 2026"
 ---
 
@@ -272,7 +272,7 @@ ALTER TABLE "Settings" ADD CONSTRAINT "Settings_singleton" CHECK ("id" = 1);
 
 ## 2.4 Revision migration (abridged)
 
-`backend/prisma/migrations/20261118000000_revision/migration.sql` is additive: it creates four enums and four tables, adds two columns and the value `TaskSource.REVISION`, and needs no data migration. Existing learning state is picked up by the seed's backfill (§12.5.7). The hand-written part:
+`backend/prisma/migrations/20261118000000_revision/migration.sql` is additive: it creates four enums and four tables, adds two columns and the value `TaskSource.REVISION`, and needs no data migration. Existing learning state is picked up by the seed's backfill (§12.5.8). The hand-written part:
 
 ```sql
 CREATE UNIQUE INDEX "Task_one_open_revision_per_schedule" ON "Task"("revisionScheduleId")
@@ -402,6 +402,7 @@ interface ErrorBody { error: { code: string; message: string; details?: unknown 
 | `PATCH /stages/:id` | Edit stage dates | `{startDate?, endDate?}` | `200 StageDTO` | `400` (start > end, outside journey), `404` |
 | `GET /settings` | Journey and targets | — | `200 SettingsDTO` | — |
 | `PATCH /settings` | Change weekday targets and/or the revision allowance | `{weeklyTargets?: [{weekday, targetMinutes}], revisionDailyMinutes?: 0–240}` | `200 SettingsDTO` | `400` |
+| `GET /revision/overview` | Revision section (read-only) | — | `200 RevisionOverviewDTO` | — |
 | `GET /topics/:id/revision` | Revision view of one topic | — | `200 TopicRevisionDTO` | `404` |
 | `POST /revision/attempts` | Record an assessed attempt | `{topicId, subtopicId?, promptId \| templateKey, retrievalMethod, score 0–3, usedHints, usedNotes, correctionCompleted?, durationMinutes?, response?, mistakes?, comment?}` | `201 AttemptResultDTO` | `400` (no gap for score 0–1, prompt of another unit), `404`, `409 NOT_ELIGIBLE`, `409 CORRECTION_REQUIRED` |
 | `POST /revision/attempts/:id/correction` | Confirm the correction of a failed attempt | `{mistakes?}` | `200 {id, correctionCompleted, nextDueDate, nextTaskDate}` | `404`, `409 NOTHING_TO_CORRECT` |
@@ -525,6 +526,30 @@ interface TopicRevisionDTO {
   prompts: PromptDTO[];                        // curriculum and learner prompts
 }
 
+interface RevisionUnitRowDTO {
+  scheduleId: number; topicId: string; topicName: string; districtId: string;
+  subtopicId: number|null; scope: "SUBTOPIC"|"TOPIC"; label: string;
+  status: "SCHEDULED"|"DUE"|"OVERDUE"|"AWAITING_CORRECTION";
+  nextDueDate: ISODate|null; overdueDays: number;
+  lastAttemptDate: ISODate|null; lastScore: number|null; consecutiveSuccesses: number;
+  weak: boolean; correctionPending: boolean; pendingAttemptId: number|null;
+  openTask: { id: number; scheduledDate: ISODate }|null;
+}
+interface RevisionOverviewDTO {
+  today: ISODate; upcomingDays: 14; dailyAllowanceMinutes: number;
+  counts: { due: number; overdue: number; upcoming: number; later: number; weak: number;
+            awaitingCorrection: number; active: number; paused: number };
+  overdue: RevisionUnitRowDTO[];               // due < today, by revision priority (weak first)
+  due: RevisionUnitRowDTO[];                   // due = today
+  upcoming: RevisionUnitRowDTO[];              // today < due <= today + 14, by date
+  weak: RevisionUnitRowDTO[];                  // any status
+  awaitingCorrection: RevisionUnitRowDTO[];
+  session: { topicId: string; scope: string; subtopicId: number|null }[];  // overdue + due, not blocked, interleaved
+  history: (AttemptDTO & { topicId: string; topicName: string })[];        // newest 50
+  checkpoints: { id: number; topicId: string; topicName: string; subtopicId: number; label: string;
+                 result: string; neededAssistance: boolean; gaps: string; date: ISODate }[]; // newest 20
+}
+
 interface AttemptResultDTO {
   attempt: AttemptDTO; nextDueDate: ISODate|null; nextTaskDate: ISODate|null;
   correctionPending: boolean; intervalDays: number; effectiveScore: number;
@@ -589,7 +614,7 @@ backend/
 │       ├── sessions/routes.ts           # routes + small service
 │       ├── summary/{routes,service}.ts      # today, week, progress
 │       ├── schedule/{routes,service}.ts     # stages, settings
-│       └── revision/{routes,service,templates}.ts  # eligibility, placement, attempts, checkpoints, prompts
+│       └── revision/{routes,service,templates,overview}.ts  # eligibility, placement, attempts, checkpoints, prompts, overview
 └── tests/
     ├── unit/        dates · progress · planner · reschedule · revision · curriculum
     └── integration/ api.test.ts · revision.test.ts (Supertest + PostgreSQL)
@@ -626,10 +651,11 @@ frontend/src/
     ├── TaskRow.tsx          # checkbox (or revision mark + Revise), meta, inline log-time / reschedule / edit forms
     ├── RevisionBox.tsx      # topic panel: units, Check / Revise / Corrected, history, questions
     ├── RecallDialog.tsx     # prompt → answer → reveal → assess → correct; single unit or session
+    ├── RevisionView.tsx     # Revision section: lists, session, history, recall analytics, allowance
     ├── WeekView.tsx
     ├── ProgressView.tsx     # hours, districts, learned vs demonstrated, timeline
     ├── ui.tsx               # Bar, Stat, Loading
-    └── __tests__/           # vehicle, render, format, TodayView, RecallDialog
+    └── __tests__/           # vehicle, render, format, TodayView, RecallDialog, RevisionView
 ```
 
 # 8. State management
@@ -875,11 +901,15 @@ for c in candidates (in that order):
 - **Today**: `optional` lists revision tasks due by the viewed date but planned later; on Sunday they are presented as optional. `competing` is true when the day has a target and learning plus revision exceeds it.
 - **Session** (`interleave`): today's and carried-over open revision tasks, ranked like placement, then reordered so that consecutive items come from different topics when possible.
 
-### 12.5.6 Separation from progress
+### 12.5.6 Revision section and indicators
+
+`revisionOverview` loads the active schedules once (with topic, sub-topic, open task and latest attempt id) and derives every list from them, so the section and the scheduler cannot disagree. Overdue, due and weak lists use `revisionOrder` (the placement priority); upcoming is ordered by date; the session is `interleave(overdue + due without pending corrections)`. It runs no writes. The tab badge (`dueCount`, `overdueCount`) and the sidebar line come from `TodayDTO.revision`, which the app already reloads after every mutation.
+
+### 12.5.7 Separation from progress
 
 `topicAggregates` excludes tasks with a revision link from a topic's planned minutes, done-task count and planned window. `topicStatus`, `districtFraction` and `roadProgress` never read revision tables. A study session recorded with an attempt carries the topic id, so it counts as actual time for that topic and day.
 
-### 12.5.7 Backfill
+### 12.5.8 Backfill
 
 `backfillRevision` (called by the seed on every start) runs `syncTopic` for every topic with a learned sub-topic, a demonstration or an existing schedule, then `planOpenRevisions`, in one transaction. It is idempotent: a second run creates nothing (integration test). On 18 Nov 2026 it scheduled 4 revision tasks for the 3 sub-topics learned on the live database.
 
@@ -927,3 +957,13 @@ for c in candidates (in that order):
 | Type checks | `tsc --noEmit` clean in both packages |
 | Migration on live data | Backup taken first (`backups/engineering-city-20261118-pre-revision.dump`, verified with `pg_restore --list`). `migrate deploy` applied `20261118000000_revision`; the 542 planned tasks and 3 learned sub-topics were untouched; the backfill created 4 schedules and 4 revision tasks; 83 curriculum prompts seeded. |
 | Browser E2E (separate compose project on port 8091, clock pinned per step) | 18 Nov: recall check on an unlearned sub-topic (*Partly* + gap) → learned status unchanged → tick two sub-topics → panel shows *Next 19 Nov* for both and *Next 21 Nov* for the whole topic. 19 Nov: Today shows 2 revision units, 20 min and the competing notice → interleaved session → prompt rotation skips the template already used → score 3 → *next due 26 Nov* → score 0 → Save blocked until the gap is written → awaiting correction → *Corrected* in the panel → next due 20 Nov; history lists check and attempts. Week and Progress show revision minutes, counts and score distribution. Saturday-learned sub-topic → Sunday Today: rest day, no target, revision listed as optional and planned for Monday. Phone width: dialog is a full-width bottom sheet with no horizontal scroll. |
+
+## 14.3 Verification results (revision experience enhancement, 18 Nov 2026)
+
+| Suite | Result |
+|---|---|
+| Backend (unit + integration) | 85 / 85 passed (new: Revision section overview: one list per unit, weak-first order, session contents, history order, read-only) |
+| Frontend | 18 / 18 passed (new: Revision view lists, early revision, correction action, session start) |
+| Type checks | `tsc --noEmit` clean in both packages |
+| Browser (demo stack on port 8091, clock pinned to Sat 21 Nov) | Revision tab badge *2* in accent (one overdue); summary *2 revisions due now*; Overdue lists Utility types "1 day overdue (due 20 Nov) · last 19 Nov: Struggled"; Due today lists the whole-topic unit; Upcoming lists Generics with *Revise early*; history shows attempts and the recall check across topics; recall analytics appear only here; Today rows carry Study / Practice / Revision tags and revision rows show only *Revise* and *Reschedule*. |
+| Regression fixed | New CSS classes `.dist` and `.dbar` collided with the sidebar's district card classes and changed the sidebar bars and building lists; renamed to `.scores` / `.sbar`. Every new class was checked against the original stylesheet. |

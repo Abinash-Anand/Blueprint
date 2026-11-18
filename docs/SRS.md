@@ -1,7 +1,7 @@
 ---
 title: "Engineering City — Software Requirements Specification"
 subtitle: "Personal engineering direction and execution system"
-version: "1.2"
+version: "1.3"
 date: "18 November 2026"
 ---
 
@@ -85,6 +85,7 @@ Engineering City removes that daily decision. When it is opened on any day it an
 | System Design roadmap | `Roadmaps/system-design.pdf`, <https://roadmap.sh/system-design> |
 | AI Engineer roadmap | `Roadmaps/ai-engineer.pdf`, <https://roadmap.sh/ai-engineer> |
 | Revision and active recall specification v1.0 (18 Nov 2026) | `docs/Revision-Spec.md`. Its rules REV-01 to REV-20, NFR-REV-01 to NFR-REV-07 and scenarios A–G apply in full. |
+| Revision experience enhancement (18 Nov 2026) | Product-owner request: a dedicated Revision section, indicators and analytics kept apart from learning progress. Requirements FR-REV-19 to FR-REV-23. It supersedes the v1.0 note that revision should avoid a new navigation section. |
 
 # 2. Overall description
 
@@ -256,12 +257,17 @@ Derived from `docs/Revision-Spec.md`. Revision is a third dimension next to *lea
 | FR-REV-10 | A failed attempt (0–1) shall require a correction: after a 0 that is not yet corrected nothing is scheduled; after a 1 the next revision is scheduled, but no further attempt can be recorded until the correction is confirmed (REV-08). | M |
 | FR-REV-11 | Every attempt shall be kept with the prompt text as it was shown. Attempts are immutable; the only permitted change is confirming the correction (REV-07). | M |
 | FR-REV-12 | Revision tasks shall be placed on study days within the revision allowance (BR-18), by priority, never on Sunday, never moving or removing learning tasks. Each task keeps its due date as its original date, so overdue status survives any move (REV-13, REV-18, REV-19). | M |
-| FR-REV-13 | Today shall show revision tasks distinctly (no tick box, a *Revise* action, due date, *Weak* and *Correction pending* markers), the revision minutes, a notice when revision pushes the day past its target, revisions already due but planned later, and an interleaved revision session. On Sunday, due revisions are listed as optional. | M |
+| FR-REV-13 | Today shall show revision tasks distinctly (no tick box, a *Revise* action, due date, *Weak* and *Correction pending* markers), the revision minutes, a notice when revision pushes the day past its target, revisions already due but planned later, an interleaved revision session and a link to the Revision section. On Sunday, due revisions are listed as optional. Revision rows offer only *Revise* and *Reschedule*. | M |
 | FR-REV-14 | Week shall show planned and completed revision minutes, revisions due this week, overdue revisions, and the revision minutes per day. | M |
-| FR-REV-15 | Progress shall show attempts, the share recalled (score 2–3), the score distribution, attempts and average score per month, units in revision, overdue units, units awaiting correction, recall checks and weak units, without XP, streaks or points. | S |
-| FR-REV-16 | The topic panel shall show, per unit, its status (not learned, next date, due, overdue, awaiting correction, paused), last score and weak flag, with *Check* and *Revise* actions, the attempt and check history, and the topic's questions. | M |
+| FR-REV-15 | Recall analytics (attempts, share recalled (score 2–3), score distribution, attempts and average score per month, recall checks, revision allowance) shall be shown in the Revision section, not mixed into learning and demonstration progress; Progress shows only a one-line pointer. No XP, streaks or points. | S |
+| FR-REV-16 | The topic panel shall show, per unit, its status (not learned, next date, due, overdue, awaiting correction, paused), the date and score of the last attempt and the weak flag, with *Check* and *Revise* actions, the attempt and check history, and the topic's questions. | M |
 | FR-REV-17 | A revision session shall order overdue weak units first, then by due date, and interleave topics so that two items of the same topic do not follow each other when another topic is available. Only learned units can be in a session, so prerequisites are always met. | S |
 | FR-REV-18 | Revision shall never change learned status, demonstration, a topic's planned hours or estimate, district progress or the car (REV-15, REV-16, spec §9.3). | M |
+| FR-REV-19 | A dedicated **Revision** view (`#/revision`) shall sit next to Today and Week. It shows counts (due now, overdue, weak, next 14 days, units in revision, paused), and lists: units needing a correction, overdue (weak first, then oldest due), due today, weak units not yet due, upcoming in the next 14 days, and the history of attempts and recall checks across all topics. Each row shows the unit, its topic, the due or overdue state, the last attempt date and score, and one action. | M |
+| FR-REV-20 | The Revision view shall start an interleaved session over every unit due now (overdue and due today) that is not blocked by a correction, and allow a single unit to be revised, revised early, or its correction confirmed. | M |
+| FR-REV-21 | The Revision view shall be read-only over the one revision schedule: it creates, moves or deletes nothing, and every action goes through the existing attempt and correction APIs. | M |
+| FR-REV-22 | In-app indicators: the Revision tab shows a badge with the number of revisions due by today (accent when any is overdue), and the sidebar's Today card shows "N revisions due · M overdue" linking to the Revision view. No notifications leave the app. | M |
+| FR-REV-23 | Task rows shall label their kind as a small tag (Study, Practice, Revision), so the three activities are distinguishable at a glance without adding text to the rows. | S |
 
 # 4. Non-functional requirements
 
@@ -408,7 +414,7 @@ sequenceDiagram
 
 ## 9.1 In scope
 
-Curriculum, map with vehicle progression, Today, Week, Progress and timeline views, tasks, study sessions, stages and settings, revision and active recall (phases 1–7 of the revision specification), local Docker deployment, backup and restore, and documentation. Phase 8 of the revision specification (scheduling tuned from accumulated data) is deliberately deferred until there is real attempt data.
+Curriculum, map with vehicle progression, Today, Week, Progress and timeline views, tasks, study sessions, stages and settings, revision and active recall (phases 1–7 of the revision specification), local Docker deployment, backup and restore, and documentation. Phase 8 of the revision specification (scheduling tuned from accumulated data) is deliberately deferred until there is real attempt data. Calendar integrations, cloud services and external notifications stay out of scope for revision too.
 
 ## 9.2 Explicit exclusions (YAGNI)
 
@@ -436,6 +442,8 @@ AI chatbot or LLM features; AI-generated plans; multiple users, registration or 
 | AC-16 | A revision due on Sunday is listed as optional on Sunday with no target, is planned for Monday and shows as overdue there if not done (scenario E). | FR-REV-12/13 |
 | AC-17 | Nine revisions due together are spread so that no study day exceeds its revision allowance, nothing lands on Sunday and no learning task changes (scenario F). | FR-REV-12 |
 | AC-18 | After an attempt, road progress, learned counts, topic status and the topic's planned minutes are unchanged (scenario G). | FR-REV-18 |
+| AC-19 | The Revision view lists each active unit in exactly one of overdue / due today / upcoming, puts overdue weak units first, starts a session with every unit due now that is not awaiting a correction, and reading it changes no data. | FR-REV-19–21 |
+| AC-20 | With revisions due, the Revision tab shows a badge with their number (accent when overdue) and the sidebar Today card links to the Revision view. | FR-REV-22 |
 
 # Appendix A — Curriculum and plan
 

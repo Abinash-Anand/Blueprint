@@ -348,3 +348,39 @@ export interface Progress {
     }[];
   };
 }
+
+export interface RevisionUnitRow {
+  scheduleId: number;
+  topicId: string;
+  topicName: string;
+  districtId: string;
+  subtopicId: number | null;
+  scope: RevisionScope;
+  label: string;
+  status: RevisionStatus;
+  nextDueDate: ISODate | null;
+  overdueDays: number;
+  lastAttemptDate: ISODate | null;
+  lastScore: number | null;
+  consecutiveSuccesses: number;
+  weak: boolean;
+  correctionPending: boolean;
+  pendingAttemptId: number | null;
+  openTask: { id: number; scheduledDate: ISODate } | null;
+}
+
+/** GET /revision/overview: the Revision section (read-only, derived from the one schedule table). */
+export interface RevisionOverview {
+  today: ISODate;
+  upcomingDays: number;
+  dailyAllowanceMinutes: number;
+  counts: { due: number; overdue: number; upcoming: number; later: number; weak: number; awaitingCorrection: number; active: number; paused: number };
+  overdue: RevisionUnitRow[];
+  due: RevisionUnitRow[];
+  upcoming: RevisionUnitRow[];
+  weak: RevisionUnitRow[];
+  awaitingCorrection: RevisionUnitRow[];
+  session: { topicId: string; scope: RevisionScope; subtopicId: number | null }[];
+  history: (Attempt & { topicId: string; topicName: string })[];
+  checkpoints: { id: number; topicId: string; topicName: string; subtopicId: number; label: string; result: CheckpointResult; neededAssistance: boolean; gaps: string; date: ISODate }[];
+}

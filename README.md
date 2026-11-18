@@ -6,7 +6,7 @@ A local-first, single-user learning system for the nine-month software-engineeri
 - **Week**: planned vs actual hours per day, completed and remaining assignments, upcoming milestones. Sunday is rest.
 - **City**: the map. Each learned sub-topic adds a floor. A roof goes on only after you **demonstrate** the skill. The car moves with demonstrated core progress, never with the calendar.
 - **Progress**: hours (total, weekly, monthly), learned vs demonstrated per district, recall and revision, and the stage timeline with delays.
-- **Revision and active recall**: recall checks while you study, then spaced revision of every learned sub-topic and topic, with intervals that adapt to how well you remembered. See [section 6.1](#61-revision-and-active-recall).
+- **Revision**: recall checks while you study, then spaced revision of every learned sub-topic and topic, with intervals that adapt to how well you remembered. The Revision tab lists what is due, overdue, weak and coming up, starts a session, and keeps the history and recall analytics. See [section 6.1](#61-revision-and-active-recall).
 
 The stack is React + TypeScript (Vite), Node.js + Express, PostgreSQL + Prisma, Docker Compose. The design documents are in [`docs/`](docs): [SRS](docs/SRS.md), [HLD](docs/HLD.md), [LLD](docs/LLD.md), with a PDF of each, and the [revision specification](docs/Revision-Spec.md).
 
@@ -114,7 +114,7 @@ Three things are tracked separately: **learned** (you ticked the sub-topics), **
 
 - **While studying**, press **Check** next to a sub-topic in the topic panel: answer from memory, reveal what a full answer covers, note the gaps. Nothing is scheduled and the sub-topic stays unticked until you tick it.
 - **After you tick a sub-topic**, its first revision is due the next day. A topic gets its own revision (how the parts fit together) once two sub-topics are learned or it is demonstrated.
-- **Revising**: open the task's **Revise** or **Start revision session** on Today. Answer first, then reveal and score yourself: 0 Forgot, 1 Struggled, 2 Recalled, 3 Mastered this attempt. A 0 or 1 needs a note of what was missing, and a confirmed correction before the next attempt.
+- **Revising**: open the **Revision** tab (its badge counts what is due; accent means something is overdue) and press **Start session**, or use **Revise** on a task in Today. Answer first, then reveal and score yourself: 0 Forgot, 1 Struggled, 2 Recalled, 3 Mastered this attempt. A 0 or 1 needs a note of what was missing, and a confirmed correction before the next attempt.
 - **Next date**: 0–1 → 1 day; 2 → 3 days; 3 → 7, 14, 30 days, then doubling up to 60. A 3 with hints or notes counts as 2. Two failures in a row mark the unit **weak**, and weak overdue units go first.
 - **Capacity**: revision sits on top of a full learning day, up to **30 minutes** (10 per sub-topic, 20 per topic), and fills free capacity on buffer days. Today says so when revision pushes the day past 4 h. Learning tasks are never moved. Change the allowance on the Progress page.
 - **Sunday** stays a rest day: revisions due that day are listed as optional and planned for Monday.
