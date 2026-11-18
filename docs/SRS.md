@@ -1,8 +1,8 @@
 ---
 title: "Engineering City — Software Requirements Specification"
 subtitle: "Personal engineering direction and execution system"
-version: "1.1"
-date: "17 November 2026"
+version: "1.2"
+date: "18 November 2026"
 ---
 
 # 1. Introduction
@@ -67,6 +67,13 @@ Engineering City removes that daily decision. When it is opened on any day it an
 | Study day | Monday to Saturday. Sunday is a rest day. |
 | Buffer day | A study day inside a stage that has no planned tasks; reserved for catching up. |
 | Berlin date | The calendar date in the `Europe/Berlin` time zone. |
+| Revision unit | What revision is scheduled for: one sub-topic, or one whole topic (integration across its sub-topics). |
+| Retrieval / active recall | Bringing knowledge back from memory without notes, then checking it against the source. |
+| Learning checkpoint | A recall check during initial study of a sub-topic. Recorded, but it never schedules anything or changes learned status. |
+| Recall score | The learner's assessment of one attempt: 0 Forgot, 1 Struggled, 2 Recalled, 3 Mastered this attempt. |
+| Revision schedule | The current state of one revision unit: next due date, interval, success and failure counts, correction state. |
+| Weak unit | A revision unit with two or more consecutive attempts scored 0–1. |
+| Revision allowance | Revision minutes a full study day accepts on top of planned learning (default 30). |
 
 ## 1.7 References
 
@@ -77,6 +84,7 @@ Engineering City removes that daily decision. When it is opened on any day it an
 | Backend roadmap | `Roadmaps/backend.pdf`, <https://roadmap.sh/backend> |
 | System Design roadmap | `Roadmaps/system-design.pdf`, <https://roadmap.sh/system-design> |
 | AI Engineer roadmap | `Roadmaps/ai-engineer.pdf`, <https://roadmap.sh/ai-engineer> |
+| Revision and active recall specification v1.0 (18 Nov 2026) | `docs/Revision-Spec.md`. Its rules REV-01 to REV-20, NFR-REV-01 to NFR-REV-07 and scenarios A–G apply in full. |
 
 # 2. Overall description
 
@@ -175,7 +183,7 @@ Each requirement has a priority: **M** (must), **S** (should) or **C** (could).
 | FR-TODAY-01 | The Today view shall show today's Berlin date, the current district and current topic. | M |
 | FR-TODAY-02 | It shall list today's assigned tasks with their estimated time, topic and status. | M |
 | FR-TODAY-03 | It shall show the daily target (four hours from Monday to Saturday), the actual time recorded today and the remaining assignments. | M |
-| FR-TODAY-04 | The learner shall be able to mark a task complete or reopen it. Tasks shall never be completed automatically. | M |
+| FR-TODAY-04 | The learner shall be able to mark a task complete or reopen it. Tasks shall never be completed automatically. A revision task is completed by recording an assessed attempt, not by ticking it (FR-REV-08). | M |
 | FR-TODAY-05 | The learner shall be able to edit a task's title, notes and estimate. | M |
 | FR-TODAY-06 | The learner shall be able to reschedule a task to another date. | M |
 | FR-TODAY-07 | The learner shall be able to record time spent, with or without a linked task, and delete a wrong entry. | M |
@@ -184,7 +192,7 @@ Each requirement has a priority: **M** (must), **S** (should) or **C** (could).
 | FR-TODAY-10 | The learner shall be able to move all carried-over tasks to the next study days with spare capacity, in one explicit action. | S |
 | FR-TODAY-11 | The learner shall be able to add a manual task. | S |
 | FR-TODAY-12 | The learner shall be able to browse to previous and next days. | S |
-| FR-TODAY-13 | On a Sunday or buffer day, the view shall offer optional activities (carried-over tasks, topics marked for review) without showing a target or a deficit. | M |
+| FR-TODAY-13 | On a Sunday or buffer day, the view shall offer optional activities (carried-over tasks, due revisions, topics marked for review) without showing a target or a deficit. | M |
 
 ## 3.5 Weekly schedule (FR-WEEK)
 
@@ -228,6 +236,32 @@ Each requirement has a priority: **M** (must), **S** (should) or **C** (could).
 |---|---|---|
 | FR-SET-01 | Store the journey start, journey end and time zone. | M |
 | FR-SET-02 | Store the per-weekday target minutes (FR-WEEK-06). | M |
+| FR-SET-03 | Store the daily revision allowance (0–240 minutes, default 30) and let the learner change it from the Progress view. | S |
+
+## 3.9 Revision and active recall (FR-REV)
+
+Derived from `docs/Revision-Spec.md`. Revision is a third dimension next to *learned* and *demonstrated*: it measures whether knowledge can still be **retrieved**. It never changes the other two.
+
+| ID | Requirement | Pri |
+|---|---|---|
+| FR-REV-01 | Revision shall operate on the existing curriculum units: every sub-topic and every topic (REV-01). Topic and sub-topic units shall never share or overwrite a schedule. | M |
+| FR-REV-02 | Marking a sub-topic learned shall make it eligible and schedule its first revision for the next day. Unticking it shall pause (suspend) the unit and remove its open revision task; its history stays. Ticking it again resumes it (REV-02). | M |
+| FR-REV-03 | A topic-level unit shall become eligible once two of its sub-topics are learned, or earlier when the topic is demonstrated. Its first revision is due three days later. It tests how the sub-topics fit together (REV-03). | M |
+| FR-REV-04 | Prompts shall come from three sources: one curriculum prompt per topic (83, seeded, with evaluation criteria), eight reusable templates rendered for any unit (Explain, Why, How, Compare, Scenario, Debug, Design, Write from memory), and the learner's own questions. Each prompt has a question, unit, retrieval method, expected answer or criteria, source, active flag and optional difficulty. Curriculum and template prompts can only be switched off; learner prompts can be edited, and deleted while unused. | M |
+| FR-REV-05 | Retrieval methods shall be: Explain, Answer, Write from memory, Draw, Build or solve, Compare or decide. Each prompt suggests one; the learner may change it per attempt. | M |
+| FR-REV-06 | During initial study the learner shall be able to run a **recall check** on any sub-topic (learned or not): prompt, answer from memory, reveal, record *Recalled / Partly / Couldn't recall*, whether help was needed, gaps and the answer. A check never changes learned status or any schedule (REV-04, REV-05). | M |
+| FR-REV-07 | A revision attempt shall show the prompt and method with the expected answer hidden, let the learner answer from memory, then reveal the criteria and record the score 0–3, hints used, notes used, mistakes, correction, optional duration and comment (REV-06). A score of 0–1 requires the gap to be described. | M |
+| FR-REV-08 | A revision task shall be completed only by recording an assessed attempt. It cannot be ticked, skipped or deleted; it can be moved to another day. Revising a unit early completes its open task. | M |
+| FR-REV-09 | The next due date shall follow the adaptive policy of BR-15 (REV-09 to REV-12). | M |
+| FR-REV-10 | A failed attempt (0–1) shall require a correction: after a 0 that is not yet corrected nothing is scheduled; after a 1 the next revision is scheduled, but no further attempt can be recorded until the correction is confirmed (REV-08). | M |
+| FR-REV-11 | Every attempt shall be kept with the prompt text as it was shown. Attempts are immutable; the only permitted change is confirming the correction (REV-07). | M |
+| FR-REV-12 | Revision tasks shall be placed on study days within the revision allowance (BR-18), by priority, never on Sunday, never moving or removing learning tasks. Each task keeps its due date as its original date, so overdue status survives any move (REV-13, REV-18, REV-19). | M |
+| FR-REV-13 | Today shall show revision tasks distinctly (no tick box, a *Revise* action, due date, *Weak* and *Correction pending* markers), the revision minutes, a notice when revision pushes the day past its target, revisions already due but planned later, and an interleaved revision session. On Sunday, due revisions are listed as optional. | M |
+| FR-REV-14 | Week shall show planned and completed revision minutes, revisions due this week, overdue revisions, and the revision minutes per day. | M |
+| FR-REV-15 | Progress shall show attempts, the share recalled (score 2–3), the score distribution, attempts and average score per month, units in revision, overdue units, units awaiting correction, recall checks and weak units, without XP, streaks or points. | S |
+| FR-REV-16 | The topic panel shall show, per unit, its status (not learned, next date, due, overdue, awaiting correction, paused), last score and weak flag, with *Check* and *Revise* actions, the attempt and check history, and the topic's questions. | M |
+| FR-REV-17 | A revision session shall order overdue weak units first, then by due date, and interleave topics so that two items of the same topic do not follow each other when another topic is available. Only learned units can be in a session, so prerequisites are always met. | S |
+| FR-REV-18 | Revision shall never change learned status, demonstration, a topic's planned hours or estimate, district progress or the car (REV-15, REV-16, spec §9.3). | M |
 
 # 4. Non-functional requirements
 
@@ -245,6 +279,7 @@ Each requirement has a priority: **M** (must), **S** (should) or **C** (could).
 | NFR-10 | Maintainability | TypeScript strict mode, input validation at the API boundary, versioned migrations, automated tests for the domain logic and the API. |
 | NFR-11 | Reliability | Invalid input never corrupts data. Multi-row updates such as bulk rescheduling run in a transaction. |
 | NFR-12 | Simplicity (YAGNI) | No features beyond those listed in §3. |
+| NFR-13 | Revision engine | Deterministic for the same inputs and policy (pure domain functions), multi-record updates in one transaction, dates in `Europe/Berlin`, testable without the UI, no external services (NFR-REV-01 to NFR-REV-07). |
 
 # 5. Business rules
 
@@ -263,6 +298,13 @@ Each requirement has a priority: **M** (must), **S** (should) or **C** (could).
 | BR-11 | A study session is 1–720 minutes on a single date. Sessions are not limited per day. |
 | BR-12 | Marking a task done does not mark any sub-topic as learned, and does not record time. Each is an explicit learner action. |
 | BR-13 | Demonstration is explicit and reversible. It may be recorded before all sub-topics are learned, for knowledge the learner already has. |
+| BR-14 | **Revision units.** A sub-topic unit exists once the sub-topic is learned; a topic unit once two sub-topics are learned or the topic is demonstrated. First due: next day (sub-topic), three days later (topic). Losing eligibility suspends the unit. |
+| BR-15 | **Adaptive interval.** A 3 achieved with hints or notes counts as 2. Score 0–1: interval 1 day, success count reset, failure count + 1. Score 2: interval 3 days, success count kept, failure count reset. Score 3: 7, 14, then 30 days for the first three consecutive successes; afterwards double the longer of the previous interval and the days actually elapsed, capped at 60. Policy values live in one constant (`REVISION_POLICY`) and are product defaults, not proven optima. |
+| BR-16 | A unit is **weak** after two consecutive attempts scored 0–1. A score of 2 or 3 clears it. |
+| BR-17 | Unit status is derived: *awaiting correction* (no due date), *overdue* (due date < today), *due* (= today), *scheduled* (later), *paused* (suspended). |
+| BR-18 | **Revision allowance.** A study day accepts revision minutes up to max(daily allowance, day target − planned learning minutes). Sub-topic revisions take 10 minutes, topic revisions 20. Sundays and 0-target days accept none. |
+| BR-19 | Revision tasks are excluded from a topic's planned minutes, done-task count and planned window. Time recorded with an attempt is a normal study session, so it counts as actual time for the topic and the day. |
+| BR-20 | At most one open revision task exists per unit (enforced by a partial unique index). |
 
 # 6. Scheduling requirements
 
@@ -275,7 +317,10 @@ Each requirement has a priority: **M** (must), **S** (should) or **C** (could).
 5. All architecture topics form one queue. The parallel Saturdays take topics from the start of the queue, and the April–May stage continues where they stopped.
 6. The plan must fit: the total planned time of a stage never exceeds its capacity. This is enforced by an automated test. The generated figures are in Appendix A.1: 679 h planned out of 940 h of capacity, in 542 tasks.
 7. The plan is generated once, at first seed. It is never regenerated over existing tasks.
-8. **Bulk rescheduling** (FR-TODAY-10) walks the overdue tasks in their original order and places each on the first study day from today onward whose planned minutes plus the task's estimate fit within the day target. Sundays are never used.
+8. **Bulk rescheduling** (FR-TODAY-10) walks the overdue tasks in their original order and places each on the first study day from today onward whose planned minutes plus the task's estimate fit within the day target. Sundays are never used. Overdue revision tasks are re-placed by revision priority within the revision allowance instead (rule 10).
+9. **Revision is scheduled separately from the curriculum plan** (spec §13.2). The plan decides what to learn; the revision scheduler decides what to retrieve again. Revision never moves, skips or deletes a learning task.
+10. **Revision placement.** Whenever a unit gets a due date and has no open task (after a sub-topic is ticked, a topic demonstrated, an attempt recorded or a correction confirmed), a revision task is created on the first study day from max(due date, today) that has room under BR-18. Several units placed together are ordered: overdue weak units first, then oldest due date, lowest last score, longest since the last attempt. Already placed tasks are not reshuffled, so the plan the learner sees stays stable.
+11. A revision due on a Sunday is placed on the next study day with room. On the Sunday itself it is offered as optional; skipping it changes nothing.
 
 # 7. Data requirements
 
@@ -291,6 +336,12 @@ Each requirement has a priority: **M** (must), **S** (should) or **C** (could).
 | Study session | date, minutes, task?, topic?, note | Learner-owned |
 | Settings | journey start/end, time zone | Seeded singleton |
 | Weekly target | weekday (1–7), target minutes | Seeded; editable |
+| Revision prompt | key?, topic, sub-topic?, title, question, method, expected answer, difficulty?, source, template key?, active | Curriculum prompts seeded by key (active flag never overwritten); template prompts created on first use; learner prompts learner-owned |
+| Revision schedule | unit key, scope, topic, sub-topic?, eligible since, next due date, last attempt, last score, previous interval, success and failure counts, correction pending, suspended | Learner-owned state, created and updated by the revision scheduler |
+| Revision attempt | schedule, prompt?, task?, prompt text, score, effective score, method, timestamp and date, duration?, hints, notes, answer, mistakes, correction (and when), comment, resulting interval and due date | Learner-owned, immutable except confirming the correction |
+| Learning checkpoint | topic, sub-topic, prompt?, prompt text, result, needed help, gaps, answer, date | Learner-owned |
+
+Tasks gain an optional link to a revision schedule and a third source, `REVISION`. Settings gain the daily revision allowance.
 
 All dates are calendar dates (`DATE`) interpreted in `Europe/Berlin`. All timestamps are stored in UTC (`TIMESTAMPTZ`).
 
@@ -327,21 +378,41 @@ On a later day, unfinished tasks appear under **Carried over** with their days o
 
 ## 8.4 Sunday
 
-The Today view shows "Rest day". It lists optional revision: carried-over tasks and topics marked *needs review*. There is no target bar and no shortfall.
+The Today view shows "Rest day". It lists optional work: carried-over tasks, revisions that are already due (planned for Monday or later) and topics marked *needs review*. There is no target bar and no shortfall. Whatever is left stays due.
 
 ## 8.5 Weekly review
 
-On Saturday or Sunday the learner opens **Week**: planned vs actual per day, completed assignments, remaining work and next week's milestones.
+On Saturday or Sunday the learner opens **Week**: planned vs actual per day, completed assignments, remaining work, revision workload and next week's milestones.
+
+## 8.6 Study with a recall check, then revise
+
+```mermaid
+sequenceDiagram
+  actor L as Learner
+  participant UI as Topic panel / Today
+  participant API as REST API
+  L->>UI: Study "Generics", press Check
+  UI->>API: GET /api/topics/fe.ts/revision (prompts, units)
+  L->>UI: Answer from memory, reveal, record "Partly" + gap
+  UI->>API: POST /api/checkpoints
+  L->>UI: Re-read, then tick the sub-topic learned
+  UI->>API: PATCH /api/subtopics/:id (schedules revision for tomorrow)
+  Note over L,API: Next day
+  L->>UI: Today → Start revision session
+  L->>UI: Answer, reveal, score 0–3, note the gap, confirm the correction
+  UI->>API: POST /api/revision/attempts
+  API-->>UI: attempt, next due date, next task date
+```
 
 # 9. Scope
 
 ## 9.1 In scope
 
-Curriculum, map with vehicle progression, Today, Week, Progress and timeline views, tasks, study sessions, stages and settings, local Docker deployment, backup and restore, and documentation.
+Curriculum, map with vehicle progression, Today, Week, Progress and timeline views, tasks, study sessions, stages and settings, revision and active recall (phases 1–7 of the revision specification), local Docker deployment, backup and restore, and documentation. Phase 8 of the revision specification (scheduling tuned from accumulated data) is deliberately deferred until there is real attempt data.
 
 ## 9.2 Explicit exclusions (YAGNI)
 
-AI chatbot or LLM features; AI-generated plans; multiple users, registration or login; social sharing; gamification, XP, badges, streaks or leaderboards; notifications; cloud sync or hosting; a mobile app; calendar integrations (iCal, Google); general note-taking; project-management features unrelated to the journey; analytics that do not support a learning decision; Redis, message brokers, microservices or Kubernetes in the application.
+AI chatbot or LLM features; AI-generated plans; multiple users, registration or login; social sharing; gamification, XP, badges, streaks or leaderboards; notifications; cloud sync or hosting; a mobile app; calendar integrations (iCal, Google); general note-taking; project-management features unrelated to the journey; analytics that do not support a learning decision; Redis, message brokers, microservices or Kubernetes in the application. For revision in particular: AI-generated questions or answers, external flashcard services, scraping documentation, a standalone flashcard app, a separate revision calendar, machine-learning scheduling and any claim of permanent mastery.
 
 # 10. Acceptance criteria
 
@@ -358,6 +429,13 @@ AI chatbot or LLM features; AI-generated plans; multiple users, registration or 
 | AC-09 | No generated task falls on a Sunday. No study day is planned beyond 240 minutes. No task is longer than 120 minutes. Every stage plan fits its capacity. | FR-CAL-04 |
 | AC-10 | Sundays show no target and no shortfall. | FR-TODAY-13, FR-WEEK-05 |
 | AC-11 | The backend unit and integration tests and the frontend tests pass. | NFR-10 |
+| AC-12 | A recall check on an unlearned sub-topic is recorded and leaves it unlearned; revising it is refused until it is marked learned (scenario A). | FR-REV-06 |
+| AC-13 | Marking a sub-topic learned creates a revision due the next day; an attempt scored 3 records it, completes the task and schedules the next one 7 days later (scenario B). | FR-REV-02/07/08/09 |
+| AC-14 | A score of 0 without correction schedules nothing and blocks a new attempt; confirming the correction schedules it for the next day and the success count is 0 (scenario C). | FR-REV-10 |
+| AC-15 | Consecutive 3s extend the interval 7 → 14 days; all attempts stay in the history; a 3 with notes counts as 2 (scenario D). | FR-REV-09/11 |
+| AC-16 | A revision due on Sunday is listed as optional on Sunday with no target, is planned for Monday and shows as overdue there if not done (scenario E). | FR-REV-12/13 |
+| AC-17 | Nine revisions due together are spread so that no study day exceeds its revision allowance, nothing lands on Sunday and no learning task changes (scenario F). | FR-REV-12 |
+| AC-18 | After an attempt, road progress, learned counts, topic status and the topic's planned minutes are unchanged (scenario G). | FR-REV-18 |
 
 # Appendix A — Curriculum and plan
 
@@ -432,6 +510,8 @@ The curriculum is the researched learning direction (OBJ-1). It was built from t
 | Cloud Engineering | 9 | 7 | 1 | 1 | 45 | 98 | 90 |
 | AI Engineering | 15 | 10 | 3 | 2 | 60 | 119 | 108 |
 | Engineering Consolidation | 6 | 5 | 1 | 0 | 23 | 62 | 62 |
+
+## A.3 Topics per district
 
 ### A.3.1 Frontend Engineering
 
@@ -550,3 +630,24 @@ The curriculum is the researched learning direction (OBJ-1). It was built from t
 | Portfolio and documentation | Core | 8 | README and setup guide; Architecture documentation; Case-study write-up | ec.capstone |
 | Interview readiness | Core | 14 | Data structures and algorithms refresh; System design mock interviews; Behavioural stories; Explaining your projects | — |
 | Retrospective and next direction | Core | 4 | Review progress and hours; Identify gaps; Plan the next six months | — |
+
+## A.4 Revision workload (simulation)
+
+Spaced revision of 342 sub-topics and 83 topics competes for the same four-hour days as new learning, so the defaults were chosen from a simulation of the real plan rather than guessed. The simulation learns every sub-topic on the day of its last planned study task, makes each topic eligible when its second sub-topic is learned, attempts every revision on the day it is placed, and applies BR-15 and BR-18.
+
+| Scores | Session lengths | Allowance | Attempts | Average delay after due | 90th percentile | Maximum |
+|---|---|---:|---:|---:|---:|---:|
+| All 3 | 10 / 20 min | 30 min | 1,352 | 10.8 days | 28 days | 57 days |
+| All 3 | 10 / 20 min | 45 min | 1,449 | 8.7 days | 26 days | 56 days |
+| All 3 | 15 / 30 min | 30 min | 1,125 | 18.4 days | 44 days | 85 days |
+| Mixed (50% 3, 30% 2, 10% 1, 5% 0) | 10 / 20 min | 30 min | 1,687 | 16.1 days | 41 days | 60 days |
+| Mixed | 10 / 20 min | 45 min | 1,809 | 14.4 days | 35 days | 58 days |
+
+Average revision minutes actually placed per study day (all 3, 10 / 20 min, 30 min allowance): Nov 24, Dec 57, Jan 30, Feb 30, Mar 157, Apr 90, May 65, Jun 65, Jul 53, Aug 96.
+
+**Findings.**
+
+- On full learning days revision is capped by the allowance, so in January and February (Backend + Database at full load) revisions fall behind their due dates; the buffer days at the end of each stage (March, late April, late July) absorb the backlog.
+- Shorter sessions (10 minutes per concept) roughly halve the delay compared with 15 minutes, so the defaults are 10 / 20 minutes with a 30-minute allowance. A full day then plans 4 h 30.
+- The Today view states this openly ("Revision is competing with new learning today") and lists revisions that are due but planned later, so the learner can do them early.
+- The allowance is configurable (FR-SET-03). Tuning the policy from real attempt data is phase 8 of the revision specification.

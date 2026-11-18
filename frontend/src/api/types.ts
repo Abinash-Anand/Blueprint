@@ -4,6 +4,11 @@ export type Priority = "CORE" | "IMPORTANT" | "OPTIONAL";
 export type TopicStatus = "NOT_STARTED" | "IN_PROGRESS" | "LEARNED" | "DEMONSTRATED";
 export type TaskKind = "STUDY" | "PRACTICE" | "REVISION";
 export type TaskStatus = "TODO" | "DONE" | "SKIPPED";
+export type RetrievalMethod = "CONCEPTUAL" | "QUESTION_ANSWER" | "WRITTEN" | "VISUAL" | "PRACTICAL" | "SCENARIO";
+export type RevisionScope = "SUBTOPIC" | "TOPIC";
+export type RevisionStatus = "SCHEDULED" | "DUE" | "OVERDUE" | "AWAITING_CORRECTION" | "SUSPENDED";
+export type PromptSource = "CURRICULUM" | "TEMPLATE" | "LEARNER";
+export type CheckpointResult = "RECALLED" | "PARTIAL" | "NOT_RECALLED";
 
 export interface Subtopic {
   id: number;
@@ -74,7 +79,7 @@ export interface Task {
   notes: string;
   kind: TaskKind;
   status: TaskStatus;
-  source: "PLAN" | "MANUAL";
+  source: "PLAN" | "MANUAL" | "REVISION";
   estimatedMinutes: number;
   loggedMinutes: number;
   originalDate: ISODate;
@@ -85,6 +90,126 @@ export interface Task {
   topic: { id: string; name: string; districtId: string } | null;
   subtopic: { id: number; name: string; completed: boolean } | null;
   stageId: string | null;
+  /** Set for scheduler-created revision tasks; originalDate is the due date. */
+  revision: {
+    scheduleId: number;
+    scope: RevisionScope;
+    weak: boolean;
+    correctionPending: boolean;
+    lastScore: number | null;
+    dueDate: ISODate;
+    overdueDays: number;
+  } | null;
+}
+
+export interface PromptOption {
+  promptId: number | null;
+  templateKey: string | null;
+  source: PromptSource;
+  title: string;
+  content: string;
+  retrievalMethod: RetrievalMethod;
+  expectedAnswer: string;
+  difficulty: number | null;
+  isActive: boolean;
+  uses: number;
+  lastUsedDate: ISODate | null;
+}
+
+export interface RevisionUnit {
+  unit: string;
+  scope: RevisionScope;
+  subtopicId: number | null;
+  label: string;
+  learned: boolean;
+  eligible: boolean;
+  schedule: {
+    id: number;
+    status: RevisionStatus;
+    nextDueDate: ISODate | null;
+    lastAttemptDate: ISODate | null;
+    lastScore: number | null;
+    consecutiveSuccesses: number;
+    consecutiveFailures: number;
+    weak: boolean;
+    correctionPending: boolean;
+    pendingAttemptId: number | null;
+    openTask: { id: number; scheduledDate: ISODate } | null;
+    attempts: number;
+  } | null;
+  options: PromptOption[];
+  suggested: number;
+}
+
+export interface Attempt {
+  id: number;
+  scheduleId: number;
+  label: string;
+  scope: RevisionScope;
+  promptId: number | null;
+  promptText: string;
+  score: number;
+  effectiveScore: number;
+  retrievalMethod: RetrievalMethod;
+  attemptedAt: string;
+  attemptDate: ISODate;
+  durationMinutes: number | null;
+  usedHints: boolean;
+  usedNotes: boolean;
+  response: string;
+  mistakes: string;
+  correctionCompleted: boolean;
+  correctedAt: string | null;
+  comment: string;
+  intervalDays: number;
+  nextDueDate: ISODate | null;
+}
+
+export interface Checkpoint {
+  id: number;
+  topicId: string;
+  subtopicId: number;
+  label?: string;
+  promptId: number | null;
+  promptText: string;
+  result: CheckpointResult;
+  neededAssistance: boolean;
+  gaps: string;
+  response: string;
+  date: ISODate;
+  completedAt: string;
+}
+
+export interface Prompt {
+  id: number;
+  topicId: string;
+  subtopicId: number | null;
+  source: PromptSource;
+  title: string;
+  content: string;
+  retrievalMethod: RetrievalMethod;
+  expectedAnswer: string;
+  difficulty: number | null;
+  isActive: boolean;
+}
+
+export interface TopicRevision {
+  topicId: string;
+  today: ISODate;
+  policy: { subtopicMinutes: number; topicMinutes: number; dailyBudgetMinutes: number };
+  units: RevisionUnit[];
+  attempts: Attempt[];
+  checkpoints: Checkpoint[];
+  prompts: Prompt[];
+}
+
+export interface AttemptResult {
+  attempt: Attempt;
+  nextDueDate: ISODate | null;
+  nextTaskDate: ISODate | null;
+  correctionPending: boolean;
+  intervalDays: number;
+  effectiveScore: number;
 }
 
 export interface Session {
@@ -114,6 +239,19 @@ export interface Today {
   current: { districtId: string | null; topicId: string | null };
   next: { topicId: string; subtopic: string | null } | null;
   reviewTopics: { id: string; name: string; districtId: string }[];
+  revision: {
+    plannedMinutes: number;
+    learningMinutes: number;
+    dailyAllowanceMinutes: number;
+    competing: boolean;
+    dueCount: number;
+    overdueCount: number;
+    weakCount: number;
+    awaitingCorrection: number;
+    backlog: { count: number; oldestDue: ISODate | null };
+    optional: Task[];
+    sessionTaskIds: number[];
+  };
 }
 
 export interface WeekDay {
@@ -126,6 +264,9 @@ export interface WeekDay {
   actualMinutes: number;
   tasksTotal: number;
   tasksDone: number;
+  revisionTasks: number;
+  revisionPlannedMinutes: number;
+  revisionDoneMinutes: number;
 }
 
 export interface Week {
@@ -141,6 +282,7 @@ export interface Week {
     tasksRemaining: number;
     remainingMinutes: number;
   };
+  revision: { plannedMinutes: number; doneMinutes: number; dueThisWeek: number; overdue: number };
   milestones: { date: ISODate; type: "PRACTICE" | "STAGE_END"; title: string; topicId: string | null; stageId: string | null; done: boolean }[];
   tasks: Task[];
 }
@@ -189,4 +331,20 @@ export interface Progress {
     overdueTasks: number;
     bufferDays: number;
   })[];
+  revision: {
+    attempts: number;
+    successful: number;
+    distribution: number[];
+    checkpoints: number;
+    activeUnits: number;
+    dueToday: number;
+    overdue: number;
+    awaitingCorrection: number;
+    dailyAllowanceMinutes: number;
+    monthly: { month: string; attempts: number; successful: number; averageScore: number | null }[];
+    weakUnits: {
+      scheduleId: number; topicId: string; subtopicId: number | null; scope: RevisionScope; label: string;
+      lastScore: number | null; consecutiveFailures: number; nextDueDate: ISODate | null;
+    }[];
+  };
 }

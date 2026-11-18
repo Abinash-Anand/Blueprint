@@ -3,6 +3,7 @@ import { d2i, i2d } from "../../db.js";
 import { placeOverdue } from "../../domain/reschedule.js";
 import type { Clock } from "../../lib/clock.js";
 import { HttpError, notFound } from "../../lib/http.js";
+import { replaceOverdueRevisions } from "../revision/service.js";
 import { loadTargets } from "../schedule/service.js";
 import { taskDTO, taskInclude, taskOrder } from "./mapper.js";
 
@@ -30,6 +31,9 @@ export interface TaskPatch {
   scheduledDate?: string;
   status?: TaskStatus;
 }
+
+/** Bulk moves can touch hundreds of rows after a long break; allow more than Prisma's 5 s default. */
+const BULK_TX = { maxWait: 10_000, timeout: 60_000 };
 
 export function taskService(prisma: PrismaClient, clock: Clock) {
   const one = async (id: number) => {
@@ -90,6 +94,10 @@ export function taskService(prisma: PrismaClient, clock: Clock) {
         data.scheduledDate = i2d(p.scheduledDate);
         data.rescheduleCount = { increment: 1 };
       }
+      if (t.revisionScheduleId && p.status === "DONE" && t.status !== "DONE")
+        throw new HttpError(409, "ATTEMPT_REQUIRED", "A revision is completed by recording a recall attempt, not by ticking it.");
+      if (t.revisionScheduleId && p.status === "SKIPPED")
+        throw new HttpError(409, "REVISION_NOT_SKIPPABLE", "A revision stays due until you attempt it. Move it to another day instead.");
       if (p.status !== undefined && p.status !== t.status) {
         data.status = p.status;
         data.completedAt = p.status === "DONE" ? clock.now() : null;
@@ -103,6 +111,8 @@ export function taskService(prisma: PrismaClient, clock: Clock) {
       if (!t) throw notFound("Task");
       if (t.source === "PLAN")
         throw new HttpError(409, "PLAN_TASK_NOT_DELETABLE", "Planned tasks cannot be deleted. Mark it as skipped instead.");
+      if (t.source === "REVISION")
+        throw new HttpError(409, "REVISION_TASK_NOT_DELETABLE", "Revision tasks follow the revision schedule. Move it to another day instead.");
       await prisma.task.delete({ where: { id } });
     },
 
@@ -111,11 +121,12 @@ export function taskService(prisma: PrismaClient, clock: Clock) {
       const today = clock.today();
       const targets = await loadTargets(prisma);
       return prisma.$transaction(async (tx) => {
+        // Learning tasks first (oldest first, within the daily target); then revisions by priority within their allowance.
         const overdue = await tx.task.findMany({
-          where: { status: "TODO", scheduledDate: { lt: i2d(today) } },
+          where: { status: "TODO", scheduledDate: { lt: i2d(today) }, revisionScheduleId: null },
           select: { id: true, estimatedMinutes: true, scheduledDate: true, originalDate: true, position: true },
         });
-        if (overdue.length === 0) return { moved: [] };
+        if (overdue.length === 0) return { moved: await replaceOverdueRevisions(tx, today) };
         const future = await tx.task.groupBy({
           by: ["scheduledDate"],
           where: { status: { not: "SKIPPED" }, scheduledDate: { gte: i2d(today) } },
@@ -134,8 +145,8 @@ export function taskService(prisma: PrismaClient, clock: Clock) {
         for (const m of moves) {
           await tx.task.update({ where: { id: m.id }, data: { scheduledDate: i2d(m.to), rescheduleCount: { increment: 1 } } });
         }
-        return { moved: moves };
-      });
+        return { moved: [...moves, ...(await replaceOverdueRevisions(tx, today))] };
+      }, BULK_TX);
     },
   };
 }

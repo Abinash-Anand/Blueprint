@@ -1,7 +1,9 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { topicStatus } from "../../domain/progress.js";
+import type { Clock } from "../../lib/clock.js";
 import { notFound } from "../../lib/http.js";
 import { type TopicAggregates, topicAggregates } from "../learning.js";
+import { planOpenRevisions, syncTopic } from "../revision/service.js";
 import { stageDTO, stageInclude } from "../schedule/service.js";
 
 const topicInclude = {
@@ -41,7 +43,7 @@ export function topicDTO(t: TopicRow, agg?: TopicAggregates) {
   };
 }
 
-export function curriculumService(prisma: PrismaClient) {
+export function curriculumService(prisma: PrismaClient, clock: Clock) {
   return {
     async getCurriculum() {
       const [districts, stages, agg] = await Promise.all([
@@ -72,8 +74,14 @@ export function curriculumService(prisma: PrismaClient) {
       const s = await prisma.subtopic.findUnique({ where: { id } });
       if (!s) throw notFound("Subtopic");
       // Keep the original timestamp when ticking an already-ticked sub-topic.
-      const completedAt = completed ? (s.completedAt ?? new Date()) : null;
-      const u = await prisma.subtopic.update({ where: { id }, data: { completedAt } });
+      const completedAt = completed ? (s.completedAt ?? clock.now()) : null;
+      // Learned status is the learner's explicit action; revision eligibility follows it (REV-02).
+      const u = await prisma.$transaction(async (tx) => {
+        const row = await tx.subtopic.update({ where: { id }, data: { completedAt } });
+        await syncTopic(tx, row.topicId, clock.now());
+        await planOpenRevisions(tx, clock.today());
+        return row;
+      });
       return { id: u.id, topicId: u.topicId, completedAt: u.completedAt?.toISOString() ?? null };
     },
 
@@ -82,12 +90,18 @@ export function curriculumService(prisma: PrismaClient) {
       if (!t) throw notFound("Topic");
       const data: { demonstratedAt?: Date | null; demonstrationNote?: string | null; needsReview?: boolean } = {};
       if (body.demonstrated !== undefined) {
-        data.demonstratedAt = body.demonstrated ? (t.demonstratedAt ?? new Date()) : null;
+        data.demonstratedAt = body.demonstrated ? (t.demonstratedAt ?? clock.now()) : null;
         if (!body.demonstrated) data.demonstrationNote = null;
       }
       if (body.demonstrationNote !== undefined) data.demonstrationNote = body.demonstrationNote.trim() || null;
       if (body.needsReview !== undefined) data.needsReview = body.needsReview;
-      await prisma.topic.update({ where: { id }, data });
+      await prisma.$transaction(async (tx) => {
+        await tx.topic.update({ where: { id }, data });
+        if (body.demonstrated !== undefined) {
+          await syncTopic(tx, id, clock.now());
+          await planOpenRevisions(tx, clock.today());
+        }
+      });
       return this.getTopic(id);
     },
   };

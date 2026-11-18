@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { Clock } from "./lib/clock.js";
 import { errorHandler, notFoundRoute, requestLog } from "./lib/http.js";
 import { curriculumRoutes } from "./modules/curriculum/routes.js";
+import { revisionRoutes } from "./modules/revision/routes.js";
 import { scheduleRoutes } from "./modules/schedule/routes.js";
 import { sessionRoutes } from "./modules/sessions/routes.js";
 import { summaryRoutes } from "./modules/summary/routes.js";
@@ -34,6 +35,7 @@ export function createApp(deps: Deps) {
   api.use(sessionRoutes(deps));
   api.use(summaryRoutes(deps));
   api.use(scheduleRoutes(deps));
+  api.use(revisionRoutes(deps));
 
   app.use("/api", api);
   app.use(notFoundRoute);

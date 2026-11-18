@@ -2,14 +2,19 @@
  * Idempotent seed (LLD §3.2):
  *  - upserts the curriculum by slug, never overwriting learner-owned fields;
  *  - creates stages, settings and weekly targets only if missing (dates stay editable);
- *  - generates the plan once, only when no PLAN tasks exist.
+ *  - generates the plan once, only when no PLAN tasks exist;
+ *  - upserts curriculum revision prompts by key, never overwriting the learner's on/off choice;
+ *  - backfills revision schedules for learning marked before revision existed (idempotent).
  */
 import { PrismaClient } from "@prisma/client";
 import { DEFAULT_TARGETS, JOURNEY, districts, queues, stages } from "../src/curriculum/index.js";
+import { curriculumPrompts } from "../src/curriculum/prompts.js";
 import { buildPlan } from "../src/domain/planner.js";
 import { toDate } from "../src/domain/dates.js";
+import { systemClock } from "../src/lib/clock.js";
+import { backfillRevision } from "../src/modules/revision/service.js";
 
-export async function seed(prisma: PrismaClient, log = console.log) {
+export async function seed(prisma: PrismaClient, log = console.log, today = systemClock(process.env.APP_TODAY || undefined).today()) {
   // 1. Curriculum
   for (const [di, d] of districts.entries()) {
     const district = { position: di, name: d.name, subtitle: d.subtitle, layer: d.layer, color: d.color, cols: d.cols, goal: d.goal, note: d.note };
@@ -40,6 +45,16 @@ export async function seed(prisma: PrismaClient, log = console.log) {
     }
   }
 
+  // 1b. Curriculum revision prompts (Revision spec 4.1): one topic-level prompt per topic.
+  const seen = new Map<string, number>();
+  for (const p of curriculumPrompts) {
+    const n = (seen.get(p.topic) ?? 0) + 1;
+    seen.set(p.topic, n);
+    const key = `cur:${p.topic}:${n}`;
+    const data = { topicId: p.topic, title: p.title, content: p.content, retrievalMethod: p.method, expectedAnswer: p.expected };
+    await prisma.revisionPrompt.upsert({ where: { key }, update: data, create: { ...data, key, source: "CURRICULUM" } });
+  }
+
   // 2. Calendar configuration (created once; learner may edit dates afterwards)
   for (const [i, s] of stages.entries()) {
     await prisma.stage.upsert({
@@ -65,8 +80,16 @@ export async function seed(prisma: PrismaClient, log = console.log) {
   const existing = await prisma.task.count({ where: { source: "PLAN" } });
   if (existing > 0) {
     log(`Seed: curriculum updated; plan already exists (${existing} planned tasks), left untouched.`);
-    return;
+  } else {
+    await generatePlan(prisma, log);
   }
+
+  // 4. Revision backfill: schedules for learned sub-topics and eligible topics, placed from today.
+  const placed = await backfillRevision(prisma, today);
+  if (placed.length) log(`Seed: scheduled ${placed.length} revision task(s).`);
+}
+
+async function generatePlan(prisma: PrismaClient, log: (m: string) => void) {
   const q = Object.fromEntries(
     Object.entries(queues()).map(([k, v]) => [k, v.map((t) => ({ slug: t.slug, name: t.name, hours: t.hours, subtopics: t.subtopics, exercise: t.exercise }))]),
   );

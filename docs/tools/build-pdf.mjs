@@ -1,6 +1,6 @@
 /**
  * Build professional PDFs from the Markdown sources (the editable source of truth).
- *   cd docs/tools && npm install && npm run build            → docs/SRS.pdf, HLD.pdf, LLD.pdf
+ *   cd docs/tools && npm install && npm run build            → docs/SRS.pdf, HLD.pdf, LLD.pdf, Revision-Spec.pdf
  *   CHROME_PATH=/path/to/chrome npm run build                 (if Chrome/Edge is not auto-detected)
  * Pipeline: Markdown → HTML (marked) → Mermaid diagrams rendered to SVG in headless Chrome
  *           → Paged.js pagination (cover, TOC with page numbers, running header, page x / y) → PDF.
@@ -16,7 +16,7 @@ const docsDir = resolve(here, "..");
 const buildDir = join(here, "_build");
 mkdirSync(buildDir, { recursive: true });
 
-const DOCS = process.argv.slice(2).length ? process.argv.slice(2) : ["SRS", "HLD", "LLD"];
+const DOCS = process.argv.slice(2).length ? process.argv.slice(2) : ["SRS", "HLD", "LLD", "Revision-Spec"];
 
 function findChrome() {
   const candidates = [

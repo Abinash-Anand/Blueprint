@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { Task } from "../api/types";
 import { KIND_LABEL, dayMonth, hm, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
+import { RecallDialog } from "./RecallDialog";
 
 interface Props {
   task: Task;
@@ -21,6 +22,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
   const [title, setTitle] = useState(t.title);
   const [est, setEst] = useState(t.estimatedMinutes);
   const [notes, setNotes] = useState(t.notes);
+  const [recall, setRecall] = useState(false);
 
   const open = (m: Mode) => {
     setMode(m === mode ? null : m);
@@ -38,17 +40,26 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
   const done = t.status === "DONE";
   const skipped = t.status === "SKIPPED";
   const label = `${t.title}${t.topic ? ` (${t.topic.name})` : ""}`;
+  const rv = t.revision;
+  const overdue = rv ? rv.overdueDays : t.overdueDays;
 
   return (
     <li className={`task${done ? " done" : ""}${skipped ? " skipped" : ""}`}>
       <div className="top">
-        <input
-          type="checkbox"
-          aria-label={`Mark "${label}" as ${done ? "not done" : "done"}`}
-          checked={done}
-          disabled={skipped}
-          onChange={(e) => void mutate(() => api.patchTask(t.id, { status: e.target.checked ? "DONE" : "TODO" }))}
-        />
+        {rv ? (
+          // Completed only by an assessed recall attempt (Revision spec 9.3), so no tick box.
+          <span className={`rvmark${done ? " on" : ""}`} role="img" aria-label={done ? "Revision recorded" : "Revision: complete it by recording an attempt"}>
+            {done ? "✓" : "↻"}
+          </span>
+        ) : (
+          <input
+            type="checkbox"
+            aria-label={`Mark "${label}" as ${done ? "not done" : "done"}`}
+            checked={done}
+            disabled={skipped}
+            onChange={(e) => void mutate(() => api.patchTask(t.id, { status: e.target.checked ? "DONE" : "TODO" }))}
+          />
+        )}
         <div className="body">
           <div className="ttl">{t.title}</div>
           <div className="meta">
@@ -59,11 +70,17 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
             )}
             <span>{KIND_LABEL[t.kind]}</span>
             {t.loggedMinutes > 0 && <span>{hm(t.loggedMinutes)} logged</span>}
-            {t.overdueDays > 0 && <span className="delayed">{plural(t.overdueDays, "day")} overdue</span>}
-            {t.originalDate !== t.scheduledDate && <span>planned {dayMonth(t.originalDate)}</span>}
+            {overdue > 0 && <span className="delayed">{plural(overdue, "day")} overdue</span>}
+            {rv ? (
+              rv.dueDate !== t.scheduledDate && <span>due {dayMonth(rv.dueDate)}</span>
+            ) : (
+              t.originalDate !== t.scheduledDate && <span>planned {dayMonth(t.originalDate)}</span>
+            )}
+            {rv?.weak && <span className="tag ink">Weak</span>}
+            {rv?.correctionPending && <span className="tag ink">Correction pending</span>}
             {compact && t.scheduledDate !== today && <span>on {dayMonth(t.scheduledDate)}</span>}
             {skipped && <span>skipped</span>}
-            {t.subtopic && (
+            {t.subtopic && !rv && (
               <label className="subchk" title="Ticks the floor in the curriculum. Separate from completing the task.">
                 <input type="checkbox" aria-label={`Sub-topic "${t.subtopic.name}" learned`} checked={t.subtopic.completed} onChange={(e) => void toggleSubtopic(t.topic!.id, t.subtopic!.id, e.target.checked)} />
                 sub-topic learned
@@ -72,10 +89,13 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
           </div>
           {t.notes && !compact && <div className="notes">{t.notes}</div>}
           <div className="acts">
-            <button className="btn" onClick={() => open("log")} aria-expanded={mode === "log"}>Log time</button>
+            {rv && !done && t.topic && (
+              <button className="btn primary" onClick={() => setRecall(true)} aria-label={`Start revision: ${t.title}`}>Revise</button>
+            )}
+            {!rv && <button className="btn" onClick={() => open("log")} aria-expanded={mode === "log"}>Log time</button>}
             <button className="btn" onClick={() => open("move")} aria-expanded={mode === "move"}>Reschedule</button>
             <button className="btn" onClick={() => open("edit")} aria-expanded={mode === "edit"}>Edit</button>
-            {t.source === "PLAN" ? (
+            {rv ? null : t.source === "PLAN" ? (
               <button className="btn" onClick={() => void mutate(() => api.patchTask(t.id, { status: skipped ? "TODO" : "SKIPPED" }))}>
                 {skipped ? "Unskip" : "Skip"}
               </button>
@@ -135,6 +155,9 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
         </div>
         <div className="est">{hm(t.estimatedMinutes)}</div>
       </div>
+      {recall && rv && t.topic && (
+        <RecallDialog items={[{ topicId: t.topic.id, scope: rv.scope, subtopicId: t.subtopic?.id ?? null, mode: "revision" }]} onClose={() => setRecall(false)} />
+      )}
     </li>
   );
 }

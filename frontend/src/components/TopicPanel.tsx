@@ -6,6 +6,7 @@ import { PRIORITY_LABEL, STATUS_LABEL, dayMonth, hm, shortDate } from "../lib/fo
 import { LAYERS } from "../lib/layers";
 import type { Building } from "../map/geometry";
 import { useAppData } from "../state/AppData";
+import { RevisionBox } from "./RevisionBox";
 import { Bar } from "./ui";
 
 interface Props {
@@ -109,6 +110,8 @@ export function TopicPanel({ ref, building, route, today, onOpenTopic, onClose }
           )}
           <p style={{ fontSize: 12.5 }}>Finishing the sub-topics is learning. Doing this exercise on your own is the demonstration.</p>
         </div>
+
+        <RevisionBox topicId={t.id} />
 
         {t.dependsOn.length > 0 && (
           <div className="pbox">

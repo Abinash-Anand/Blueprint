@@ -1,8 +1,8 @@
 ---
 title: "Engineering City — High-Level Design"
 subtitle: "Architecture of the local-first full-stack application"
-version: "1.1"
-date: "17 November 2026"
+version: "1.2"
+date: "18 November 2026"
 ---
 
 # 1. Introduction
@@ -62,10 +62,10 @@ flowchart LR
   end
   subgraph Server["Express API (Node.js)"]
     direction TB
-    ROUTES["Routers<br/>/curriculum /tasks /sessions<br/>/today /week /progress<br/>/stages /settings"]
+    ROUTES["Routers<br/>/curriculum /tasks /sessions<br/>/today /week /progress<br/>/stages /settings<br/>/revision /checkpoints /prompts"]
     VAL["zod validation"]
     SVC["Services"]
-    DOMAIN["Pure domain logic<br/>dates · progress · planner · scheduling"]
+    DOMAIN["Pure domain logic<br/>dates · progress · planner · scheduling · revision"]
     PRISMA["Prisma Client"]
     ROUTES --> VAL --> SVC --> DOMAIN
     SVC --> PRISMA
@@ -75,7 +75,9 @@ flowchart LR
   PRISMA -- SQL --> PG
 ```
 
-The main design decision is **pure domain logic**. Date arithmetic, progress scoring, plan generation and rescheduling are pure TypeScript functions with no I/O. Services load rows through Prisma, call these functions and persist the results. As a result, the rules that matter most (BR-01 to BR-13) can be unit-tested without a database.
+The main design decision is **pure domain logic**. Date arithmetic, progress scoring, plan generation and rescheduling are pure TypeScript functions with no I/O. Services load rows through Prisma, call these functions and persist the results. As a result, the rules that matter most (BR-01 to BR-20, including the adaptive revision policy) can be unit-tested without a database.
+
+Revision (SRS §3.9) follows the same pattern and adds no new infrastructure: one more router and service, one more pure domain module (`domain/revision.ts`), four tables, and revision tasks that live in the existing `Task` table. The curriculum planner and the revision scheduler stay separate: the planner decides what to learn and runs once; the revision scheduler decides what to retrieve again and runs after each learning or revision event.
 
 # 4. Frontend architecture
 
@@ -89,7 +91,9 @@ flowchart TB
   APPX --> CM["CityMap"]
   APPX --> PV["ProgressView"]
   CM --> TP["TopicPanel"]
+  TP --> RB["RevisionBox<br/>units · history · questions"]
   TV --> TR["TaskRow · TimeLogForm · TaskEditor"]
+  RB & TR & TV --> RD["RecallDialog<br/>prompt → answer → reveal → assess"]
   CM --> ENG["map/geometry.ts<br/>map/render.ts<br/>map/camera.ts"]
   APPX --> CTX["AppDataProvider"]
   CTX --> API["api/client.ts"]
@@ -102,6 +106,7 @@ flowchart TB
 | Map | The original SVG-string renderer is ported to typed, pure modules (`geometry.ts`, `render.ts`). `CityMap` owns pan, zoom and fly through refs and injects the rendered SVG into one `<g>`. This keeps the visuals exactly the same and keeps rendering fast. |
 | State | React context (`AppDataProvider`) holds the curriculum and progress from the server and exposes `refresh()`. View-local state (the day being viewed, open editors) stays in components. There is no Redux or React Query (C-3). |
 | Data flow | Every mutation is a REST call, followed by a re-fetch of the affected summaries. Sub-topic ticks update the UI optimistically for instant floors, and roll back on error. |
+| Recall | One `RecallDialog` serves checkpoints, single revisions and interleaved sessions. It is rendered in a portal above the app, keeps the expected answer out of the page until the learner presses *Reveal*, and submits through the same `mutate()` path as every other change. The topic panel gets a compact *Recall and revision* box rather than a new navigation section (spec §14). |
 | Routing | A single page with a view switcher. The view is kept in the URL hash (`#/today`, `#/city/be.api`) so that reload and back work without a router library. |
 
 # 5. Backend architecture
@@ -115,8 +120,9 @@ flowchart TB
   APP --> R3["sessions.routes"]
   APP --> R4["summary.routes<br/>today · week · progress"]
   APP --> R5["schedule.routes<br/>stages · settings"]
-  R1 & R2 & R3 & R4 & R5 --> S["*.service.ts"]
-  S --> D["domain/<br/>dates · progress · planner · reschedule"]
+  APP --> R6["revision.routes<br/>attempts · corrections · checkpoints · prompts"]
+  R1 & R2 & R3 & R4 & R5 & R6 --> S["*.service.ts"]
+  S --> D["domain/<br/>dates · progress · planner · reschedule · revision"]
   S --> P["db.ts (PrismaClient)"]
   APP --> CLK["Clock<br/>today() in Europe/Berlin"]
 ```
@@ -129,7 +135,8 @@ flowchart TB
 | Validation | `zod` schemas for params, query strings and bodies. A failure returns `400` with field details. |
 | Errors | A typed `HttpError(status, code, message)`. The central handler maps Prisma `P2025` to `404`, and anything else to `500` without leaking internals. |
 | Clock | `Clock` is injected into `createApp`. Production uses the system time converted to Berlin. Tests and demos can set `APP_TODAY=YYYY-MM-DD` (FR-CAL-08, AC-08). |
-| Seeding | `prisma/seed.ts` upserts the curriculum and generates the plan only when no plan tasks exist (FR-CUR-09, scheduling rule 7). |
+| Seeding | `prisma/seed.ts` upserts the curriculum and its 83 revision prompts, generates the plan only when no plan tasks exist (FR-CUR-09, scheduling rule 7), and backfills revision schedules for anything learned before revision existed. Every step is idempotent. |
+| Revision scheduling | Event-driven inside the request that changes learning state: ticking a sub-topic, demonstrating a topic, recording an attempt or confirming a correction runs `syncTopic` (eligibility) and `planOpenRevisions` (placement) in the same transaction. No background jobs or timers are needed. |
 
 # 6. Database architecture
 
@@ -151,13 +158,22 @@ flowchart LR
   subgraph Activity["Learning activity (learner-owned)"]
     SS[StudySession]
   end
+  subgraph Revision["Revision (learner-owned history)"]
+    RP[RevisionPrompt]
+    RSC[RevisionSchedule] --> RA[RevisionAttempt]
+    LC[LearningCheckpoint]
+  end
   TK --> T
   TK --> SG
   SS --> TK
   SS --> T
+  RP & RSC & LC --> T
+  TK -. "REVISION tasks" .-> RSC
 ```
 
 The **calendar** (stages, tasks, targets) and **learning progress** (learned sub-topics and topic demonstrations) are stored separately, by design. Calendar dates never change learning state, and the car reads only learning state (FR-CAR-01, FR-CAR-04).
+
+**Revision** is a third, separate dimension. A schedule records whether a unit can still be retrieved; it reads learned state (for eligibility) but never writes it, and nothing in the progress calculation reads revision data (FR-REV-18). Attempts are append-only history.
 
 Derived values such as topic status, hours totals and road progress are **computed at read time** and never stored, so they cannot drift (BR-03). The data is small (83 topics, 342 sub-topics and 542 planned tasks), so these aggregates are cheap.
 
@@ -196,6 +212,27 @@ sequenceDiagram
   A-->>V: TodaySummary JSON
 ```
 
+## 7.3 Recording a revision attempt
+
+```mermaid
+sequenceDiagram
+  participant V as RecallDialog
+  participant A as API (revision service)
+  participant D as domain/revision
+  participant DB as PostgreSQL
+  V->>A: GET /api/topics/fe.ts/revision
+  A-->>V: units (status, prompt options, suggestion), history
+  Note over V: learner answers, then reveals the criteria
+  V->>A: POST /api/revision/attempts {unit, prompt, score, hints, notes, mistakes, correction}
+  A->>DB: BEGIN, read schedule (409 if not eligible or correction pending)
+  A->>D: applyAttempt(state, attempt, policy)
+  D-->>A: next due date, interval, counters, correctionPending
+  A->>DB: INSERT attempt, UPDATE schedule, open task → DONE, optional session
+  A->>D: placeRevisions(units without a task, loads, targets, today)
+  A->>DB: INSERT next revision task, COMMIT
+  A-->>V: next due date and planned date
+```
+
 # 8. Main application components
 
 | Component | Responsibility | Requirements |
@@ -203,6 +240,8 @@ sequenceDiagram
 | Sidebar | Brand, overall progress, Today card, Next up, district cards with building lists | FR-MAP-01, FR-TODAY-01 |
 | CityMap | Isometric map, pan, zoom, fly, building selection, car, signposts | FR-MAP-*, FR-CAR-* |
 | TopicPanel | Topic details, sub-topic checklist, demonstration, schedule a task | FR-MAP-04/06/10 |
+| RevisionBox | Per-unit revision status, *Check* and *Revise*, correction, history, questions | FR-REV-16 |
+| RecallDialog | Prompt, answer from memory, reveal, assessment, correction; single unit or interleaved session | FR-REV-06/07/17 |
 | TodayView | Mission Control: tasks, target, time log, carried over, rest or buffer day | FR-TODAY-* |
 | WeekView | Seven-day grid, totals, milestones | FR-WEEK-* |
 | ProgressView | Hours, per-district progress, learned vs demonstrated, stage timeline and delays | FR-PROG-*, FR-CAL-05 |
@@ -212,6 +251,8 @@ sequenceDiagram
 | Summary service | Today, week and progress aggregates | FR-TODAY, FR-WEEK, FR-PROG |
 | Schedule service | Stages, weekly targets, settings | FR-CAL-07, FR-SET-* |
 | Planner (domain) | Generate the initial plan from the curriculum and stages | §6 of the SRS |
+| Revision service | Eligibility sync, placement, attempts, corrections, checkpoints, prompts, topic revision view | FR-REV-01–12 |
+| Revision engine (domain) | `applyAttempt`, `placeRevisions`, `revisionOrder`, `interleave`, status derivation | BR-14–BR-18 |
 
 # 9. Technology choices
 
@@ -235,7 +276,7 @@ sequenceDiagram
 - **Verbs:** `GET` reads, `POST` creates or runs actions, `PATCH` makes partial updates, `DELETE` removes.
 - **Status codes:** `200` OK, `201` Created, `204` No Content, `400` validation error, `404` not found, `409` business-rule conflict (for example deleting a plan task), `500` unexpected error.
 - **Error body:** `{ "error": { "code": "VALIDATION_ERROR", "message": "...", "details": [...] } }`.
-- **Resource groups:** curriculum, tasks, sessions, summaries (today, week, progress), stages, settings, health. All of them are specified in `LLD.md` §4.
+- **Resource groups:** curriculum, tasks, sessions, summaries (today, week, progress), stages, settings, revision (topic revision view, attempts, corrections), checkpoints, prompts, health. All of them are specified in `LLD.md` §4.
 
 # 11. Local Docker deployment
 
