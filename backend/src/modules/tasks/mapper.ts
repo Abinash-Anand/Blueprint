@@ -1,11 +1,13 @@
 import type { Prisma } from "@prisma/client";
 import { type ISODate, diffDays } from "../../domain/dates.js";
 import { d2i } from "../../db.js";
+import { REVISION_POLICY, isWeak } from "../../domain/revision.js";
 
 export const taskInclude = {
   topic: { select: { id: true, name: true, districtId: true } },
   subtopic: { select: { id: true, name: true, completedAt: true } },
   sessions: { select: { minutes: true } },
+  revisionSchedule: { select: { id: true, scope: true, consecutiveFailures: true, correctionPending: true, lastScore: true } },
 } satisfies Prisma.TaskInclude;
 
 export type TaskRow = Prisma.TaskGetPayload<{ include: typeof taskInclude }>;
@@ -36,6 +38,18 @@ export function taskDTO(t: TaskRow, today: ISODate) {
     topic: t.topic,
     subtopic: t.subtopic ? { id: t.subtopic.id, name: t.subtopic.name, completed: t.subtopic.completedAt !== null } : null,
     stageId: t.stageId,
+    // Revision tasks: the original date is the due date, so lateness survives any move (REV-18).
+    revision: t.revisionSchedule
+      ? {
+          scheduleId: t.revisionSchedule.id,
+          scope: t.revisionSchedule.scope,
+          weak: isWeak(t.revisionSchedule, REVISION_POLICY),
+          correctionPending: t.revisionSchedule.correctionPending,
+          lastScore: t.revisionSchedule.lastScore,
+          dueDate: d2i(t.originalDate),
+          overdueDays: t.status === "TODO" && d2i(t.originalDate) < today ? diffDays(d2i(t.originalDate), today) : 0,
+        }
+      : null,
   };
 }
 export type TaskDTO = ReturnType<typeof taskDTO>;

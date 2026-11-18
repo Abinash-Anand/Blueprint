@@ -28,7 +28,7 @@ suite("Engineering City API", () => {
     process.env.NODE_ENV = "test";
     execSync("npx prisma migrate deploy", { env: { ...process.env, DATABASE_URL: url }, stdio: "pipe" });
     prisma = new PrismaClient({ datasourceUrl: url });
-    await seed(prisma, () => {});
+    await seed(prisma, () => {}, "2026-11-17");
     app = createApp({ prisma, clock });
   });
   afterAll(async () => {
@@ -53,13 +53,21 @@ suite("Engineering City API", () => {
   });
 
   it("is idempotent: re-seeding keeps the plan and progress", async () => {
-    const before = await prisma.task.count();
+    const before = await prisma.task.count({ where: { source: "PLAN" } });
+    const prompts = await prisma.revisionPrompt.count();
     const sub = await prisma.subtopic.findFirstOrThrow({ where: { topicId: "fe.ts", position: 0 } });
-    await prisma.subtopic.update({ where: { id: sub.id }, data: { completedAt: new Date() } });
-    await seed(prisma, () => {});
-    expect(await prisma.task.count()).toBe(before);
+    await prisma.subtopic.update({ where: { id: sub.id }, data: { completedAt: new Date("2026-11-17T12:00:00Z") } });
+    await seed(prisma, () => {}, "2026-11-17");
+    expect(await prisma.task.count({ where: { source: "PLAN" } })).toBe(before);
+    expect(await prisma.revisionPrompt.count()).toBe(prompts);
     expect((await prisma.subtopic.findUniqueOrThrow({ where: { id: sub.id } })).completedAt).not.toBeNull();
+    // Learning marked outside the API is picked up by the backfill, exactly once.
+    expect(await prisma.task.count({ where: { source: "REVISION" } })).toBe(1);
+    await seed(prisma, () => {}, "2026-11-17");
+    expect(await prisma.task.count({ where: { source: "REVISION" } })).toBe(1);
     await prisma.subtopic.update({ where: { id: sub.id }, data: { completedAt: null } });
+    await seed(prisma, () => {}, "2026-11-17"); // suspends the schedule again and removes its open task
+    expect(await prisma.task.count({ where: { source: "REVISION", status: "TODO" } })).toBe(0);
   });
 
   it("shows today's mission: date, current topic, tasks and the 4-hour target", async () => {

@@ -1,4 +1,7 @@
-import type { Curriculum, Progress, Session, Stage, Task, TaskKind, TaskStatus, Today, Topic, Week } from "./types";
+import type {
+  AttemptResult, Checkpoint, CheckpointResult, Curriculum, Progress, Prompt, RetrievalMethod, Session, Stage, Task, TaskKind,
+  TaskStatus, Today, Topic, TopicRevision, Week,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -49,6 +52,42 @@ export interface NewTask {
   notes?: string;
 }
 
+export interface AttemptInput {
+  topicId: string;
+  subtopicId?: number;
+  promptId?: number;
+  templateKey?: string;
+  retrievalMethod: RetrievalMethod;
+  score: 0 | 1 | 2 | 3;
+  usedHints: boolean;
+  usedNotes: boolean;
+  correctionCompleted: boolean;
+  durationMinutes?: number;
+  response?: string;
+  mistakes?: string;
+  comment?: string;
+}
+
+export interface CheckpointInput {
+  topicId: string;
+  subtopicId: number;
+  promptId?: number;
+  templateKey?: string;
+  result: CheckpointResult;
+  neededAssistance: boolean;
+  gaps?: string;
+  response?: string;
+}
+
+export interface PromptInput {
+  topicId: string;
+  subtopicId?: number;
+  title?: string;
+  content: string;
+  retrievalMethod: RetrievalMethod;
+  expectedAnswer: string;
+}
+
 export const api = {
   curriculum: () => request<Curriculum>("GET", "/curriculum"),
   progress: () => request<Progress>("GET", "/progress"),
@@ -66,4 +105,14 @@ export const api = {
     request<Session>("POST", "/sessions", body),
   deleteSession: (id: number) => request<void>("DELETE", `/sessions/${id}`),
   patchStage: (id: string, body: { startDate?: string; endDate?: string }) => request<Stage>("PATCH", `/stages/${id}`, body),
+  patchSettings: (body: { revisionDailyMinutes?: number }) => request<{ revisionDailyMinutes: number }>("PATCH", "/settings", body),
+  topicRevision: (id: string) => request<TopicRevision>("GET", `/topics/${encodeURIComponent(id)}/revision`),
+  submitAttempt: (body: AttemptInput) => request<AttemptResult>("POST", "/revision/attempts", body),
+  correctAttempt: (id: number, mistakes?: string) =>
+    request<{ id: number; nextDueDate: string | null; nextTaskDate: string | null }>("POST", `/revision/attempts/${id}/correction`, mistakes ? { mistakes } : {}),
+  createCheckpoint: (body: CheckpointInput) => request<Checkpoint>("POST", "/checkpoints", body),
+  createPrompt: (body: PromptInput) => request<Prompt>("POST", "/prompts", body),
+  patchPrompt: (id: number, body: Partial<Pick<Prompt, "title" | "content" | "retrievalMethod" | "expectedAnswer" | "isActive">>) =>
+    request<Prompt>("PATCH", `/prompts/${id}`, body),
+  deletePrompt: (id: number) => request<void>("DELETE", `/prompts/${id}`),
 };

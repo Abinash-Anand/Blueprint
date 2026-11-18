@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { allTopics, districts, stages } from "../../src/curriculum/index.js";
+import { curriculumPrompts } from "../../src/curriculum/prompts.js";
 
 describe("curriculum integrity (FR-CUR)", () => {
   const topics = allTopics();
@@ -41,6 +42,17 @@ describe("curriculum integrity (FR-CUR)", () => {
 
   it("uses muted lowercase hex colours", () => {
     for (const d of districts) expect(d.color).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it("has exactly one topic-level revision prompt per topic, with criteria (Revision spec §4.1, §4.4)", () => {
+    const counts = new Map<string, number>();
+    for (const p of curriculumPrompts) counts.set(p.topic, (counts.get(p.topic) ?? 0) + 1);
+    expect([...counts.keys()].sort()).toEqual(topics.map((t) => t.slug).sort());
+    expect([...counts.values()].every((n) => n === 1)).toBe(true);
+    for (const p of curriculumPrompts) {
+      expect(p.content.length).toBeGreaterThan(20);
+      expect(p.expected.length).toBeGreaterThan(20);
+    }
   });
 
   it("defines stages that cover the journey", () => {

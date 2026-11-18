@@ -52,3 +52,28 @@ export const STATUS_LABEL = {
   DEMONSTRATED: "Demonstrated",
 } as const;
 export const KIND_LABEL = { STUDY: "Study", PRACTICE: "Practice", REVISION: "Revision" } as const;
+
+/** Four-level recall assessment (Revision spec §7). "Mastered this attempt" on purpose: one success is not mastery. */
+export const SCORES = [
+  { score: 0, label: "Forgot", help: "Couldn't retrieve it or give a meaningful answer." },
+  { score: 1, label: "Struggled", help: "Fragments only; needed substantial hints, notes or help." },
+  { score: 2, label: "Recalled", help: "The main idea was right, with some hesitation or small mistakes." },
+  { score: 3, label: "Mastered this attempt", help: "Retrieved it on my own, accurately, and met the criteria." },
+] as const;
+export const scoreLabel = (s: number | null | undefined) => (s === null || s === undefined ? "—" : (SCORES[s]?.label ?? String(s)));
+
+export const METHOD_LABEL = {
+  CONCEPTUAL: "Explain",
+  QUESTION_ANSWER: "Answer",
+  WRITTEN: "Write from memory",
+  VISUAL: "Draw",
+  PRACTICAL: "Build or solve",
+  SCENARIO: "Compare or decide",
+} as const;
+
+export const CHECKPOINT_RESULTS = [
+  { result: "RECALLED", label: "Recalled it" },
+  { result: "PARTIAL", label: "Partly" },
+  { result: "NOT_RECALLED", label: "Couldn't recall it" },
+] as const;
+export const SOURCE_LABEL = { CURRICULUM: "Curriculum", TEMPLATE: "Template", LEARNER: "Your question" } as const;

@@ -24,8 +24,9 @@ interface Route { view: View; param: string | null }
 /** Hash routing without a router library: #/today[/date], #/week[/date], #/city[/topic], #/progress */
 export function parseHash(hash: string): Route {
   const [, v, p] = hash.replace(/^#/, "").split("/");
-  const view = (VIEWS.find((x) => x.id === v)?.id ?? "today") as View;
-  return { view, param: p ? decodeURIComponent(p) : null };
+  const known = VIEWS.find((x) => x.id === v);
+  // An unknown view falls back to Today and drops its parameter (it isn't a date).
+  return { view: (known?.id ?? "today") as View, param: known && p ? decodeURIComponent(p) : null };
 }
 const toHash = (r: Route) => `#/${r.view}${r.param ? `/${encodeURIComponent(r.param)}` : ""}`;
 
@@ -135,7 +136,7 @@ export function App() {
             onClose={() => go({ view: "city", param: null }, true)}
           />
         )}
-        {view === "progress" && <ProgressView onOpenDistrict={openDistrict} />}
+        {view === "progress" && <ProgressView onOpenDistrict={openDistrict} onOpenTopic={openTopic} />}
       </div>
       <div className={`scrim${sideOpen ? " on" : ""}`} onClick={() => setSideOpen(false)} />
       {notice && (

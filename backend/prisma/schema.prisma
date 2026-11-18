@@ -3,6 +3,8 @@
 // Calendar (Stage, Task, WeeklyTarget, Settings) is generated once, then owned by the learner.
 // Learning activity (Subtopic.completedAt, Topic.demonstratedAt, StudySession) is learner-owned.
 // Derived values (topic status, totals, road progress) are computed at read time, never stored.
+// Revision (RevisionPrompt, RevisionSchedule, RevisionAttempt, LearningCheckpoint) is learner-owned history,
+// except curriculum prompts, which are seeded. Attempts are immutable apart from confirming a correction.
 
 generator client {
   provider      = "prisma-client-js"
@@ -47,6 +49,33 @@ enum TaskStatus {
 enum TaskSource {
   PLAN
   MANUAL
+  REVISION // created by the revision scheduler, linked to a RevisionSchedule
+}
+
+enum RevisionScope {
+  SUBTOPIC
+  TOPIC
+}
+
+enum RetrievalMethod {
+  CONCEPTUAL // explain in your own words
+  QUESTION_ANSWER
+  WRITTEN // write from memory (syntax, APIs)
+  VISUAL // diagram, concept map
+  PRACTICAL // implement, solve, debug
+  SCENARIO // compare alternatives, decide in a situation
+}
+
+enum PromptSource {
+  CURRICULUM
+  TEMPLATE
+  LEARNER
+}
+
+enum CheckpointResult {
+  RECALLED
+  PARTIAL
+  NOT_RECALLED
 }
 
 model District {
@@ -64,36 +93,42 @@ model District {
 }
 
 model Topic {
-  id                String            @id // slug, e.g. "be.api"
+  id                String               @id // slug, e.g. "be.api"
   districtId        String
-  district          District          @relation(fields: [districtId], references: [id], onDelete: Cascade)
+  district          District             @relation(fields: [districtId], references: [id], onDelete: Cascade)
   position          Int
   name              String
   description       String
   priority          Priority
   estimatedHours    Int
   exercise          String
-  demonstratedAt    DateTime?         @db.Timestamptz(3)
+  demonstratedAt    DateTime?            @db.Timestamptz(3)
   demonstrationNote String?
-  needsReview       Boolean           @default(false)
+  needsReview       Boolean              @default(false)
   subtopics         Subtopic[]
   resources         Resource[]
-  dependsOn         TopicDependency[] @relation("dependent")
-  requiredBy        TopicDependency[] @relation("prerequisite")
+  dependsOn         TopicDependency[]    @relation("dependent")
+  requiredBy        TopicDependency[]    @relation("prerequisite")
   tasks             Task[]
   sessions          StudySession[]
+  prompts           RevisionPrompt[]
+  revisionSchedules RevisionSchedule[]
+  checkpoints       LearningCheckpoint[]
 
   @@unique([districtId, position])
 }
 
 model Subtopic {
-  id          Int       @id @default(autoincrement())
+  id          Int                  @id @default(autoincrement())
   topicId     String
-  topic       Topic     @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  topic       Topic                @relation(fields: [topicId], references: [id], onDelete: Cascade)
   position    Int
   name        String
-  completedAt DateTime? @db.Timestamptz(3)
+  completedAt DateTime?            @db.Timestamptz(3)
   tasks       Task[]
+  prompts     RevisionPrompt[]
+  revision    RevisionSchedule?
+  checkpoints LearningCheckpoint[]
 
   @@unique([topicId, position])
 }
@@ -131,32 +166,37 @@ model Stage {
 }
 
 model Task {
-  id               Int            @id @default(autoincrement())
-  topicId          String?
-  topic            Topic?         @relation(fields: [topicId], references: [id], onDelete: SetNull)
-  subtopicId       Int?
-  subtopic         Subtopic?      @relation(fields: [subtopicId], references: [id], onDelete: SetNull)
-  stageId          String?
-  stage            Stage?         @relation(fields: [stageId], references: [id], onDelete: SetNull)
-  title            String
-  notes            String         @default("")
-  kind             TaskKind
-  estimatedMinutes Int
-  originalDate     DateTime       @db.Date
-  scheduledDate    DateTime       @db.Date
-  position         Int            @default(0) // order within its original day
-  status           TaskStatus     @default(TODO)
-  completedAt      DateTime?      @db.Timestamptz(3)
-  source           TaskSource
-  rescheduleCount  Int            @default(0)
-  createdAt        DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime       @updatedAt @db.Timestamptz(3)
-  sessions         StudySession[]
+  id                 Int               @id @default(autoincrement())
+  topicId            String?
+  topic              Topic?            @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  subtopicId         Int?
+  subtopic           Subtopic?         @relation(fields: [subtopicId], references: [id], onDelete: SetNull)
+  stageId            String?
+  stage              Stage?            @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  title              String
+  notes              String            @default("")
+  kind               TaskKind
+  estimatedMinutes   Int
+  originalDate       DateTime          @db.Date
+  scheduledDate      DateTime          @db.Date
+  position           Int               @default(0) // order within its original day
+  status             TaskStatus        @default(TODO)
+  completedAt        DateTime?         @db.Timestamptz(3)
+  source             TaskSource
+  rescheduleCount    Int               @default(0)
+  /// Set for scheduler-created revision tasks. At most one TODO task per schedule (partial unique index, REV-13).
+  revisionScheduleId Int?
+  revisionSchedule   RevisionSchedule? @relation(fields: [revisionScheduleId], references: [id], onDelete: SetNull)
+  createdAt          DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
+  sessions           StudySession[]
+  attempts           RevisionAttempt[]
 
   @@index([scheduledDate])
   @@index([status, scheduledDate])
   @@index([topicId])
   @@index([stageId])
+  @@index([revisionScheduleId])
 }
 
 model StudySession {
@@ -175,13 +215,123 @@ model StudySession {
 }
 
 model Settings {
-  id           Int      @id @default(1)
-  journeyStart DateTime @db.Date
-  journeyEnd   DateTime @db.Date
-  timezone     String
+  id                   Int      @id @default(1)
+  journeyStart         DateTime @db.Date
+  journeyEnd           DateTime @db.Date
+  timezone             String
+  /// Revision minutes every study day accepts on top of planned learning (REVISION_POLICY.dailyBudgetMinutes).
+  revisionDailyMinutes Int      @default(30)
 }
 
 model WeeklyTarget {
   weekday       Int @id // ISO 8601: 1 = Monday … 7 = Sunday
   targetMinutes Int
+}
+
+/// A question or challenge for retrieval practice (spec §4). Curriculum prompts are seeded; template prompts are
+/// created the first time a template is used for a unit; learner prompts are written by the learner.
+model RevisionPrompt {
+  id              Int                  @id @default(autoincrement())
+  /// Stable key for seeded and template prompts ("cur:<topic>:<n>", "tpl:<template>:<unit>"); null for learner prompts.
+  key             String?              @unique
+  topicId         String
+  topic           Topic                @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subtopicId      Int?
+  subtopic        Subtopic?            @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  title           String
+  content         String
+  retrievalMethod RetrievalMethod
+  expectedAnswer  String
+  difficulty      Int? // 1..3
+  source          PromptSource
+  templateKey     String?
+  isActive        Boolean              @default(true)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(3)
+  attempts        RevisionAttempt[]
+  checkpoints     LearningCheckpoint[]
+
+  @@index([topicId])
+}
+
+/// Current scheduling state of one revision unit: a sub-topic or a whole topic (spec §12.1).
+/// SCHEDULED / DUE / OVERDUE are derived from nextDueDate; only suspension and the correction state are stored.
+model RevisionSchedule {
+  id                   Int               @id @default(autoincrement())
+  /// "s:<subtopicId>" or "t:<topicId>" (a CHECK keeps it consistent), so topic and sub-topic units never collide.
+  unit                 String            @unique
+  scope                RevisionScope
+  topicId              String
+  topic                Topic             @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subtopicId           Int?              @unique
+  subtopic             Subtopic?         @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  eligibleSince        DateTime          @db.Date
+  /// null while a score-0 attempt waits for its correction.
+  nextDueDate          DateTime?         @db.Date
+  lastAttemptAt        DateTime?         @db.Timestamptz(3)
+  lastAttemptDate      DateTime?         @db.Date
+  lastScore            Int?
+  previousIntervalDays Int               @default(0)
+  consecutiveSuccesses Int               @default(0)
+  consecutiveFailures  Int               @default(0)
+  correctionPending    Boolean           @default(false)
+  /// Set while the unit is no longer eligible (sub-topic unticked); history is kept.
+  suspendedAt          DateTime?         @db.Timestamptz(3)
+  createdAt            DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime          @updatedAt @db.Timestamptz(3)
+  attempts             RevisionAttempt[]
+  tasks                Task[]
+
+  @@index([topicId])
+}
+
+/// One retrieval attempt (spec §7.2). Immutable after submission except for confirming the correction.
+model RevisionAttempt {
+  id                  Int              @id @default(autoincrement())
+  scheduleId          Int
+  schedule            RevisionSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  promptId            Int?
+  prompt              RevisionPrompt?  @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  taskId              Int?
+  task                Task?            @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  /// Prompt text as shown at the time, so later prompt edits never rewrite history.
+  promptText          String
+  score               Int // 0..3 as assessed by the learner
+  effectiveScore      Int // what the scheduler used (a 3 with hints or notes counts as 2)
+  retrievalMethod     RetrievalMethod
+  attemptedAt         DateTime         @default(now()) @db.Timestamptz(3)
+  attemptDate         DateTime         @db.Date
+  durationMinutes     Int?
+  usedHints           Boolean
+  usedNotes           Boolean
+  response            String           @default("")
+  mistakes            String           @default("")
+  correctionCompleted Boolean
+  correctedAt         DateTime?        @db.Timestamptz(3)
+  comment             String           @default("")
+  intervalDays        Int
+  nextDueDate         DateTime?        @db.Date
+
+  @@index([scheduleId, attemptedAt])
+  @@index([attemptDate])
+}
+
+/// Active recall embedded in initial learning (spec §6). Never changes learned status or the revision schedule.
+model LearningCheckpoint {
+  id               Int              @id @default(autoincrement())
+  topicId          String
+  topic            Topic            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  subtopicId       Int
+  subtopic         Subtopic         @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  promptId         Int?
+  prompt           RevisionPrompt?  @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  promptText       String
+  result           CheckpointResult
+  neededAssistance Boolean
+  gaps             String           @default("")
+  response         String           @default("")
+  date             DateTime         @db.Date
+  completedAt      DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([topicId])
 }

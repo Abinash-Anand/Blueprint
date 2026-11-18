@@ -15,8 +15,8 @@ const topicBody = z
   .strict()
   .refine((b) => Object.keys(b).length > 0, { message: "Provide at least one field" });
 
-export function curriculumRoutes({ prisma }: Deps) {
-  const svc = curriculumService(prisma);
+export function curriculumRoutes({ prisma, clock }: Deps) {
+  const svc = curriculumService(prisma, clock);
   const r = Router();
   r.get("/curriculum", async (_req, res) => {
     res.json(await svc.getCurriculum());

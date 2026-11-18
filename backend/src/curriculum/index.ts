@@ -18,7 +18,7 @@ export const allTopics = (): TopicDef[] => districts.flatMap((d) => d.topics);
 
 const isScheduled = (t: TopicDef) => t.priority !== "OPTIONAL";
 
-/** Ordered topic list per planner queue (LLD §3.3). */
+/** Ordered topic list per planner queue (LLD §3.4). */
 export function queues(): Record<string, TopicDef[]> {
   const bySlug = new Map(allTopics().map((t) => [t.slug, t]));
   const q: Record<string, TopicDef[]> = {};

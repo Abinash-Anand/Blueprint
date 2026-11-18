@@ -7,9 +7,11 @@ import {
 } from "../../domain/dates.js";
 import { currentTopicId, districtFraction, districtPassed, roadProgress } from "../../domain/progress.js";
 import { eligibleDays, reservedDates, type PlanStage } from "../../domain/planner.js";
+import { interleave, isWeak } from "../../domain/revision.js";
 import { d2i, i2d } from "../../db.js";
 import type { Clock } from "../../lib/clock.js";
 import { loadLearning } from "../learning.js";
+import { revisionPolicy } from "../revision/service.js";
 import { loadSettings, loadTargets, stageDTO, stageInclude } from "../schedule/service.js";
 import { sessionDTO } from "../sessions/routes.js";
 import { taskDTO, taskInclude, taskOrder } from "../tasks/mapper.js";
@@ -18,6 +20,7 @@ const MAIN_WEEKDAYS = [1, 2, 3, 4, 5, 6];
 const PARALLEL_WEEKDAYS = [6]; // the parallel architecture track uses Saturdays (SRS §6)
 
 const sum = <T>(xs: T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
+const isRevision = (t: { revisionScheduleId: number | null }) => t.revisionScheduleId !== null;
 
 export function summaryService(prisma: PrismaClient, clock: Clock) {
   async function stagesWithRules() {
@@ -39,13 +42,19 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
       const [settings, targets, learning, stages] = await Promise.all([
         loadSettings(prisma), loadTargets(prisma), loadLearning(prisma), stagesWithRules(),
       ]);
-      const [tasks, carried, sessions, reviews] = await Promise.all([
+      const revisionDue = { status: "TODO" as const, revisionScheduleId: { not: null }, originalDate: { lte: i2d(day) }, scheduledDate: { gt: i2d(day) } };
+      const [tasks, carried, sessions, reviews, schedules, optional, backlogCount, policy] = await Promise.all([
         prisma.task.findMany({ where: { scheduledDate: i2d(day) }, include: taskInclude, orderBy: taskOrder }),
         day === today
           ? prisma.task.findMany({ where: { status: "TODO", scheduledDate: { lt: i2d(today) } }, include: taskInclude, orderBy: taskOrder })
           : Promise.resolve([]),
         prisma.studySession.findMany({ where: { date: i2d(day) }, orderBy: { id: "asc" } }),
         prisma.topic.findMany({ where: { needsReview: true }, select: { id: true, name: true, districtId: true }, orderBy: { id: "asc" } }),
+        prisma.revisionSchedule.findMany({ where: { suspendedAt: null }, select: { nextDueDate: true, correctionPending: true, consecutiveFailures: true } }),
+        // Revisions already due but placed on a later day: offered now, optional (spec 8.4, 10).
+        prisma.task.findMany({ where: revisionDue, include: taskInclude, orderBy: [{ originalDate: "asc" }, { id: "asc" }], take: 20 }),
+        prisma.task.count({ where: revisionDue }),
+        revisionPolicy(prisma),
       ]);
 
       const inJourney = day >= settings.journeyStart && day <= settings.journeyEnd;
@@ -65,7 +74,7 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         today,
         weekday: isoWeekday(day),
         isRestDay: weekdayTarget === 0,
-        isBufferDay: target > 0 && tasks.length === 0,
+        isBufferDay: target > 0 && !tasks.some((t) => !isRevision(t)),
         journey: {
           start: settings.journeyStart,
           end: settings.journeyEnd,
@@ -84,6 +93,30 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         current: { districtId: currentDistrictId, topicId },
         next: topicId ? { topicId, subtopic: nextSub?.name ?? null } : null,
         reviewTopics: reviews,
+        revision: (() => {
+          const rev = live.filter(isRevision);
+          const planned = sum(live, (t) => t.estimatedMinutes);
+          const revMinutes = sum(rev, (t) => t.estimatedMinutes);
+          const due = schedules.filter((s) => s.nextDueDate && d2i(s.nextDueDate) <= day);
+          // Session order: overdue weak units first, then oldest due date; interleaved across topics (spec 11).
+          const open = [...carried, ...tasks].filter((t) => isRevision(t) && t.status === "TODO");
+          const rank = (t: (typeof open)[number]) => (t.revisionSchedule && isWeak(t.revisionSchedule, policy) && d2i(t.originalDate) < day ? 0 : 1);
+          open.sort((a, b) => rank(a) - rank(b) || d2i(a.originalDate).localeCompare(d2i(b.originalDate)) || a.id - b.id);
+          return {
+            plannedMinutes: revMinutes,
+            learningMinutes: planned - revMinutes,
+            dailyAllowanceMinutes: policy.dailyBudgetMinutes,
+            // Visible when revision pushes the day past its target (spec 8.5).
+            competing: target > 0 && revMinutes > 0 && planned > target,
+            dueCount: due.length,
+            overdueCount: due.filter((s) => d2i(s.nextDueDate!) < day).length,
+            weakCount: schedules.filter((s) => isWeak(s, policy)).length,
+            awaitingCorrection: schedules.filter((s) => s.correctionPending).length,
+            backlog: { count: backlogCount, oldestDue: optional[0] ? d2i(optional[0].originalDate) : null },
+            optional: optional.map((t) => taskDTO(t, today)),
+            sessionTaskIds: interleave(open, (t) => t.topicId ?? "task-" + t.id).map((t) => t.id),
+          };
+        })(),
       };
     },
 
@@ -91,12 +124,14 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
       const today = clock.today();
       const ws = weekStart(date ?? today);
       const we = addDays(ws, 6);
-      const [settings, targets, tasks, sessions, stages] = await Promise.all([
+      const [settings, targets, tasks, sessions, stages, revDueInWeek, revOverdue] = await Promise.all([
         loadSettings(prisma),
         loadTargets(prisma),
         prisma.task.findMany({ where: { scheduledDate: { gte: i2d(ws), lte: i2d(we) } }, include: taskInclude, orderBy: taskOrder }),
         prisma.studySession.findMany({ where: { date: { gte: i2d(ws), lte: i2d(we) } } }),
         stagesWithRules(),
+        prisma.task.count({ where: { revisionScheduleId: { not: null }, status: { not: "SKIPPED" }, originalDate: { gte: i2d(ws), lte: i2d(we) } } }),
+        prisma.task.count({ where: { revisionScheduleId: { not: null }, status: "TODO", originalDate: { lt: i2d(today) } } }),
       ]);
       const live = tasks.filter((t) => t.status !== "SKIPPED");
       const days = eachDay(ws, we).map((d) => {
@@ -113,6 +148,9 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           actualMinutes: sum(sessions.filter((s) => d2i(s.date) === d), (s) => s.minutes),
           tasksTotal: dt.length,
           tasksDone: dt.filter((t) => t.status === "DONE").length,
+          revisionTasks: dt.filter(isRevision).length,
+          revisionPlannedMinutes: sum(dt.filter(isRevision), (t) => t.estimatedMinutes),
+          revisionDoneMinutes: sum(dt.filter((t) => isRevision(t) && t.status === "DONE"), (t) => t.estimatedMinutes),
         };
       });
       const todo = live.filter((t) => t.status === "TODO");
@@ -153,6 +191,12 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           tasksRemaining: todo.length,
           remainingMinutes: sum(todo, (t) => t.estimatedMinutes),
         },
+        revision: {
+          plannedMinutes: sum(days, (d) => d.revisionPlannedMinutes),
+          doneMinutes: sum(days, (d) => d.revisionDoneMinutes),
+          dueThisWeek: revDueInWeek,
+          overdue: revOverdue,
+        },
         milestones,
         tasks: tasks.map((t) => taskDTO(t, today)),
       };
@@ -170,7 +214,17 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         prisma.studySession.findMany({ select: { date: true, minutes: true, topicId: true } }),
         prisma.task.findMany({ where: { scheduledDate: i2d(today), status: "TODO" }, select: { topicId: true }, orderBy: taskOrder }),
       ]);
-      const targets = await loadTargets(prisma);
+      const [targets, attempts, schedules, checkpoints, policy] = await Promise.all([
+        loadTargets(prisma),
+        prisma.revisionAttempt.findMany({ select: { score: true, attemptDate: true } }),
+        prisma.revisionSchedule.findMany({
+          where: { suspendedAt: null },
+          include: { topic: { select: { name: true } }, subtopic: { select: { name: true } } },
+          orderBy: { id: "asc" },
+        }),
+        prisma.learningCheckpoint.count(),
+        revisionPolicy(prisma),
+      ]);
       const live = tasks.filter((t) => t.status !== "SKIPPED");
       const orig = (t: { originalDate: Date }) => d2i(t.originalDate);
 
@@ -265,6 +319,30 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         practice: { total: practice.length, done: practice.filter((t) => t.status === "DONE").length },
         road: { ...road, currentTopicId: currentTopicId(learning.districts, todayOpen.map((t) => t.topicId)) },
         stages: stageStatus,
+        // Learning behaviour, not a score to chase (spec 14.4): no streaks, no XP.
+        revision: {
+          attempts: attempts.length,
+          successful: attempts.filter((a) => a.score >= 2).length,
+          distribution: [0, 1, 2, 3].map((s) => attempts.filter((a) => a.score === s).length),
+          checkpoints,
+          activeUnits: schedules.length,
+          dueToday: schedules.filter((s) => s.nextDueDate && d2i(s.nextDueDate) === today).length,
+          overdue: schedules.filter((s) => s.nextDueDate && d2i(s.nextDueDate) < today).length,
+          awaitingCorrection: schedules.filter((s) => s.correctionPending).length,
+          dailyAllowanceMinutes: policy.dailyBudgetMinutes,
+          monthly: months.map((m) => {
+            const xs = attempts.filter((a) => monthKey(d2i(a.attemptDate)) === m);
+            return { month: m, attempts: xs.length, successful: xs.filter((a) => a.score >= 2).length, averageScore: xs.length ? sum(xs, (a) => a.score) / xs.length : null };
+          }),
+          weakUnits: schedules
+            .filter((s) => isWeak(s, policy))
+            .map((s) => ({
+              scheduleId: s.id, topicId: s.topicId, subtopicId: s.subtopicId, scope: s.scope,
+              label: s.scope === "TOPIC" ? s.topic.name + " (whole topic)" : (s.subtopic?.name ?? "") + " · " + s.topic.name,
+              lastScore: s.lastScore, consecutiveFailures: s.consecutiveFailures,
+              nextDueDate: s.nextDueDate ? d2i(s.nextDueDate) : null,
+            })),
+        },
       };
     },
   };

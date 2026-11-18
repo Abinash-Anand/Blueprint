@@ -16,17 +16,19 @@ export const stageDTO = (s: StageRow) => ({
 });
 export type StageDTO = ReturnType<typeof stageDTO>;
 
-export async function loadTargets(prisma: PrismaClient): Promise<Record<number, number>> {
+type Db = PrismaClient | Prisma.TransactionClient;
+
+export async function loadTargets(prisma: Db): Promise<Record<number, number>> {
   const rows = await prisma.weeklyTarget.findMany();
   const t: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
   for (const r of rows) t[r.weekday] = r.targetMinutes;
   return t;
 }
 
-export async function loadSettings(prisma: PrismaClient) {
+export async function loadSettings(prisma: Db) {
   const s = await prisma.settings.findUnique({ where: { id: 1 } });
   if (!s) throw new HttpError(500, "NOT_SEEDED", "Settings missing: the database has not been seeded");
-  return { journeyStart: d2i(s.journeyStart), journeyEnd: d2i(s.journeyEnd), timezone: s.timezone };
+  return { journeyStart: d2i(s.journeyStart), journeyEnd: d2i(s.journeyEnd), timezone: s.timezone, revisionDailyMinutes: s.revisionDailyMinutes };
 }
 
 export function scheduleService(prisma: PrismaClient) {
@@ -57,16 +59,19 @@ export function scheduleService(prisma: PrismaClient) {
       };
     },
 
-    async patchSettings(body: { weeklyTargets: { weekday: number; targetMinutes: number }[] }) {
-      await prisma.$transaction(
-        body.weeklyTargets.map((t) =>
+    async patchSettings(body: { weeklyTargets?: { weekday: number; targetMinutes: number }[]; revisionDailyMinutes?: number }) {
+      await prisma.$transaction([
+        ...(body.weeklyTargets ?? []).map((t) =>
           prisma.weeklyTarget.upsert({
             where: { weekday: t.weekday },
             update: { targetMinutes: t.targetMinutes },
             create: { weekday: t.weekday, targetMinutes: t.targetMinutes },
           }),
         ),
-      );
+        ...(body.revisionDailyMinutes !== undefined
+          ? [prisma.settings.update({ where: { id: 1 }, data: { revisionDailyMinutes: body.revisionDailyMinutes } })]
+          : []),
+      ]);
       return this.getSettings();
     },
   };

@@ -95,8 +95,9 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
                       <b>{hm(d.actualMinutes)}</b> of {hm(d.targetMinutes)}
                       <div className="mini"><i style={{ width: `${Math.min(1, d.actualMinutes / (d.targetMinutes || 1)) * 100}%` }} /></div>
                       <div style={{ marginTop: 6 }}>
-                        {d.tasksTotal ? `${d.tasksDone}/${d.tasksTotal} tasks · ${hm(d.plannedMinutes)}` : "Buffer day"}
+                        {d.tasksTotal - d.revisionTasks > 0 ? `${d.tasksDone}/${d.tasksTotal} tasks · ${hm(d.plannedMinutes)}` : "Buffer day"}
                       </div>
+                      {d.revisionPlannedMinutes > 0 && <div>incl. {hm(d.revisionPlannedMinutes)} revision</div>}
                     </>
                   )}
                 </div>
@@ -104,6 +105,20 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
             ))}
           </div>
         </div>
+
+        {(w.revision.plannedMinutes > 0 || w.revision.overdue > 0) && (
+          <div className="section">
+            <h3>Revision</h3>
+            <div className="card">
+              <ul className="list">
+                <li><span>Planned this week</span><span className="m">{hm(w.revision.plannedMinutes)} · {plural(w.revision.dueThisWeek, "unit")} due</span></li>
+                <li><span>Done</span><span className="m">{hm(w.revision.doneMinutes)}</span></li>
+                {w.revision.overdue > 0 && <li><span className="delayed">Overdue (all weeks)</span><span className="m">{plural(w.revision.overdue, "unit")}</span></li>}
+              </ul>
+              <div className="sub">Revision sits on top of new learning, at most the daily allowance on full days; Sunday stays optional and never counts against the target.</div>
+            </div>
+          </div>
+        )}
 
         <div className="section">
           <h3>Milestones · this week and the next</h3>

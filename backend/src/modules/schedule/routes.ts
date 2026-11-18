@@ -21,9 +21,13 @@ const settingsBody = z
       )
       .min(1)
       .max(7)
-      .refine((a) => new Set(a.map((t) => t.weekday)).size === a.length, { message: "Duplicate weekday" }),
+      .refine((a) => new Set(a.map((t) => t.weekday)).size === a.length, { message: "Duplicate weekday" })
+      .optional(),
+    /** Revision minutes each study day accepts on top of planned learning (SRS FR-REV-12). */
+    revisionDailyMinutes: z.number().int().min(0).max(240).multipleOf(5).optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => b.weeklyTargets || b.revisionDailyMinutes !== undefined, { message: "Provide weeklyTargets and/or revisionDailyMinutes" });
 
 export function scheduleRoutes({ prisma }: Deps) {
   const svc = scheduleService(prisma);
