@@ -4,6 +4,8 @@
  *
  *   AI_EVALUATION_PROVIDER=gemini GEMINI_API_KEY=… npm run eval:ai -- --runs 5
  *   AI_EVALUATION_PROVIDER=fake npm run eval:ai            (dry run of the harness itself, no network)
+ *   --delay 7000     pause between calls (free tiers allow only a few requests a minute)
+ *   --model ID       override AI_EVALUATION_MODEL for this run; --only PREFIX runs matching case ids
  *
  * The same pure pipeline as the app: prompt builder → provider → Zod schema → quote verification → score rules.
  */
@@ -18,9 +20,9 @@ import { EvaluationResult, evaluationJsonSchema } from "../src/modules/ai/evalua
 import { suggestScore } from "../src/modules/ai/evaluation/score.js";
 import { verifyResult } from "../src/modules/ai/evaluation/verify.js";
 import { createProviders } from "../src/modules/ai/providers/factory.js";
+import { ProviderError } from "../src/modules/ai/providers/types.js";
+import { type Case, type Run, errorKind, gates, printGates } from "./gates.js";
 
-interface Case { id: string; topic: string; variant: string; answer: string; expect: [number, number]; twin?: string }
-interface Run { score: number | null; error?: string; ms: number; downgraded: number }
 
 const here = dirname(fileURLToPath(import.meta.url));
 const arg = (name: string, d: string) => {
@@ -30,8 +32,12 @@ const arg = (name: string, d: string) => {
 const runs = Number(arg("runs", "1"));
 const file = arg("cases", join(here, "cases.json"));
 const only = arg("only", "");
+const delayMs = Number(arg("delay", "0"));
+const model = arg("model", "");
 
-const config = loadAiConfig({ ...process.env, AI_ENABLED: "true" });
+const config = loadAiConfig({ ...process.env, AI_ENABLED: "true", ...(model ? { AI_EVALUATION_MODEL: model } : {}) });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+let quotaExhausted = false;
 const provider = createProviders(config).evaluation;
 const cases = (JSON.parse(readFileSync(file, "utf8")) as { cases: Case[] }).cases.filter((c) => !only || c.id.startsWith(only));
 const promptOf = new Map(curriculumPrompts.map((p) => [p.topic, p]));
@@ -40,34 +46,42 @@ async function once(c: Case): Promise<Run> {
   const p = promptOf.get(c.topic);
   if (!p) throw new Error(`No curriculum prompt for ${c.topic}`);
   const criteria = splitCriteria(p.expected);
-  const t0 = performance.now();
+  if (quotaExhausted) return { score: null, error: "skipped: quota exhausted", kind: "SKIPPED", ms: 0, downgraded: 0 };
+  if (delayMs) await sleep(delayMs);
+  let t0 = performance.now();
   try {
-    const r = await provider.evaluate({
+    let r!: Awaited<ReturnType<typeof provider.evaluate>>;
+    // Rate limits are not the evaluator's fault: back off and retry, and stop the run if the quota is gone.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        t0 = performance.now();
+        r = await provider.evaluate({
       system: SYSTEM_PROMPT,
       user: buildUserPrompt({ promptText: p.content, retrievalMethod: p.method, criteria, answer: c.answer }),
       jsonSchema: evaluationJsonSchema(),
       model: config.evaluationModel,
       signal: AbortSignal.timeout(config.requestTimeoutMs),
-    });
+        });
+        break;
+      } catch (e) {
+        if (!(e instanceof ProviderError && e.kind === "RATE_LIMITED")) throw e;
+        if (attempt >= 3) {
+          quotaExhausted = true;
+          throw e;
+        }
+        console.log(`  rate limited, waiting ${30 * (attempt + 1)} s…`);
+        await sleep(30_000 * (attempt + 1));
+      }
+    }
     const parsed = EvaluationResult.parse(r.output);
     const v = verifyResult(parsed, criteria, c.answer);
     const score = suggestScore({ relevant: v.relevant, verdicts: v.criteria.map((x) => x.verdict), misconceptions: v.misconceptions.length });
     return { score, ms: performance.now() - t0, downgraded: v.downgraded };
   } catch (e) {
-    return { score: null, error: e instanceof Error ? e.message.slice(0, 120) : String(e), ms: performance.now() - t0, downgraded: 0 };
+    return { score: null, error: e instanceof Error ? e.message.slice(0, 120) : String(e), kind: errorKind(e), ms: performance.now() - t0, downgraded: 0 };
   }
 }
 
-const pct = (n: number, d: number) => (d ? `${((100 * n) / d).toFixed(1)} %` : "n/a");
-const quantile = (xs: number[], q: number) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : 0;
-};
-const mode = (xs: (number | null)[]) => {
-  const counts = new Map<number | null, number>();
-  for (const x of xs) counts.set(x, (counts.get(x) ?? 0) + 1);
-  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-};
 
 console.log(`Evaluator benchmark: ${provider.name}:${config.evaluationModel} · prompt ${config.promptVersion} · ${cases.length} cases × ${runs} runs\n`);
 const results: { c: Case; runs: Run[] }[] = [];
@@ -79,38 +93,14 @@ for (const c of cases) {
   console.log(`${c.id.padEnd(20)} ${c.variant.padEnd(20)} expect ${c.expect[0] === c.expect[1] ? c.expect[0] : c.expect.join("–")}   got ${scores}${rs.some((r) => r.error) ? `   (${rs.find((r) => r.error)!.error})` : ""}`);
 }
 
-const all = results.flatMap((r) => r.runs.map((x) => ({ c: r.c, x })));
-const ok = all.filter((a) => a.x.score !== null);
-const within = (s: number, [lo, hi]: [number, number]) => s >= lo && s <= hi;
-const near = (s: number, [lo, hi]: [number, number]) => s >= lo - 1 && s <= hi + 1;
-const exact = ok.filter((a) => within(a.x.score!, a.c.expect)).length;
-const plusMinus = ok.filter((a) => near(a.x.score!, a.c.expect)).length;
-const shouldFail = ok.filter((a) => a.c.expect[1] <= 1);
-const falsePass = shouldFail.filter((a) => a.x.score! >= 2).length;
-const severe = ok.filter((a) => (a.c.expect[1] <= 1 && a.x.score === 3) || (a.c.expect[0] === 3 && a.x.score! <= 1)).length;
-const repeatable = results.filter((r) => new Set(r.runs.map((x) => x.score)).size === 1).length;
-const injections = results.filter((r) => r.c.twin);
-const injectionOk = injections.filter((r) => mode(r.runs.map((x) => x.score)) === mode(results.find((t) => t.c.id === r.c.twin)?.runs.map((x) => x.score) ?? [])).length;
-const latencies = ok.map((a) => a.x.ms);
-
-const gates: [string, string, boolean | null][] = [
-  ["Suggestion in the expected range", pct(exact, ok.length), null],
-  ["Within ±1 (gate ≥ 95 %)", pct(plusMinus, ok.length), ok.length ? plusMinus / ok.length >= 0.95 : null],
-  ["False pass: ≥ 2 where ≤ 1 expected (gate ≤ 3 %)", pct(falsePass, shouldFail.length), shouldFail.length ? falsePass / shouldFail.length <= 0.03 : null],
-  ["Never 0/1 ↔ 3 (gate 0)", String(severe), severe === 0],
-  ["Repeatability: identical across runs (gate ≥ 95 %)", runs > 1 ? pct(repeatable, results.length) : "use --runs 5", runs > 1 ? repeatable / results.length >= 0.95 : null],
-  ["Injection cases unaffected (gate 100 %)", pct(injectionOk, injections.length), injections.length ? injectionOk === injections.length : null],
-  ["Valid output after verification (gate ≥ 98 %)", pct(ok.length, all.length), all.length ? ok.length / all.length >= 0.98 : null],
-  ["Evaluation latency p50 / p95", `${(quantile(latencies, 0.5) / 1000).toFixed(1)} s / ${(quantile(latencies, 0.95) / 1000).toFixed(1)} s`, null],
-  ["Quotes downgraded (not found in the answer)", String(ok.reduce((s, a) => s + a.x.downgraded, 0)), null],
-];
-console.log("\nRelease gates (AI design §9.3)");
-for (const [name, value, pass] of gates) console.log(`  ${pass === null ? "    " : pass ? "PASS" : "FAIL"}  ${name.padEnd(52)} ${value}`);
-console.log("  Not covered here: criterion-level agreement (needs per-criterion labels) and speech accuracy (§9.2 term test).");
+if (quotaExhausted) console.log("\nStopped early: the provider's quota ran out. Results below cover only the calls that were made.");
+const gateRows = gates(results);
+printGates("Release gates (AI design §9.3)", gateRows);
 
 const out = join(here, "results");
 mkdirSync(out, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const path = join(out, `${stamp}-${provider.name}-${config.evaluationModel}.json`);
-writeFileSync(path, JSON.stringify({ provider: provider.name, model: config.evaluationModel, promptVersion: config.promptVersion, runs, gates, results }, null, 2));
+const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60);
+const path = join(out, `${stamp}-${safe(provider.name)}-${safe(config.evaluationModel)}.json`); // a new file every run, never overwritten
+writeFileSync(path, JSON.stringify({ provider: provider.name, model: config.evaluationModel, promptVersion: config.promptVersion, runs, gates: gateRows, results }, null, 2));
 console.log(`\nSaved ${path}`);

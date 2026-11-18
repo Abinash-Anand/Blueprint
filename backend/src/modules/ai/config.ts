@@ -31,7 +31,7 @@ export interface AiConfig {
 
 const DEFAULT_MODELS: Record<ProviderName, string> = {
   fake: "fake-1",
-  gemini: "gemini-2.5-flash",
+  gemini: "gemini-3.8-flash", // chosen 18 Nov 2026 after the benchmark (docs/AI-Voice-Design.md §10.1)
   anthropic: "claude-haiku-5-5",
 };
 
@@ -72,7 +72,7 @@ export function loadAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
     priceInputPerMTokEur: num(env.AI_PRICE_INPUT_PER_MTOK_EUR, 0, 0, 1000),
     priceOutputPerMTokEur: num(env.AI_PRICE_OUTPUT_PER_MTOK_EUR, 0, 0, 1000),
     priceAudioPerMinEur: num(env.AI_PRICE_AUDIO_PER_MIN_EUR, 0, 0, 100),
-    requestTimeoutMs: num(env.AI_REQUEST_TIMEOUT_MS, 30_000, 1_000, 120_000),
+    requestTimeoutMs: num(env.AI_REQUEST_TIMEOUT_MS, 60_000, 1_000, 120_000),
     promptVersion: env.AI_PROMPT_VERSION?.trim() || "eval-criteria-v1",
   };
 }

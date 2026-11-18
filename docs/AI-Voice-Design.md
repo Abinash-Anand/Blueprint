@@ -1,7 +1,7 @@
 ---
 title: "Blueprint — AI and Voice Revision: Architecture and System Design"
 subtitle: "Voice answers, AI-assisted assessment and follow-up questions inside the existing active-recall workflow"
-version: "2.2"
+version: "2.3"
 date: "18 November 2026"
 ---
 
@@ -13,7 +13,9 @@ date: "18 November 2026"
 > - **Guard (§8.2):** same-origin is checked as `Origin` host = `Host` (Nginx now forwards `$http_host`), so no `APP_ORIGINS` list is needed; requests without `Origin` and Fetch Metadata (curl, tests) are allowed.
 > - **Audio (§5.2, §8.2):** the browser converts the recording to 16 kHz mono 16-bit WAV, the format every provider accepts and whose header gives the exact duration; the upload limit is 4 MB (5 MB in Nginx). Extra codes: `AUDIO_TOO_SHORT`, `AI_NO_CRITERIA`, `AI_FOLLOW_UP_LIMIT`, `FORBIDDEN_ORIGIN`; an over-size body is `PAYLOAD_TOO_LARGE`.
 > - **Configuration (§10):** `AI_EVALUATION_PROVIDER` / `AI_TRANSCRIPTION_PROVIDER` (`gemini`, `anthropic`, `fake`), `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`; the budget applies only when prices are set, so the free tier runs with prices at 0. Usage rows are kept 400 days.
-> - **Benchmark:** `npm run eval:ai` with a starter set of 24 constructed cases (3 prompts × 8 variants); extend it towards 100.
+> - **Benchmark:** `eval/run.ts` (with `--only`, `--runs`, `--delay`, `--model` and rate-limit backoff), `eval/gates.ts` (every failed call has one kind: model error, timeout, provider error, setup error, quota refusal or skipped; only model errors count against the model, setup errors fail the run, quota and skipped calls are excluded) and `eval/report.ts` (re-reports saved runs read-only and lists the cases the model has never judged). The set has 96 constructed cases: 12 curriculum prompts across all seven districts × 8 variants.
+> - **Speech test (§9.2):** `eval/speech.ts` with `eval/speech-terms.json` (12 sentences, 60 terms); recordings as WAV, MP3 or FLAC per microphone in the git-ignored `recordings/`; sends the same spelling hints the app sends for a topic-level revision (sub-topic revisions also get their topic's curriculum question as hints); a term counts only when written as one term; reports term accuracy and word error rate per device, plus missing and failed recordings.
+> - **v2.3:** benchmark run 18 Nov 2026 and `gemini-3.8-flash` chosen with a 60 s timeout (§10.1); the free tier allowed about 20 requests a day per model.
 >
 > **v2.1 (18 Nov 2026):** records the provider decision. Gemini Flash on the free Google AI Studio tier for both transcription and answer checking, Claude Haiku 5.5 as the paid alternative if the benchmark rejects Gemini (§10.1, §13).
 
@@ -606,7 +608,7 @@ Cost per checked attempt ≈ audio minutes × audio price + (input tokens × inp
 
 | Component | Choice | Notes |
 |---|---|---|
-| Answer checking | Gemini Flash, free AI Studio tier | The current Flash model that the free tier offers (Gemini 2.5 Flash or its successor), pinned by exact ID in `AI_EVALUATION_MODEL` |
+| Answer checking | Gemini Flash, free AI Studio tier | **`gemini-3.8-flash`** (benchmarked 18 Nov 2026: no false passes, injections ignored; median 6 s but a slow tail, so `AI_REQUEST_TIMEOUT_MS=60000` and Nginx 75 s). `gemini-2.5-flash` was as accurate and faster but its free quota ran out after about 20 requests a day |
 | Speech-to-text | The same Flash model with audio input | A **separate** call from checking: the check only ever sees the transcript the learner confirmed (§4.3). Replaced by a dedicated transcription model only if the speech test (§9.2) shows better term accuracy |
 | Alternative | Claude Haiku 5.5 (paid, about $0.10 / $0.50 per million tokens: well under a cent per check) | Used only if Gemini fails the §9.3 gates. A **manual** switch of `AI_PROVIDER`, never an automatic runtime fallback: automatic failover would send answers to a second provider without notice and mix evaluations from two models in the agreement analytics |
 | Test-set drafting | Claude (the learner's existing subscription) | A different vendor from the grader (§9.1) |
