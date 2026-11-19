@@ -9,7 +9,7 @@ import { HttpError } from "../../../lib/http.js";
 import type { AuthService } from "../../auth/service.js";
 import { CURRICULUM_CONTRACT_VERSION, diffCurriculum, type CurriculumDocument } from "../../cities/contract.js";
 import type { AiConfig } from "../config.js";
-import { ProviderError, asProviderError, type AiProviders } from "../providers/types.js";
+import { ProviderError, asProviderError, isProviderOutage, type AiProviders } from "../providers/types.js";
 import type { UsageService } from "../usage.js";
 import { GENERATION_PROMPT_VERSION, GenerationError, type GenerationRequest, type Progress, generateCurriculum } from "./generator.js";
 
@@ -64,20 +64,49 @@ export function generationService(d: GenerationDeps) {
     const report = async (p: Progress) => {
       await d.prisma.curriculumVersion.update({ where: { id: versionId }, data: { progress: p as unknown as Prisma.InputJsonValue } });
     };
+    /** One provider request with one model, recorded in the usage ledger whatever happens. */
+    const once = async (model: string, stage: { name: string; label: string }, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number) => {
+      const t0 = performance.now();
+      try {
+        const r = await provider.generate({ ...prompt, jsonSchema, model, name: stage.name, maxTokens, signal: AbortSignal.timeout(config.generationTimeoutMs) });
+        await d.usage.record("GENERATE", provider.name, model, r.usage, performance.now() - t0, "OK");
+        return r.output;
+      } catch (err) {
+        const e = asProviderError(err);
+        await d.usage.record("GENERATE", provider.name, model, {}, performance.now() - t0, e.kind);
+        console.warn(JSON.stringify({ level: "warn", msg: "AI provider error", op: "GENERATE", stage: stage.label, model, kind: e.kind, status: e.status ?? null }));
+        throw e;
+      }
+    };
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    // An overloaded main model (HTTP 5xx) is retried after short pauses; if it stays down, the fallback model takes over
+    // for the rest of this job, so one city is not written by two models taking turns. Other errors are not retried.
+    let model = config.generationModel;
+    const used = new Set<string>();
     try {
       const doc = await generateCurriculum(
         req,
         async (stage, prompt, jsonSchema, maxTokens) => {
-          const t0 = performance.now();
-          try {
-            const r = await provider.generate({ ...prompt, jsonSchema, model: config.generationModel, name: stage.name, maxTokens, signal: AbortSignal.timeout(config.generationTimeoutMs) });
-            await d.usage.record("GENERATE", provider.name, config.generationModel, r.usage, performance.now() - t0, "OK");
-            return r.output;
-          } catch (err) {
-            const e = asProviderError(err);
-            await d.usage.record("GENERATE", provider.name, config.generationModel, {}, performance.now() - t0, e.kind);
-            console.warn(JSON.stringify({ level: "warn", msg: "AI provider error", op: "GENERATE", stage: stage.label, model: config.generationModel, kind: e.kind, status: e.status ?? null }));
-            throw e;
+          for (let attempt = 0; ; attempt++) {
+            try {
+              const out = await once(model, stage, prompt, jsonSchema, maxTokens);
+              used.add(model);
+              return out;
+            } catch (e) {
+              if (!(e instanceof ProviderError) || !isProviderOutage(e)) throw e;
+              if (model === config.generationModel && attempt < config.generationRetryDelaysMs.length) {
+                await report({ step: "retry", label: "The AI service is busy; trying again in a moment", done: 0, total: 1 });
+                await sleep(config.generationRetryDelaysMs[attempt]);
+                continue;
+              }
+              if (config.generationFallbackModel && model !== config.generationFallbackModel) {
+                console.warn(JSON.stringify({ level: "warn", msg: "AI fallback model", op: "GENERATE", from: model, to: config.generationFallbackModel }));
+                model = config.generationFallbackModel;
+                await report({ step: "fallback", label: "The main model is busy; continuing with a second model", done: 0, total: 1 });
+                continue;
+              }
+              throw e;
+            }
           }
         },
         report,
@@ -88,7 +117,11 @@ export function generationService(d: GenerationDeps) {
         d.prisma.curriculumVersion.updateMany({ where: { cityId, status: "PROPOSED" }, data: { status: "REJECTED" } }),
         d.prisma.curriculumVersion.update({
           where: { id: versionId },
-          data: { status: "PROPOSED", content: doc as unknown as Prisma.InputJsonValue, changes: changes as unknown as Prisma.InputJsonValue, progress: undefined },
+          data: {
+            status: "PROPOSED", content: doc as unknown as Prisma.InputJsonValue, changes: changes as unknown as Prisma.InputJsonValue, progress: undefined,
+            // The models that actually wrote it (the fallback when the main model was overloaded).
+            note: `Generated by ${config.generationProvider}:${[...used].join(" + ")} (${GENERATION_PROMPT_VERSION})`,
+          },
         }),
       ]);
       console.log(JSON.stringify({ level: "info", msg: "Curriculum generated", districts: doc.districts.length, topics: doc.districts.reduce((a, x) => a + x.topics.length, 0) }));

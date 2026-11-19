@@ -442,6 +442,7 @@ function GenerateCard({ cityId, onProposal }: { cityId: string; onProposal: (v: 
   useEffect(() => {
     if (running === null) return;
     let stop = false;
+    let misses = 0;
     const tick = async () => {
       try {
         const v = await api.version(cityId, running);
@@ -454,10 +455,19 @@ function GenerateCard({ cityId, onProposal }: { cityId: string; onProposal: (v: 
           return;
         }
       } catch (e) {
+        // The server restarting or briefly unreachable (502/503/network): keep following the job for a while.
+        const brief = e instanceof ApiError && (e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504);
+        if (brief && misses < 24) {
+          misses++;
+          if (!stop) setProgress("Reconnecting to the server…");
+          if (!stop) setTimeout(() => void tick(), 5000);
+          return;
+        }
         if (!stop) setError(errText(e));
         setRunning(null);
         return;
       }
+      misses = 0;
       if (!stop) setTimeout(() => void tick(), 2500);
     };
     void tick();
