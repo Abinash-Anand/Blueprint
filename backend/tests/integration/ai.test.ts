@@ -4,7 +4,6 @@
  */
 import { execSync } from "node:child_process";
 import { PrismaClient } from "@prisma/client";
-import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { TestClock } from "../../src/lib/clock.js";
@@ -14,6 +13,10 @@ import { fakeProvider } from "../../src/modules/ai/providers/fake.js";
 import { ProviderError, type AiProviders, type EvaluationProvider } from "../../src/modules/ai/providers/types.js";
 import { seed } from "../../prisma/seed.js";
 import { wav } from "../helpers/wav.js";
+import { asUser, signIn } from "../helpers/auth.js";
+
+/** Session cookie and city for every request (filled in beforeAll). */
+const H: Record<string, string> = {};
 
 const base = process.env.TEST_DATABASE_URL;
 const suite = base ? describe : describe.skip;
@@ -37,19 +40,20 @@ suite("AI check and voice", () => {
   let scheduleId: number;
   let subId: number;
 
-  const evaluate = (body: Record<string, unknown>) => request(app).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", ...body });
+  const evaluate = (body: Record<string, unknown>) => asUser(app, H).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", ...body });
   const attempt = (body: Record<string, unknown>) =>
-    request(app).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId: subId, templateKey: "explain", retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false, ...body });
+    asUser(app, H).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId: subId, templateKey: "explain", retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false, ...body });
 
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
     execSync("npx prisma migrate deploy", { env: { ...process.env, DATABASE_URL: url }, stdio: "pipe" });
     prisma = new PrismaClient({ datasourceUrl: url });
-    await seed(prisma, () => {}, clock.date);
+    await seed(prisma, () => {}, clock.date, { createEngineeringCity: true });
+    Object.assign(H, (await signIn(prisma)).headers);
     app = createApp({ prisma, clock, ai: { config, providers } });
     off = createApp({ prisma, clock });
     subId = (await prisma.subtopic.findFirstOrThrow({ where: { topicId: "fe.ts", position: 0 } })).id;
-    await request(app).patch(`/api/subtopics/${subId}`).send({ completed: true }).expect(200);
+    await asUser(app, H).patch(`/api/subtopics/${subId}`).send({ completed: true }).expect(200);
     scheduleId = (await prisma.revisionSchedule.findUniqueOrThrow({ where: { unit: `s:${subId}` } })).id;
   });
   afterAll(async () => {
@@ -59,21 +63,21 @@ suite("AI check and voice", () => {
   });
 
   it("is off by default and needs consent when on", async () => {
-    expect((await request(off).get("/api/ai/status").expect(200)).body).toMatchObject({ enabled: false });
-    expect((await request(off).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "x" }).expect(403)).body.error.code).toBe("AI_DISABLED");
+    expect((await asUser(off, H).get("/api/ai/status").expect(200)).body).toMatchObject({ enabled: false });
+    expect((await asUser(off, H).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "x" }).expect(403)).body.error.code).toBe("AI_DISABLED");
     expect((await evaluate({ transcript: ANSWER }).expect(403)).body.error.code).toBe("AI_CONSENT_REQUIRED");
-    await request(app).post("/api/ai/consent").send({}).expect(200);
-    expect((await request(app).get("/api/ai/status").expect(200)).body).toMatchObject({ enabled: true, consented: true, maxFollowUps: 1 });
+    await asUser(app, H).post("/api/ai/consent").send({}).expect(200);
+    expect((await asUser(app, H).get("/api/ai/status").expect(200)).body).toMatchObject({ enabled: true, consented: true, maxFollowUps: 1 });
   });
 
   it("rejects cross-site browser requests and accepts its own pages", async () => {
-    const r = await request(app).post("/api/ai/consent").set("Origin", "https://evil.example").set("X-Blueprint", "1").send({}).expect(403);
+    const r = await asUser(app, H).post("/api/ai/consent").set("Origin", "https://evil.example").set("X-Blueprint", "1").send({}).expect(403);
     expect(r.body.error.code).toBe("FORBIDDEN_ORIGIN");
-    await request(app).post("/api/ai/consent").set("Sec-Fetch-Site", "cross-site").send({}).expect(403);
+    await asUser(app, H).post("/api/ai/consent").set("Sec-Fetch-Site", "cross-site").send({}).expect(403);
     const host = "127.0.0.1:8091";
-    await request(app).post("/api/ai/consent").set("Host", host).set("Origin", `http://${host}`).send({}).expect(403); // header missing
-    await request(app).post("/api/ai/consent").set("Host", host).set("Origin", `http://${host}`).set("X-Blueprint", "1").set("Sec-Fetch-Site", "same-origin").send({}).expect(200);
-    await request(app).get("/api/ai/status").set("Origin", "https://evil.example").expect(200); // reads are not state changes
+    await asUser(app, H).post("/api/ai/consent").set("Host", host).set("Origin", `http://${host}`).send({}).expect(403); // header missing
+    await asUser(app, H).post("/api/ai/consent").set("Host", host).set("Origin", `http://${host}`).set("X-Blueprint", "1").set("Sec-Fetch-Site", "same-origin").send({}).expect(200);
+    await asUser(app, H).get("/api/ai/status").set("Origin", "https://evil.example").expect(200); // reads are not state changes
   });
 
   it("checks an answer against the prompt's own criteria and never changes learning state", async () => {
@@ -100,7 +104,7 @@ suite("AI check and voice", () => {
   });
 
   it("refuses a rubric-less prompt and a missing answer", async () => {
-    const p = await request(app).post("/api/prompts").send({ topicId: "fe.ts", subtopicId: subId, content: "Say anything about it", retrievalMethod: "CONCEPTUAL", expectedAnswer: "-" }).expect(201);
+    const p = await asUser(app, H).post("/api/prompts").send({ topicId: "fe.ts", subtopicId: subId, content: "Say anything about it", retrievalMethod: "CONCEPTUAL", expectedAnswer: "-" }).expect(201);
     expect((await evaluate({ templateKey: undefined, promptId: p.body.id, transcript: "x" }).expect(409)).body.error.code).toBe("AI_NO_CRITERIA");
     expect((await evaluate({ transcript: "   " }).expect(400)).body.error.code).toBe("VALIDATION_ERROR");
   });
@@ -131,6 +135,51 @@ suite("AI check and voice", () => {
     expect(ok.body).toMatchObject({ id: row.id, status: "SUCCEEDED" });
   });
 
+  it("uses the fallback model once when the provider is overloaded, and only then", async () => {
+    const outage = (status: number) => Object.assign(new ProviderError("PROVIDER_ERROR", `Gemini returned ${status}`), { status });
+    const fake = fakeProvider();
+    const calls: string[] = [];
+    // The main model is overloaded (503); the fallback answers.
+    evalImpl = { name: "fake", evaluate: async (i) => { calls.push(i.model); if (i.model === "main-model") throw outage(503); return fake.evaluate(i); } };
+    const fb = createApp({ prisma, clock, ai: { config: { ...config, evaluationModel: "main-model", evaluationFallbackModel: "backup-model", transcriptionFallbackModel: "backup-model" }, providers } });
+    const ok = await asUser(fb, H).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "Generics during an outage." }).expect(201);
+    expect(ok.body.status).toBe("SUCCEEDED");
+    expect(calls).toEqual(["main-model", "backup-model"]);
+    expect(await prisma.revisionEvaluation.findUniqueOrThrow({ where: { id: ok.body.id } })).toMatchObject({ model: "backup-model" });
+    const ledger = await prisma.aiUsage.findMany({ where: { operation: "EVALUATE" }, orderBy: { id: "desc" }, take: 2 });
+    expect(ledger.map((u) => [u.model, u.outcome])).toEqual([["backup-model", "OK"], ["main-model", "PROVIDER_ERROR"]]);
+
+    // Both overloaded: a clear, retryable "busy" error, not a generic one.
+    calls.length = 0;
+    evalImpl = { name: "fake", evaluate: async (i) => { calls.push(i.model); throw outage(503); } };
+    const busy = await asUser(fb, H).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "Generics while both are busy." }).expect(503);
+    expect(busy.body.error).toMatchObject({ code: "AI_PROVIDER_BUSY", details: { retryable: true } });
+    expect(busy.body.error.message).toMatch(/overloaded/);
+    expect(calls).toEqual(["main-model", "backup-model"]);
+
+    // Not for a bad request, a timeout or a quota refusal: one call, no second model.
+    for (const [err, status] of [[outage(400), 502], [new ProviderError("TIMEOUT", "slow"), 504], [new ProviderError("RATE_LIMITED", "quota"), 429]] as const) {
+      calls.length = 0;
+      evalImpl = { name: "fake", evaluate: async (i) => { calls.push(i.model); throw err; } };
+      await asUser(fb, H).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: `Generics, no fallback ${status}.` }).expect(status);
+      expect(calls).toEqual(["main-model"]);
+    }
+
+    // Transcription falls back the same way.
+    const heard: string[] = [];
+    const speech = createApp({
+      prisma, clock,
+      ai: {
+        config: { ...config, transcriptionModel: "main-model", transcriptionFallbackModel: "backup-model" },
+        providers: { ...providers, transcription: { name: "fake", transcribe: async (i) => { heard.push(i.model); if (i.model === "main-model") throw outage(503); return { text: "Heard on the backup.", usage: {} }; } } },
+      },
+    });
+    const t = await asUser(speech, H).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(2)).expect(200);
+    expect(t.body.text).toBe("Heard on the backup.");
+    expect(heard).toEqual(["main-model", "backup-model"]);
+    evalImpl = fakeProvider();
+  });
+
   it("rejects invented evidence instead of showing it", async () => {
     evalImpl = {
       name: "fake",
@@ -151,13 +200,13 @@ suite("AI check and voice", () => {
   });
 
   it("transcribes a WAV recording without storing it, and refuses other uploads", async () => {
-    const r = await request(app).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(2)).expect(200);
+    const r = await asUser(app, H).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(2)).expect(200);
     expect(r.body).toEqual({ text: "Generics keep the type parameter from the call site.", audioSeconds: 2 });
     const usage = await prisma.aiUsage.findFirstOrThrow({ where: { operation: "TRANSCRIBE" }, orderBy: { id: "desc" } });
     expect(usage).toMatchObject({ outcome: "OK", audioSeconds: 2 });
-    expect((await request(app).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/webm").send(Buffer.alloc(100)).expect(415)).body.error.code).toBe("AUDIO_UNSUPPORTED");
-    expect((await request(app).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(40)).expect(413)).body.error.code).toBe("AUDIO_TOO_LARGE");
-    expect((await request(app).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(0.2)).expect(400)).body.error.code).toBe("AUDIO_TOO_SHORT");
+    expect((await asUser(app, H).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/webm").send(Buffer.alloc(100)).expect(415)).body.error.code).toBe("AUDIO_UNSUPPORTED");
+    expect((await asUser(app, H).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(40)).expect(413)).body.error.code).toBe("AUDIO_TOO_LARGE");
+    expect((await asUser(app, H).post(`/api/ai/transcriptions?scheduleId=${scheduleId}`).set("Content-Type", "audio/wav").send(wav(0.2)).expect(400)).body.error.code).toBe("AUDIO_TOO_SHORT");
   });
 
   it("links the check to the attempt only for the same answer, and saves the learner's own score", async () => {
@@ -165,33 +214,33 @@ suite("AI check and voice", () => {
     const stale = await attempt({ score: 3, response: `${ANSWER} (edited)`, evaluationId: e.id, selfScore: 2, inputMode: "SPOKEN" }).expect(409);
     expect(stale.body.error.code).toBe("EVALUATION_STALE");
     const sub2 = (await prisma.subtopic.findFirstOrThrow({ where: { topicId: "fe.ts", position: 1 } })).id;
-    await request(app).patch(`/api/subtopics/${sub2}`).send({ completed: true }).expect(200);
+    await asUser(app, H).patch(`/api/subtopics/${sub2}`).send({ completed: true }).expect(200);
     const otherSchedule = (await prisma.revisionSchedule.findUniqueOrThrow({ where: { unit: `s:${sub2}` } })).id;
     const other = await prisma.revisionEvaluation.create({
-      data: { scheduleId: otherSchedule, inputHash: "x", promptText: "p", criteriaText: "a · b", transcript: ANSWER, provider: "fake", model: "m", promptVersion: "v", status: "FAILED", errorCode: "AI_TIMEOUT" },
+      data: { cityId: "engineering", scheduleId: otherSchedule, inputHash: "x", promptText: "p", criteriaText: "a · b", transcript: ANSWER, provider: "fake", model: "m", promptVersion: "v", status: "FAILED", errorCode: "AI_TIMEOUT" },
     });
     expect((await attempt({ score: 3, response: ANSWER, evaluationId: other.id }).expect(409)).body.error.code).toBe("EVALUATION_STALE");
     const learnerScore = e.suggestedScore === 3 ? 2 : 3;
     const ok = await attempt({ score: learnerScore, response: ANSWER, evaluationId: e.id, selfScore: 1, inputMode: "SPOKEN" }).expect(201);
     expect(ok.body.attempt).toMatchObject({ score: learnerScore, evaluationId: e.id, selfScore: 1, inputMode: "SPOKEN" });
-    const p = (await request(app).get("/api/progress").expect(200)).body.revision.ai;
+    const p = (await asUser(app, H).get("/api/progress").expect(200)).body.revision.ai;
     expect(p).toMatchObject({ selfScored: 1, selfMatches: 0, checked: 1, agreed: 0, spoken: { attempts: 1, averageScore: learnerScore }, typed: { attempts: 0 } });
     expect(p.selfMeanDifference).toBe(1 - learnerScore);
   });
 
   it("limits checks per hour and per day", async () => {
     const tight = createApp({ prisma, clock, ai: { config: { ...config, maxEvaluationsPerHour: 1 }, providers } });
-    await request(tight).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "rate limit one" }).expect(201);
-    const r = await request(tight).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "rate limit two" }).expect(429);
+    await asUser(tight, H).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "rate limit one" }).expect(201);
+    const r = await asUser(tight, H).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "rate limit two" }).expect(429);
     expect(r.body.error.code).toBe("AI_RATE_LIMITED");
     const daily = createApp({ prisma, clock, ai: { config: { ...config, dailyRequestLimit: 1 }, providers } });
-    expect((await request(daily).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "daily" }).expect(429)).body.error.code).toBe("AI_RATE_LIMITED");
+    expect((await asUser(daily, H).post("/api/revision/evaluations").send({ scheduleId, templateKey: "explain", transcript: "daily" }).expect(429)).body.error.code).toBe("AI_RATE_LIMITED");
   });
 
   it("housekeeping removes old unlinked checks and keeps linked ones", async () => {
     const old = new Date(clock.now().getTime() - 40 * 86_400_000);
     const unlinked = await prisma.revisionEvaluation.create({
-      data: { scheduleId, inputHash: "old", promptText: "p", criteriaText: "a · b", transcript: "t", provider: "fake", model: "m", promptVersion: "v", status: "FAILED", errorCode: "AI_TIMEOUT", createdAt: old },
+      data: { cityId: "engineering", scheduleId, inputHash: "old", promptText: "p", criteriaText: "a · b", transcript: "t", provider: "fake", model: "m", promptVersion: "v", status: "FAILED", errorCode: "AI_TIMEOUT", createdAt: old },
     });
     const linked = await prisma.revisionAttempt.findFirstOrThrow({ where: { evaluationId: { not: null } } });
     await prisma.revisionEvaluation.update({ where: { id: linked.evaluationId! }, data: { createdAt: old } });

@@ -68,13 +68,14 @@ export function StatusIndicator({ p, detail, fallback }: { p?: Presentation | nu
 }
 
 /** A message that confirms, warns or reports an error. Errors are announced at once; the rest politely. */
-export function FeedbackMessage({ tone, icon, children, className }: { tone: Tone; icon?: string; children: ReactNode; className?: string }) {
+export function FeedbackMessage({ tone, icon, children, className, onDismiss }: { tone: Tone; icon?: string; children: ReactNode; className?: string; onDismiss?: () => void }) {
   const t = toneOf(tone);
   const fallbackIcon = { success: "check-circle", warning: "alert-triangle", danger: "alert-circle", info: "clock", neutral: "circle", ai: "sparkle" }[t];
   return (
     <div className={`fb t-${t}${className ? ` ${className}` : ""}`} role={t === "danger" ? "alert" : "status"}>
       <SemanticIcon name={icon ?? fallbackIcon} />
       <div className="fb-b">{children}</div>
+      {onDismiss && <button type="button" className="x fb-x" aria-label="Dismiss message" onClick={onDismiss}>×</button>}
     </div>
   );
 }

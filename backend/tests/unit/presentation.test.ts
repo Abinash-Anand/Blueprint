@@ -115,6 +115,16 @@ describe("revision", () => {
   });
 });
 
+describe("cities", () => {
+  it("maps every city status", async () => {
+    const { cityPresentation } = await import("../../src/domain/presentation.js");
+    const { CityStatus } = await import("@prisma/client");
+    for (const st of Object.values(CityStatus)) expect(cityPresentation(st).state).toBe(`city.${st.toLowerCase()}`);
+    expect(cityPresentation("PAUSED").tone).toBe("warning");
+    expect(cityPresentation("COMPLETED")).toMatchObject({ tone: "success", variant: "solid" });
+  });
+});
+
 describe("AI", () => {
   it("maps evaluation states, suggestions and every verdict", () => {
     for (const s of Object.values(EvaluationStatus)) expect(evaluationPresentation(s).state).toMatch(/^ai\./);

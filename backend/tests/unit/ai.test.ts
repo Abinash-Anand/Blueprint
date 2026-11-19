@@ -194,6 +194,19 @@ describe("WAV checks", () => {
 });
 
 describe("AI configuration", () => {
+  it("falls back to Gemini 2.5 Flash only for Gemini, can be switched off, and never to the same model", () => {
+    const g = loadAiConfig({ AI_EVALUATION_PROVIDER: "gemini" });
+    expect(g.evaluationFallbackModel).toBe("gemini-2.5-flash");
+    expect(g.transcriptionFallbackModel).toBe("gemini-2.5-flash");
+    expect(loadAiConfig({ AI_EVALUATION_PROVIDER: "gemini", AI_FALLBACK_MODEL: "none" }).evaluationFallbackModel).toBeNull();
+    expect(loadAiConfig({ AI_EVALUATION_PROVIDER: "gemini", AI_FALLBACK_MODEL: "gemini-x" }).evaluationFallbackModel).toBe("gemini-x");
+    expect(loadAiConfig({ AI_EVALUATION_PROVIDER: "gemini", AI_EVALUATION_MODEL: "gemini-2.5-flash" }).evaluationFallbackModel).toBeNull();
+    expect(loadAiConfig({ AI_EVALUATION_PROVIDER: "fake" }).evaluationFallbackModel).toBeNull();
+    const c = loadAiConfig({ AI_EVALUATION_PROVIDER: "anthropic" });
+    expect(c.evaluationFallbackModel).toBeNull(); // no Claude default
+    expect(c.transcriptionFallbackModel).toBe("gemini-2.5-flash"); // speech stays on Gemini
+  });
+
   it("is off by default and keeps Gemini for speech when Claude checks answers", () => {
     expect(loadAiConfig({}).enabled).toBe(false);
     const c = loadAiConfig({ AI_ENABLED: "true", AI_EVALUATION_PROVIDER: "anthropic" });

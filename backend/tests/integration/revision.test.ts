@@ -4,11 +4,14 @@
  */
 import { execSync } from "node:child_process";
 import { PrismaClient } from "@prisma/client";
-import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { TestClock } from "../../src/lib/clock.js";
 import { seed } from "../../prisma/seed.js";
+import { asUser, signIn } from "../helpers/auth.js";
+
+/** Session cookie and city for every request (filled in beforeAll). */
+const H: Record<string, string> = {};
 
 const base = process.env.TEST_DATABASE_URL;
 const suite = base ? describe : describe.skip;
@@ -28,12 +31,12 @@ suite("Revision and active recall", () => {
   const clock = new TestClock("2026-11-18"); // Wednesday
   let app: ReturnType<typeof createApp>;
 
-  const revision = async (topicId: string) => (await request(app).get(`/api/topics/${topicId}/revision`).expect(200)).body as { units: Unit[]; attempts: { score: number }[]; prompts: { id: number; source: string }[] };
+  const revision = async (topicId: string) => (await asUser(app, H).get(`/api/topics/${topicId}/revision`).expect(200)).body as { units: Unit[]; attempts: { score: number }[]; prompts: { id: number; source: string }[] };
   const unitOf = async (topicId: string, position: number) => (await revision(topicId)).units[position + 1];
   const subId = async (topicId: string, position: number) => (await prisma.subtopic.findFirstOrThrow({ where: { topicId, position } })).id;
-  const learn = (id: number, completed = true) => request(app).patch(`/api/subtopics/${id}`).send({ completed }).expect(200);
+  const learn = (id: number, completed = true) => asUser(app, H).patch(`/api/subtopics/${id}`).send({ completed }).expect(200);
   const attempt = (topicId: string, subtopicId: number | undefined, body: Record<string, unknown>) =>
-    request(app).post("/api/revision/attempts").send({
+    asUser(app, H).post("/api/revision/attempts").send({
       topicId, subtopicId, templateKey: "explain", retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false, ...body,
     });
 
@@ -41,7 +44,8 @@ suite("Revision and active recall", () => {
     process.env.NODE_ENV = "test";
     execSync("npx prisma migrate deploy", { env: { ...process.env, DATABASE_URL: url }, stdio: "pipe" });
     prisma = new PrismaClient({ datasourceUrl: url });
-    await seed(prisma, () => {}, clock.date);
+    await seed(prisma, () => {}, clock.date, { createEngineeringCity: true });
+    Object.assign(H, (await signIn(prisma)).headers);
     app = createApp({ prisma, clock });
   });
   afterAll(async () => {
@@ -61,7 +65,7 @@ suite("Revision and active recall", () => {
 
   it("A: a learning checkpoint is recorded but never marks the sub-topic learned", async () => {
     const id = await subId("fe.ts", 0);
-    const c = await request(app)
+    const c = await asUser(app, H)
       .post("/api/checkpoints")
       .send({ topicId: "fe.ts", subtopicId: id, templateKey: "explain", result: "PARTIAL", neededAssistance: true, gaps: "Forgot constraints", response: "…" })
       .expect(201);
@@ -77,29 +81,29 @@ suite("Revision and active recall", () => {
     await learn(id);
     const u = await unitOf("fe.ts", 0);
     expect(u.schedule).toMatchObject({ status: "SCHEDULED", nextDueDate: "2026-11-19", openTask: { scheduledDate: "2026-11-19" } });
-    const task = (await request(app).get(`/api/tasks/${u.schedule!.openTask!.id}`).expect(200)).body;
+    const task = (await asUser(app, H).get(`/api/tasks/${u.schedule!.openTask!.id}`).expect(200)).body;
     expect(task).toMatchObject({ kind: "REVISION", source: "REVISION", originalDate: "2026-11-19", estimatedMinutes: 10, revision: { scope: "SUBTOPIC", weak: false } });
     // A revision task is completed only through an assessed attempt (spec §9.3).
-    expect((await request(app).patch(`/api/tasks/${task.id}`).send({ status: "DONE" }).expect(409)).body.error.code).toBe("ATTEMPT_REQUIRED");
-    await request(app).patch(`/api/tasks/${task.id}`).send({ status: "SKIPPED" }).expect(409);
-    await request(app).delete(`/api/tasks/${task.id}`).expect(409);
+    expect((await asUser(app, H).patch(`/api/tasks/${task.id}`).send({ status: "DONE" }).expect(409)).body.error.code).toBe("ATTEMPT_REQUIRED");
+    await asUser(app, H).patch(`/api/tasks/${task.id}`).send({ status: "SKIPPED" }).expect(409);
+    await asUser(app, H).delete(`/api/tasks/${task.id}`).expect(409);
 
     clock.date = "2026-11-19";
-    const today = (await request(app).get("/api/today").expect(200)).body;
+    const today = (await asUser(app, H).get("/api/today").expect(200)).body;
     expect(today.revision).toMatchObject({ plannedMinutes: 10, learningMinutes: 240, competing: true, dueCount: 1 });
     expect(today.revision.sessionTaskIds).toEqual([task.id]);
 
-    const before = (await request(app).get("/api/progress")).body;
+    const before = (await asUser(app, H).get("/api/progress")).body;
     const r = await attempt("fe.ts", id, { score: 3, durationMinutes: 12 }).expect(201);
     expect(r.body).toMatchObject({ nextDueDate: "2026-11-26", intervalDays: 7, correctionPending: false, nextTaskDate: "2026-11-26" });
-    expect((await request(app).get(`/api/tasks/${task.id}`)).body).toMatchObject({ status: "DONE", loggedMinutes: 12 });
+    expect((await asUser(app, H).get(`/api/tasks/${task.id}`)).body).toMatchObject({ status: "DONE", loggedMinutes: 12 });
 
     // G: progress integrity — no learning status, district or car change (REV-15, REV-16).
-    const after = (await request(app).get("/api/progress")).body;
+    const after = (await asUser(app, H).get("/api/progress")).body;
     expect(after.road).toEqual(before.road);
     expect(after.districts[0].subtopicsLearned).toBe(before.districts[0].subtopicsLearned);
     expect(after.revision).toMatchObject({ attempts: 1, successful: 1, distribution: [0, 0, 0, 1] });
-    const topic = (await request(app).get("/api/topics/fe.ts")).body;
+    const topic = (await asUser(app, H).get("/api/topics/fe.ts")).body;
     expect(topic.status).toBe("IN_PROGRESS");
     expect(topic.plannedMinutes).toBe(600); // revision tasks never change the topic's plan
   });
@@ -114,7 +118,7 @@ suite("Revision and active recall", () => {
     expect(u.schedule).toMatchObject({ status: "AWAITING_CORRECTION", consecutiveSuccesses: 0, openTask: null });
     expect((await attempt("fe.ts", id, { score: 3 }).expect(409)).body.error.code).toBe("CORRECTION_REQUIRED");
 
-    const c = await request(app).post(`/api/revision/attempts/${u.schedule!.pendingAttemptId}/correction`).send({}).expect(200);
+    const c = await asUser(app, H).post(`/api/revision/attempts/${u.schedule!.pendingAttemptId}/correction`).send({}).expect(200);
     expect(c.body).toMatchObject({ correctionCompleted: true, nextDueDate: "2026-11-27", nextTaskDate: "2026-11-27" });
   });
 
@@ -140,9 +144,9 @@ suite("Revision and active recall", () => {
     await attempt("fe.ts", id, { score: 1, mistakes: "Mixed up Partial and Pick", correctionCompleted: true }).expect(201);
     clock.date = "2026-12-03";
     await attempt("fe.ts", id, { score: 1, mistakes: "Still unsure about Record", correctionCompleted: true }).expect(201);
-    const p = (await request(app).get("/api/progress")).body;
+    const p = (await asUser(app, H).get("/api/progress")).body;
     expect(p.revision.weakUnits).toEqual([expect.objectContaining({ topicId: "fe.ts", subtopicId: id, consecutiveFailures: 2 })]);
-    const task = (await request(app).get(`/api/tasks?from=2026-12-04&to=2026-12-10`)).body.find(
+    const task = (await asUser(app, H).get(`/api/tasks?from=2026-12-04&to=2026-12-10`)).body.find(
       (t: { revision: unknown; subtopic: { id: number } | null }) => t.revision && t.subtopic?.id === id,
     );
     expect(task.revision.weak).toBe(true);
@@ -162,12 +166,12 @@ suite("Revision and active recall", () => {
     const u = await unitOf("fe.reactivity", 0);
     expect(u.schedule).toMatchObject({ nextDueDate: "2026-11-29", openTask: { scheduledDate: "2026-11-30" } });
     clock.date = "2026-11-29";
-    const sunday = (await request(app).get("/api/today").expect(200)).body;
+    const sunday = (await asUser(app, H).get("/api/today").expect(200)).body;
     expect(sunday).toMatchObject({ isRestDay: true, targetMinutes: 0 });
     expect(sunday.revision.optional.map((t: { id: number }) => t.id)).toContain(u.schedule!.openTask!.id);
     // Not attempting it on Sunday leaves it due; it shows as overdue on Monday's task.
     clock.date = "2026-11-30";
-    const task = (await request(app).get(`/api/tasks/${u.schedule!.openTask!.id}`)).body;
+    const task = (await asUser(app, H).get(`/api/tasks/${u.schedule!.openTask!.id}`)).body;
     expect(task).toMatchObject({ scheduledDate: "2026-11-30", originalDate: "2026-11-29", revision: { overdueDays: 1 } });
   });
 
@@ -177,7 +181,7 @@ suite("Revision and active recall", () => {
     for (const topicId of ["fe.forms", "fe.routing"]) {
       for (const s of await prisma.subtopic.findMany({ where: { topicId } })) await learn(s.id);
     }
-    const tasks = (await request(app).get("/api/tasks?from=2026-12-07&to=2027-01-31")).body as {
+    const tasks = (await asUser(app, H).get("/api/tasks?from=2026-12-07&to=2027-01-31")).body as {
       scheduledDate: string; estimatedMinutes: number; status: string; revision: unknown; originalDate: string; topic: { id: string } | null;
     }[];
     const rev = tasks.filter((t) => t.revision && t.status === "TODO" && ["fe.forms", "fe.routing"].includes(t.topic?.id ?? ""));
@@ -197,10 +201,10 @@ suite("Revision and active recall", () => {
 
   it("re-places overdue revisions on 'Move all forward' and keeps their due date", async () => {
     clock.date = "2026-12-09"; // revisions due 4 and 8 Dec were not attempted
-    const bulk = await request(app).post("/api/tasks/reschedule-overdue").send({}).expect(200);
+    const bulk = await asUser(app, H).post("/api/tasks/reschedule-overdue").send({}).expect(200);
     const revMoves = [];
     for (const m of bulk.body.moved) {
-      const t = (await request(app).get(`/api/tasks/${m.id}`)).body;
+      const t = (await asUser(app, H).get(`/api/tasks/${m.id}`)).body;
       if (t.revision) revMoves.push(t);
     }
     expect(revMoves.length).toBeGreaterThan(0);
@@ -209,7 +213,7 @@ suite("Revision and active recall", () => {
       expect(t.originalDate < "2026-12-09").toBe(true);
       expect(t.revision.overdueDays).toBeGreaterThan(0);
     }
-    expect((await request(app).get("/api/today")).body.carriedOver).toEqual([]);
+    expect((await asUser(app, H).get("/api/today")).body.carriedOver).toEqual([]);
   });
 
   it("suspends a unit whose sub-topic is unticked, and resumes it when ticked again", async () => {
@@ -223,33 +227,33 @@ suite("Revision and active recall", () => {
 
   it("manages learner prompts; curriculum prompts can only be switched off", async () => {
     const id = await subId("fe.ts", 2);
-    const p = await request(app)
+    const p = await asUser(app, H)
       .post("/api/prompts")
       .send({ topicId: "fe.ts", subtopicId: id, content: "How does narrowing work with `in`?", retrievalMethod: "WRITTEN", expectedAnswer: "Checks a property; TS narrows the union." })
       .expect(201);
     expect(p.body).toMatchObject({ source: "LEARNER", isActive: true });
     const u = await unitOf("fe.ts", 2);
     expect(u.options[0]).toMatchObject({ promptId: p.body.id, source: "LEARNER" });
-    await request(app).patch(`/api/prompts/${p.body.id}`).send({ expectedAnswer: "in operator narrows" }).expect(200);
+    await asUser(app, H).patch(`/api/prompts/${p.body.id}`).send({ expectedAnswer: "in operator narrows" }).expect(200);
 
     const cur = (await revision("fe.ts")).prompts.find((x) => x.source === "CURRICULUM")!;
-    expect((await request(app).patch(`/api/prompts/${cur.id}`).send({ content: "changed" }).expect(409)).body.error.code).toBe("PROMPT_READ_ONLY");
-    await request(app).patch(`/api/prompts/${cur.id}`).send({ isActive: false }).expect(200);
-    await request(app).patch(`/api/prompts/${cur.id}`).send({ isActive: true }).expect(200);
-    await request(app).delete(`/api/prompts/${cur.id}`).expect(409);
-    await request(app).delete(`/api/prompts/${p.body.id}`).expect(204);
-    await request(app).post("/api/prompts").send({ topicId: "fe.ts", subtopicId: 999999, content: "Valid question?", retrievalMethod: "WRITTEN", expectedAnswer: "x" }).expect(404);
+    expect((await asUser(app, H).patch(`/api/prompts/${cur.id}`).send({ content: "changed" }).expect(409)).body.error.code).toBe("PROMPT_READ_ONLY");
+    await asUser(app, H).patch(`/api/prompts/${cur.id}`).send({ isActive: false }).expect(200);
+    await asUser(app, H).patch(`/api/prompts/${cur.id}`).send({ isActive: true }).expect(200);
+    await asUser(app, H).delete(`/api/prompts/${cur.id}`).expect(409);
+    await asUser(app, H).delete(`/api/prompts/${p.body.id}`).expect(204);
+    await asUser(app, H).post("/api/prompts").send({ topicId: "fe.ts", subtopicId: 999999, content: "Valid question?", retrievalMethod: "WRITTEN", expectedAnswer: "x" }).expect(404);
   });
 
   it("validates attempts and keeps the revision allowance configurable", async () => {
     const id = await subId("fe.ts", 0);
-    await request(app).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId: id, score: 4, retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false, templateKey: "explain" }).expect(400);
-    await request(app).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId: id, score: 2, retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false }).expect(400);
-    await request(app).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId: id, score: 2, retrievalMethod: "TELEPATHY", usedHints: false, usedNotes: false, templateKey: "explain" }).expect(400);
-    const s = await request(app).patch("/api/settings").send({ revisionDailyMinutes: 45 }).expect(200);
+    await asUser(app, H).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId: id, score: 4, retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false, templateKey: "explain" }).expect(400);
+    await asUser(app, H).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId: id, score: 2, retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false }).expect(400);
+    await asUser(app, H).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId: id, score: 2, retrievalMethod: "TELEPATHY", usedHints: false, usedNotes: false, templateKey: "explain" }).expect(400);
+    const s = await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 45 }).expect(200);
     expect(s.body.revisionDailyMinutes).toBe(45);
-    await request(app).patch("/api/settings").send({ revisionDailyMinutes: 300 }).expect(400);
-    await request(app).patch("/api/settings").send({ revisionDailyMinutes: 30 }).expect(200);
+    await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 300 }).expect(400);
+    await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 30 }).expect(200);
   });
 
   it("refinement: explicit score, reschedule keeps the due date, one attempt per cycle, no reopening", async () => {
@@ -258,16 +262,16 @@ suite("Revision and active recall", () => {
     await learn(id);
     clock.date = "2026-12-11";
     // A score is mandatory and must be 0–3.
-    await request(app).post("/api/revision/attempts").send({ topicId: "fe.ui", subtopicId: id, templateKey: "explain", retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false }).expect(400);
+    await asUser(app, H).post("/api/revision/attempts").send({ topicId: "fe.ui", subtopicId: id, templateKey: "explain", retrievalMethod: "CONCEPTUAL", usedHints: false, usedNotes: false }).expect(400);
     await attempt("fe.ui", id, { score: -1 }).expect(400);
     await attempt("fe.ui", id, { score: 2.5 }).expect(400);
 
     const task = (await unitOf("fe.ui", 0)).schedule!.openTask!;
     const to = task.scheduledDate === "2026-12-16" ? "2026-12-17" : "2026-12-16";
-    const moved = (await request(app).patch(`/api/tasks/${task.id}`).send({ scheduledDate: to }).expect(200)).body;
+    const moved = (await asUser(app, H).patch(`/api/tasks/${task.id}`).send({ scheduledDate: to }).expect(200)).body;
     expect(moved).toMatchObject({ originalDate: "2026-12-11", scheduledDate: to, rescheduleCount: 1 });
     clock.date = "2026-12-12";
-    expect((await request(app).get(`/api/tasks/${task.id}`)).body.revision.overdueDays).toBe(1);
+    expect((await asUser(app, H).get(`/api/tasks/${task.id}`)).body.revision.overdueDays).toBe(1);
 
     // Double submission: the row lock serialises them and only one attempt is recorded for the day.
     const [r1, r2] = await Promise.all([attempt("fe.ui", id, { score: 3 }), attempt("fe.ui", id, { score: 3 })]);
@@ -276,10 +280,10 @@ suite("Revision and active recall", () => {
     expect(sched.attempts).toHaveLength(1);
     expect(sched.attempts[0].taskId).toBe(task.id);
     expect(sched.tasks.filter((t) => t.status === "TODO")).toHaveLength(1);
-    const done = (await request(app).get(`/api/tasks/${task.id}`)).body;
+    const done = (await asUser(app, H).get(`/api/tasks/${task.id}`)).body;
     expect(done).toMatchObject({ status: "DONE", scheduledDate: "2026-12-12", originalDate: "2026-12-11" }); // counted on the day it was done
     // A recorded revision cannot be reopened, ticked or skipped by hand.
-    expect((await request(app).patch(`/api/tasks/${task.id}`).send({ status: "TODO" }).expect(409)).body.error.code).toBe("REVISION_RECORDED");
+    expect((await asUser(app, H).patch(`/api/tasks/${task.id}`).send({ status: "TODO" }).expect(409)).body.error.code).toBe("REVISION_RECORDED");
   });
 
   it("refinement: confirming a correction is not a successful retrieval, and history never changes", async () => {
@@ -290,7 +294,7 @@ suite("Revision and active recall", () => {
     const r = await attempt("fe.ui", id, { score: 1, mistakes: "Forgot aria-expanded", correctionCompleted: false }).expect(201);
     const before = await prisma.revisionSchedule.findUniqueOrThrow({ where: { unit: `s:${id}` } });
     expect(before).toMatchObject({ consecutiveSuccesses: 0, consecutiveFailures: 1, correctionPending: true });
-    await request(app).post(`/api/revision/attempts/${r.body.attempt.id}/correction`).send({}).expect(200);
+    await asUser(app, H).post(`/api/revision/attempts/${r.body.attempt.id}/correction`).send({}).expect(200);
     const after = await prisma.revisionSchedule.findUniqueOrThrow({ where: { unit: `s:${id}` } });
     expect(after).toMatchObject({ consecutiveSuccesses: 0, consecutiveFailures: 1, correctionPending: false, lastScore: 1 });
     const a = await prisma.revisionAttempt.findUniqueOrThrow({ where: { id: r.body.attempt.id } });
@@ -310,10 +314,10 @@ suite("Revision and active recall", () => {
     const open = await prisma.task.findFirstOrThrow({ where: { subtopicId: id, status: "TODO", source: "REVISION" } });
     const old = (await prisma.subtopic.findUniqueOrThrow({ where: { id } })).name;
     await prisma.subtopic.update({ where: { id }, data: { name: "Accessibility (renamed)" } });
-    expect((await request(app).get(`/api/tasks/${open.id}`)).body.title).toBe("Revise: Accessibility (renamed)");
+    expect((await asUser(app, H).get(`/api/tasks/${open.id}`)).body.title).toBe("Revise: Accessibility (renamed)");
     await prisma.subtopic.update({ where: { id }, data: { name: old } });
 
-    const w = (await request(app).get("/api/week?date=2026-12-14").expect(200)).body;
+    const w = (await asUser(app, H).get("/api/week?date=2026-12-14").expect(200)).body;
     for (const d of w.days) expect(d.overTargetMinutes).toBe(d.inJourney ? Math.max(0, d.plannedMinutes - d.targetMinutes) : 0);
     expect(w.revision.overTargetMinutes).toBe(w.days.reduce((a: number, d: { overTargetMinutes: number }) => a + d.overTargetMinutes, 0));
     expect(w.revision).toMatchObject({ dailyAllowanceMinutes: 30, weeklyOvertimeMinutes: 120 });
@@ -323,19 +327,19 @@ suite("Revision and active recall", () => {
 
   it("refinement: strict mode keeps every study day within its target", async () => {
     clock.date = "2026-12-15";
-    await request(app).patch("/api/settings").send({ revisionDailyMinutes: 0, revisionWeeklyOvertimeMinutes: 0 }).expect(200);
+    await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 0, revisionWeeklyOvertimeMinutes: 0 }).expect(200);
     const id = await subId("fe.ui", 2);
     await learn(id);
     const t = await prisma.task.findFirstOrThrow({ where: { subtopicId: id, status: "TODO", source: "REVISION" } });
     const day = await prisma.task.findMany({ where: { scheduledDate: t.scheduledDate, status: { not: "SKIPPED" } } });
     expect(day.reduce((a, x) => a + x.estimatedMinutes, 0)).toBeLessThanOrEqual(240);
-    await request(app).patch("/api/settings").send({ revisionDailyMinutes: 30, revisionWeeklyOvertimeMinutes: 120 }).expect(200);
+    await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 30, revisionWeeklyOvertimeMinutes: 120 }).expect(200);
   });
 
   it("serves the Revision section overview from the one schedule, read-only and prioritised", async () => {
     clock.date = "2026-12-09";
     const tasksBefore = await prisma.task.count();
-    const o = (await request(app).get("/api/revision/overview").expect(200)).body;
+    const o = (await asUser(app, H).get("/api/revision/overview").expect(200)).body;
     expect(await prisma.task.count()).toBe(tasksBefore); // reading never schedules anything
 
     type U = { scheduleId: number; nextDueDate: string | null; weak: boolean; correctionPending: boolean; topicId: string; status: string; pendingAttemptId: number | null };
@@ -369,7 +373,7 @@ suite("Revision and active recall", () => {
       attempts: await prisma.revisionAttempt.count(), prompts: await prisma.revisionPrompt.count(),
     });
     const before = await counts();
-    await seed(prisma, () => {}, clock.date);
+    await seed(prisma, () => {}, clock.date, { createEngineeringCity: true });
     expect(await counts()).toEqual(before);
     // The partial unique index enforces one open revision task per unit (REV-13).
     const open = await prisma.task.findFirstOrThrow({ where: { source: "REVISION", status: "TODO" } });

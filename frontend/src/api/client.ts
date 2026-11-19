@@ -1,10 +1,11 @@
 import type {
+  Account, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template,
   AiEvaluation, AiStatus, AttemptResult, Checkpoint, CheckpointResult, Curriculum, Progress, Prompt, RetrievalMethod, Session, Stage, Task, TaskKind,
   RevisionOverview, TaskStatus, Today, Topic, TopicRevision, Week,
 } from "./types";
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public details?: unknown) {
     super(message);
   }
 }
@@ -13,22 +14,32 @@ export class ApiError extends Error {
 // never allows, so the backend can tell its own pages from cross-site requests (AI design §8.2).
 const BASE_HEADERS = { "X-Blueprint": "1" };
 
+/** The city every learning request works in (X-City-Id); the backend checks that it belongs to the signed-in user. */
+let currentCity: string | null = null;
+export const setCurrentCity = (id: string | null) => {
+  currentCity = id;
+};
+export const getCurrentCity = () => currentCity;
+
+/** Fired when the session has ended (401): the app returns to the sign-in screen. */
+export const SESSION_ENDED = "blueprint:session-ended";
+
 async function request<T>(method: string, path: string, body?: unknown, raw?: { data: Blob; type: string }): Promise<T> {
   let res: Response;
+  const headers: Record<string, string> = { ...BASE_HEADERS, ...(currentCity ? { "X-City-Id": currentCity } : {}) };
+  if (raw) headers["Content-Type"] = raw.type;
+  else if (body !== undefined) headers["Content-Type"] = "application/json";
   try {
-    res = await fetch(`/api${path}`, {
-      method,
-      headers: raw ? { ...BASE_HEADERS, "Content-Type": raw.type } : body === undefined ? BASE_HEADERS : { ...BASE_HEADERS, "Content-Type": "application/json" },
-      body: raw ? raw.data : body === undefined ? undefined : JSON.stringify(body),
-    });
+    res = await fetch(`/api${path}`, { method, headers, credentials: "same-origin", body: raw ? raw.data : body === undefined ? undefined : JSON.stringify(body) });
   } catch {
-    throw new ApiError(0, "NETWORK_ERROR", "Can't reach the Engineering City server.");
+    throw new ApiError(0, "NETWORK_ERROR", "Can't reach the Blueprint server.");
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const e = data?.error;
-    throw new ApiError(res.status, e?.code ?? "HTTP_ERROR", e?.message ?? `Request failed (${res.status})`);
+    if (res.status === 401 && e?.code === "AUTH_REQUIRED" && typeof window !== "undefined") window.dispatchEvent(new Event(SESSION_ENDED));
+    throw new ApiError(res.status, e?.code ?? "HTTP_ERROR", e?.message ?? `Request failed (${res.status})`, e?.details);
   }
   return data as T;
 }
@@ -137,4 +148,47 @@ export const api = {
   transcribe: (scheduleId: number, wav: Blob) =>
     request<{ text: string; audioSeconds: number }>("POST", `/ai/transcriptions?scheduleId=${scheduleId}`, undefined, { data: wav, type: "audio/wav" }),
   evaluate: (body: EvaluationInput) => request<AiEvaluation>("POST", "/revision/evaluations", body),
+};
+
+/* ---------------- accounts, cities and curriculum versions (multi-user sprint) ---------------- */
+
+export const auth = {
+  me: () => request<{ user: Account }>("GET", "/auth/me"),
+  register: (b: { name: string; email: string; password: string; passwordConfirm: string; acceptTerms: boolean; acknowledgePrivacy: boolean }) =>
+    request<{ message: string }>("POST", "/auth/register", b),
+  verifyEmail: (token: string) => request<{ message: string }>("POST", "/auth/verify-email", { token }),
+  resendVerification: (email: string) => request<{ message: string }>("POST", "/auth/resend-verification", { email }),
+  login: (b: { email: string; password: string; remember: boolean }) => request<{ user: Account }>("POST", "/auth/login", b),
+  logout: () => request<void>("POST", "/auth/logout", {}),
+  forgotPassword: (email: string) => request<{ message: string }>("POST", "/auth/forgot-password", { email }),
+  resetPassword: (b: { token: string; password: string; passwordConfirm: string }) => request<{ message: string }>("POST", "/auth/reset-password", b),
+};
+
+export const account = {
+  update: (b: Partial<Pick<Account, "name" | "timezone" | "language">> & { preferences?: Account["preferences"]; onboarded?: true }) =>
+    request<{ user: Account }>("PATCH", "/account", b),
+  changePassword: (b: { currentPassword: string; newPassword: string; newPasswordConfirm: string }) => request<{ message: string }>("POST", "/account/password", b),
+  consents: () => request<ConsentState>("GET", "/account/consents"),
+  setConsent: (purpose: "AI_PROCESSING" | "AI_CURRICULUM", granted: boolean) => request<ConsentState>("POST", "/account/consents", { purpose, granted }),
+  /** The export as a file (download), never kept in memory longer than needed. */
+  exportUrl: "/api/account/export",
+  remove: (password: string) => request<void>("DELETE", "/account", { password, confirm: "DELETE" }),
+};
+
+export const cities = {
+  list: () => request<CitySummary[]>("GET", "/cities"),
+  get: (id: string) => request<CitySummary>("GET", `/cities/${encodeURIComponent(id)}`),
+  create: (b: NewCity) => request<CitySummary>("POST", "/cities", b),
+  update: (id: string, b: Partial<NewCity>) => request<CitySummary>("PATCH", `/cities/${encodeURIComponent(id)}`, b),
+  status: (id: string, action: "pause" | "resume" | "complete" | "reopen" | "archive" | "restore") => request<CitySummary>("POST", `/cities/${encodeURIComponent(id)}/status`, { action }),
+  remove: (id: string, confirmName: string) => request<void>("DELETE", `/cities/${encodeURIComponent(id)}`, { confirmName }),
+  templates: () => request<Template[]>("GET", "/curriculum/templates"),
+  versions: (id: string) => request<CurriculumVersion[]>("GET", `/cities/${encodeURIComponent(id)}/curriculum/versions`),
+  version: (id: string, v: number) => request<CurriculumVersion>("GET", `/cities/${encodeURIComponent(id)}/curriculum/versions/${v}`),
+  propose: (id: string, b: { source: "TEMPLATE"; template: "engineering"; start?: string } | { source: "IMPORT"; document: unknown; note?: string }) =>
+    request<CityProposal>("POST", `/cities/${encodeURIComponent(id)}/curriculum/proposals`, b),
+  generation: () => request<GenerationAvailability>("GET", "/curriculum/generation"),
+  generate: (id: string) => request<{ version: number; status: "GENERATING" }>("POST", `/cities/${encodeURIComponent(id)}/curriculum/generate`, {}),
+  approve: (id: string, v: number) => request<CitySummary>("POST", `/cities/${encodeURIComponent(id)}/curriculum/versions/${v}/approve`, {}),
+  reject: (id: string, v: number) => request<void>("POST", `/cities/${encodeURIComponent(id)}/curriculum/versions/${v}/reject`, {}),
 };

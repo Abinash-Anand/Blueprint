@@ -92,6 +92,21 @@ Back up weekly, after the Saturday review, and keep the last four. `backups/*.du
 
 Only the web server is published, and only on `127.0.0.1`. The API and the database are not reachable from your network.
 
+### 5.1 E-mail (account confirmation and password reset)
+
+Without a mail server, Blueprint saves each e-mail as a text file in `mail-outbox/` (git-ignored; the links in it are one-time secrets). To receive real e-mails, give it an SMTP account in `.env`. With Gmail:
+
+1. Turn on 2-Step Verification for the Google account, then create an app password at https://myaccount.google.com/apppasswords (a 16-letter code, not your normal password).
+2. In `.env`: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_USER=` your Gmail address, `SMTP_PASS=` the app password. Messages are sent from that address (Gmail allows about 500 a day).
+3. Apply and test:
+
+```bash
+docker compose up -d backend
+docker compose exec backend node dist/src/tools/mailTest.js you@example.com
+```
+
+The backend log says "Mail server reachable and login accepted" at start-up, or "Mail server check failed" with an error code (`EAUTH`: wrong user or app password). Any other SMTP provider works the same way (its host, port 587 or 465, user, password). Note that the provider handles the address and content of these e-mails. For a public deployment use a transactional provider with your own domain and SPF/DKIM records.
+
 ## 6. How the plan works
 
 | Stage | Dates | Days |
@@ -132,7 +147,11 @@ Off by default. When on, a revision answer can be spoken (transcribed, then edit
 
 **Privacy:** on the free tier Google may keep what you send and people may review it; Blueprint never stores recordings and sends no notes, history or other topics. The paid alternative for checking is Claude Haiku 5.5 (`AI_EVALUATION_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`); transcription stays on Gemini.
 
-**Model and limits:** `gemini-3.8-flash` was chosen after the benchmark (no false passes). The free tier allows about 20 requests a day per model, resetting at 09:00 Berlin; set `AI_DAILY_REQUEST_LIMIT=18` so the app stops just before Google refuses. A voice revision uses two requests (transcription and check), a typed one uses one.
+**Provider (since 19 Nov 2026): GWDG Academic Cloud.** With a SAIA key from your university's Academic Cloud account (`SAIA_API_KEY` in `.env`), answer checking runs on **Gemma 4 31B** (benchmark: 0 false passes, 99 % valid output; fallback Qwen 3.8 27B), speech on **Whisper Large v3** (fallback v2), and curriculum generation on **Qwen 3.5 397B**. GWDG runs these models in Germany and states that it does not store what is sent. Settings: `AI_EVALUATION_PROVIDER=gwdg`, `AI_EVALUATION_MODEL=gemma-4-31b-it`, `AI_TRANSCRIPTION_MODEL=whisper-large-v3`, `AI_DAILY_REQUEST_LIMIT=300` (GWDG allows 800 a day per key). Check access with `cd backend && npx tsx --env-file=../.env eval/models.ts`; try generation with `eval/generate.ts`. Changing provider renews the AI notice, so everyone confirms it once again.
+
+**Gemini (before 19 Nov 2026):** `gemini-3.8-flash` was chosen after the benchmark (no false passes). The free tier allows about 20 requests a day per model, resetting at 09:00 Berlin; set `AI_DAILY_REQUEST_LIMIT=18` so the app stops just before Google refuses. A voice revision uses two requests (transcription and check), a typed one uses one.
+
+**When Google is overloaded:** Google sometimes answers "high demand" (HTTP 503) for a model. The app then tries `gemini-2.5-flash` once (its own free quota, same provider, same data rules); the check records which model answered. Only if both are busy do you see "the AI provider is overloaded right now", and the revision carries on without AI. Set `AI_FALLBACK_MODEL` to another model, or to `none` to turn this off. Quota refusals and timeouts are never retried. `docker compose logs backend` shows each provider error with its HTTP status.
 
 **Benchmark the answer checker** (96 constructed cases, 12 questions × 8 variants; results in `backend/eval/results/`, git-ignored). On the free tier run it in parts, one question per day or so:
 

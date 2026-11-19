@@ -349,7 +349,7 @@ Migration CHECKs, as in the revision migration: `suggestedScore` and `selfScore`
 | `POST /api/revision/evaluations` | `{ scheduleId, promptId?, promptText, transcript, parentId?, followUpQuestion? }` | `EvaluationDTO` | Dedupe by hash (§7.1). |
 | `POST /api/revision/attempts` (existing) | existing body + `evaluationId?`, `selfScore?`, `inputMode?` | existing | All existing rules unchanged; link checks in §5.3. |
 
-All new routes return the existing error envelope. New codes: `AI_DISABLED` (403), `AI_CONSENT_REQUIRED` (403), `AI_BUDGET_REACHED` (429), `AI_RATE_LIMITED` (429), `AI_TIMEOUT` (504, retryable), `AI_PROVIDER_ERROR` (502, retryable), `AI_INVALID_OUTPUT` (502, retryable), `AUDIO_TOO_LARGE` (413), `AUDIO_UNSUPPORTED` (415), `EVALUATION_IN_PROGRESS` (409, retryable), `EVALUATION_STALE` (409). Provider messages, prompts and stack traces are never returned.
+All new routes return the existing error envelope. New codes: `AI_DISABLED` (403), `AI_CONSENT_REQUIRED` (403), `AI_BUDGET_REACHED` (429), `AI_RATE_LIMITED` (429), `AI_TIMEOUT` (504, retryable), `AI_PROVIDER_BUSY` (503, retryable: the provider is overloaded, after the fallback model), `AI_PROVIDER_ERROR` (502, retryable), `AI_INVALID_OUTPUT` (502, retryable), `AUDIO_TOO_LARGE` (413), `AUDIO_UNSUPPORTED` (415), `EVALUATION_IN_PROGRESS` (409, retryable), `EVALUATION_STALE` (409). Provider messages, prompts and stack traces are never returned.
 
 ```json
 {
@@ -619,6 +619,34 @@ Free-tier conditions:
 - **Quota:** Google sets the daily request limit per project and shows it in AI Studio; it has been reduced before and may change. `AI_DAILY_REQUEST_LIMIT` stops the app just below it, and a provider 429 shows as `AI_RATE_LIMITED`. In both cases the revision continues without AI (I-4). Expected use is 5–15 calls a day.
 - **Data:** free-tier inputs may be used by Google and read by human reviewers (§8.3). Revision answers are low-sensitivity, but the recordings are the learner's voice; the consent notice says so, and moving to the paid tier removes that use.
 - **Acceptance:** Gemini becomes the production evaluator only after it meets the §9.3 gates, with particular attention to false passes on vague, partial and misconceived answers.
+
+**Same-provider fallback (added 18 Nov 2026).** On the first live day, `gemini-3.8-flash` answered every call with HTTP 503 "high demand" while `gemini-2.5-flash` answered normally. When the provider reports an outage (HTTP 5xx) for the main model, the app now tries `AI_FALLBACK_MODEL` once (default `gemini-2.5-flash`; `none` turns it off). This is not the cross-provider failover rejected above: it stays with Google under the same notice and data terms, and each evaluation stores the model that actually answered (`RevisionEvaluation.model`), so analytics can tell them apart. Quota refusals (429), timeouts, bad requests and invalid output are never retried: another model would not fix them, or would double the wait. The fallback is a second request: it passes the same hourly and daily limits and is recorded in `AiUsage`. If both models fail, the learner sees `AI_PROVIDER_BUSY` ("the AI provider is overloaded right now") and the revision continues without AI (I-4). Each provider error is logged with its kind and HTTP status (no content, no key).
+
+## 10.2 GWDG Academic Cloud (decision and switch-over, 19 Nov 2026)
+
+**Benchmark on GWDG (96 cases, two runs each):**
+
+| Model | False passes | Valid output (gate ≥ 98 %) | Repeatable | Injections ignored | Exact | Within ±1 | Latency p50 / p95 |
+|---|---|---|---|---|---|---|---|
+| **Gemma 4 31B** | **0 of 119** | **99.0 %** | 100 % | 12 of 12 | 86.2 % | 100 % | 6.0 s / 8.1 s |
+| Qwen 3.8 27B | 0 of 108 | 92.7 % (fails: 12 replies omitted a criterion, mostly Docker and Kubernetes) | 100 % | 11 of 11 | 88.8 % | 100 % | 5.8 s / 7.8 s |
+
+Gemma 4 31B is the primary answer checker and Qwen 3.8 27B its fallback. Both models score strictly: Gemma marked 13 complete answers one point low. That is the safe direction, and the learner's own score is always the one saved. Whisper Large v3 is the speech model (access confirmed; the speech test on the learner's voice is still to do). The AI notice moved to policy version 2026-11-19, so consent given under the Gemini notice no longer counts and is asked again.
+
+The Gemini free tier (about 20 requests a day) is too small for daily use. Blueprint moves to the GWDG Academic Cloud SAIA API (OpenAI-compatible; GWDG states that prompts to its self-hosted models are never stored):
+
+| Job | Model | Same-provider fallback |
+|---|---|---|
+| Answer checking | Qwen 3.8 27B (`qwen3.8-27b`), thinking off | Gemma 4 31B (`gemma-4-31b-it`) |
+| Speech to text | Whisper Large v3 (`whisper-large-v3`), curriculum terms as Whisper's prompt | Whisper Large v2 |
+| Curriculum generation (later) | Qwen 3.5 397B A17B | none (retry) |
+
+- **Adapter:** `providers/gwdg.ts`. Answer checking uses `/chat/completions` and asks for schema-constrained JSON. If the server rejects that, it steps down to JSON mode with the schema in the prompt. Every reply passes the same schema, quote and score checks as before. Speech uses `/audio/transcriptions` (multipart).
+- **Settings:** `AI_EVALUATION_PROVIDER=gwdg`, `SAIA_API_KEY`, optional `SAIA_BASE_URL` / `SAIA_AUDIO_BASE_URL`, per-job fallbacks (`AI_EVALUATION_FALLBACK_MODEL`, `AI_TRANSCRIPTION_FALLBACK_MODEL`), `AI_DISABLE_THINKING`.
+- **Fallbacks:** stay with GWDG and trigger on HTTP 5xx only. There is never a fallback to Gemini, so answers never reach a second company.
+- **Access check:** `eval/models.ts` lists the models available to the key, matches the planned ids and tests Whisper access.
+- **Switch-over conditions:** the key is in place; the ids are confirmed; the 96-case benchmark shows zero false passes (the winner of Qwen and Gemma becomes primary); the speech test passes; the AI notice and privacy notice name GWDG and consent is asked again under a new policy version. Gemini then leaves the defaults; its adapter stays.
+- **Still to do:** per-user limits on the shared key (usage ledger with a user column), and curriculum generation as a background job (staged, validated against the contract, one repair round).
 
 `AI_ENABLED=false` (the default) leaves the application exactly as it is today. The health check never depends on the provider.
 

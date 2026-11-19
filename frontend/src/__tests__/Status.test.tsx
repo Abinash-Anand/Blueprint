@@ -109,7 +109,8 @@ describe("motion", () => {
     const css = readFileSync(join(__dirname, "..", "styles.css"), "utf8");
     for (const t of ["--dur-fast", "--dur-base", "--dur-slow", "--ease-standard", "--lift-1", "--focus-ring"]) expect(css).toContain(`${t}:`);
     for (const t of TONES) expect(css).toContain(`.t-${t}{`);
-    const reduced = css.match(/@media \(prefers-reduced-motion:reduce\)\{\s*:root\{([^}]*)\}/);
+    const reduced = css.match(/@media \(prefers-reduced-motion:reduce\)\{\s*:root:not\(\[data-motion="full"\]\)\{([^}]*)\}/);
+    expect(css).toMatch(/:root\[data-motion="reduce"\]\{--dur-fast:0ms/); // the account setting forces it too
     expect(reduced?.[1]).toContain("--dur-fast:0ms");
     expect(reduced?.[1]).toContain("--lift-1:0px");
     // No status colours are hard-coded per component: badges read the tone variables only.
@@ -121,4 +122,11 @@ it("renders a presentation exactly as given (the frontend does not reclassify)",
   const p: Presentation = { state: "stage.delayed", tone: "danger", variant: "soft", icon: "alert-circle", label: "Delayed by 3 days" };
   render(<StatusBadge p={p} />);
   expect(screen.getByText("Delayed by 3 days").closest(".sb")).toHaveAttribute("data-state", "stage.delayed");
+});
+
+it("lets a stale error message be dismissed", () => {
+  const onDismiss = vi.fn();
+  render(<FeedbackMessage tone="danger" onDismiss={onDismiss}>Your recording couldn't be transcribed.</FeedbackMessage>);
+  screen.getByRole("button", { name: "Dismiss message" }).click();
+  expect(onDismiss).toHaveBeenCalledTimes(1);
 });

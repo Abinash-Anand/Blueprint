@@ -149,7 +149,7 @@ export function Recorder({
         </>
       )}
       {state === "working" && <LoadingState tone="ai" text="Transcribing your answer…" />}
-      {error && <FeedbackMessage tone="danger" className="rv-rec-err">{error}</FeedbackMessage>}
+      {error && <FeedbackMessage tone="danger" className="rv-rec-err" onDismiss={() => setError(null)}>{error}</FeedbackMessage>}
     </div>
   );
 }

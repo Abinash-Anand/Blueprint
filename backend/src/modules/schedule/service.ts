@@ -26,7 +26,7 @@ export async function loadTargets(prisma: Db): Promise<Record<number, number>> {
 }
 
 export async function loadSettings(prisma: Db) {
-  const s = await prisma.settings.findUnique({ where: { id: 1 } });
+  const s = await prisma.settings.findFirst();
   if (!s) throw new HttpError(500, "NOT_SEEDED", "Settings missing: the database has not been seeded");
   return {
     journeyStart: d2i(s.journeyStart), journeyEnd: d2i(s.journeyEnd), timezone: s.timezone,
@@ -65,15 +65,11 @@ export function scheduleService(prisma: PrismaClient) {
     async patchSettings(body: { weeklyTargets?: { weekday: number; targetMinutes: number }[]; revisionDailyMinutes?: number; revisionWeeklyOvertimeMinutes?: number }) {
       await prisma.$transaction([
         ...(body.weeklyTargets ?? []).map((t) =>
-          prisma.weeklyTarget.upsert({
-            where: { weekday: t.weekday },
-            update: { targetMinutes: t.targetMinutes },
-            create: { weekday: t.weekday, targetMinutes: t.targetMinutes },
-          }),
+          // Every city has all seven rows (created with its curriculum); the scoped client limits this to the city.
+          prisma.weeklyTarget.updateMany({ where: { weekday: t.weekday }, data: { targetMinutes: t.targetMinutes } }),
         ),
         ...(body.revisionDailyMinutes !== undefined || body.revisionWeeklyOvertimeMinutes !== undefined
-          ? [prisma.settings.update({
-              where: { id: 1 },
+          ? [prisma.settings.updateMany({
               data: {
                 ...(body.revisionDailyMinutes !== undefined && { revisionDailyMinutes: body.revisionDailyMinutes }),
                 ...(body.revisionWeeklyOvertimeMinutes !== undefined && { revisionWeeklyOvertimeMinutes: body.revisionWeeklyOvertimeMinutes }),

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { type Request, Router } from "express";
 import { z } from "zod";
 import type { Deps } from "../../app.js";
 import { validate } from "../../lib/http.js";
@@ -74,35 +74,34 @@ const promptPatch = z
   .strict()
   .refine((b) => Object.keys(b).length > 0, { message: "Provide at least one field" });
 
-export function revisionRoutes({ prisma, clock }: Deps) {
-  const svc = revisionService(prisma, clock);
-  const overview = revisionOverview(prisma, clock);
+export function revisionRoutes({ clock }: Deps) {
+  const svc = (req: Request) => revisionService(req.db, clock);
   const r = Router();
-  r.get("/revision/overview", async (_req, res) => {
-    res.json(await overview());
+  r.get("/revision/overview", async (req, res) => {
+    res.json(await revisionOverview(req.db, clock)());
   });
   r.get("/topics/:id/revision", async (req, res) => {
-    res.json(await svc.topicRevision(validate(slugParam, req.params).id));
+    res.json(await svc(req).topicRevision(validate(slugParam, req.params).id));
   });
   r.post("/revision/attempts", async (req, res) => {
-    res.status(201).json(await svc.submitAttempt(validate(attemptBody, req.body)));
+    res.status(201).json(await svc(req).submitAttempt(validate(attemptBody, req.body)));
   });
   r.post("/revision/attempts/:id/correction", async (req, res) => {
     const { id } = validate(idParam, req.params);
-    res.json(await svc.correctAttempt(id, validate(correctionBody, req.body ?? {}).mistakes));
+    res.json(await svc(req).correctAttempt(id, validate(correctionBody, req.body ?? {}).mistakes));
   });
   r.post("/checkpoints", async (req, res) => {
-    res.status(201).json(await svc.createCheckpoint(validate(checkpointBody, req.body)));
+    res.status(201).json(await svc(req).createCheckpoint(validate(checkpointBody, req.body)));
   });
   r.post("/prompts", async (req, res) => {
-    res.status(201).json(await svc.createPrompt(validate(promptBody, req.body)));
+    res.status(201).json(await svc(req).createPrompt(validate(promptBody, req.body)));
   });
   r.patch("/prompts/:id", async (req, res) => {
     const { id } = validate(idParam, req.params);
-    res.json(await svc.patchPrompt(id, validate(promptPatch, req.body)));
+    res.json(await svc(req).patchPrompt(id, validate(promptPatch, req.body)));
   });
   r.delete("/prompts/:id", async (req, res) => {
-    await svc.deletePrompt(validate(idParam, req.params).id);
+    await svc(req).deletePrompt(validate(idParam, req.params).id);
     res.status(204).end();
   });
   return r;

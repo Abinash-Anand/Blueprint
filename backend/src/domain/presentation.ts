@@ -96,6 +96,12 @@ export const STATES = {
   "attention.due": s("info", "soft", "clock"),
   "attention.overdue": s("danger", "solid", "alert-circle"),
 
+  "city.draft": s("neutral", "outline", "edit"),
+  "city.active": s("info", "soft", "target"),
+  "city.paused": s("warning", "soft", "pause"),
+  "city.completed": s("success", "solid", "check-circle"),
+  "city.archived": s("neutral", "plain", "minus"),
+
   "ai.checking": s("ai", "soft", "sparkle"),
   "ai.suggestion": s("ai", "soft", "sparkle"),
   "ai.failed": s("danger", "soft", "alert-circle"),
@@ -224,6 +230,20 @@ export function milestonePresentation(m: { type: "PRACTICE" | "STAGE_END"; date:
   if (m.done) return present("milestone.done", "Done");
   if (m.date < today) return m.type === "PRACTICE" ? present("milestone.overdue", "Overdue") : present("milestone.ended", "Ended");
   return present("milestone.planned", "Planned");
+}
+
+/* ---------------- cities ---------------- */
+
+const CITY: Record<"DRAFT" | "ACTIVE" | "PAUSED" | "COMPLETED" | "ARCHIVED", [StateKey, string]> = {
+  DRAFT: ["city.draft", "Draft: curriculum not approved yet"],
+  ACTIVE: ["city.active", "Active"],
+  PAUSED: ["city.paused", "Paused"],
+  COMPLETED: ["city.completed", "Completed"],
+  ARCHIVED: ["city.archived", "Archived"],
+};
+export function cityPresentation(status: keyof typeof CITY): Presentation {
+  const [state, label] = CITY[status];
+  return present(state, label);
 }
 
 /* ---------------- AI ---------------- */

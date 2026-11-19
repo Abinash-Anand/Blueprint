@@ -22,7 +22,7 @@ export const unitKey = (scope: RevisionScope, topicId: string, subtopicId: numbe
   scope === "TOPIC" ? `t:${topicId}` : `s:${subtopicId}`;
 
 export async function revisionPolicy(db: Db | PrismaClient): Promise<RevisionPolicy> {
-  const s = await db.settings.findUnique({ where: { id: 1 }, select: { revisionDailyMinutes: true, revisionWeeklyOvertimeMinutes: true } });
+  const s = await db.settings.findFirst({ select: { revisionDailyMinutes: true, revisionWeeklyOvertimeMinutes: true } });
   return {
     ...REVISION_POLICY,
     dailyBudgetMinutes: s?.revisionDailyMinutes ?? REVISION_POLICY.dailyBudgetMinutes,
@@ -274,8 +274,10 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
       return prisma.$transaction(async (tx) => {
         const unit = b.subtopicId ? `s:${b.subtopicId}` : `t:${b.topicId}`;
         // Row lock: two submissions for the same unit (double click, two tabs) run one after the other, so the second
-        // sees the first one's result instead of racing it (REV-13, NFR-REV-03).
-        await tx.$queryRaw`SELECT id FROM "RevisionSchedule" WHERE unit = ${unit} FOR UPDATE`;
+        // sees the first one's result instead of racing it (REV-13, NFR-REV-03). The row is found through the city
+        // scope first, so the lock can only ever touch this city's row.
+        const locked = await tx.revisionSchedule.findUnique({ where: { unit }, select: { id: true } });
+        if (locked) await tx.$queryRaw`SELECT id FROM "RevisionSchedule" WHERE id = ${locked.id} FOR UPDATE`;
         const s = await tx.revisionSchedule.findUnique({
           where: { unit },
           include: { topic: { select: { name: true } }, subtopic: { select: { name: true } } },

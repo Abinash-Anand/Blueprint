@@ -1,117 +1,30 @@
 /**
- * Idempotent seed (LLD §3.2):
- *  - upserts the curriculum by slug, never overwriting learner-owned fields;
- *  - creates stages, settings and weekly targets only if missing (dates stay editable);
- *  - generates the plan once, only when no PLAN tasks exist;
- *  - upserts curriculum revision prompts by key, never overwriting the learner's on/off choice;
- *  - backfills revision schedules for learning marked before revision existed (idempotent).
+ * Start-up seed (LLD §3.2, multi-user: docs/Sprint-Multi-User.md §3). Idempotent:
+ *  - refreshes the curriculum text of every city built from the Engineering template, never overwriting learner-owned
+ *    fields, never removing ticked sub-topics, never regenerating an existing plan;
+ *  - creates no city on a fresh database (each user creates their own), unless `createEngineeringCity` is set
+ *    (tests and demos): then an unowned "engineering" city with the original ids.
  */
 import { PrismaClient } from "@prisma/client";
-import { DEFAULT_TARGETS, JOURNEY, districts, queues, stages } from "../src/curriculum/index.js";
-import { curriculumPrompts } from "../src/curriculum/prompts.js";
-import { buildPlan } from "../src/domain/planner.js";
-import { toDate } from "../src/domain/dates.js";
 import { systemClock } from "../src/lib/clock.js";
-import { backfillRevision } from "../src/modules/revision/service.js";
+import { cityScoped } from "../src/lib/cityScope.js";
+import { applyCurriculum, engineeringTemplate } from "../src/modules/cities/apply.js";
 
-export async function seed(prisma: PrismaClient, log = console.log, today = systemClock(process.env.APP_TODAY || undefined).today()) {
-  // 1. Curriculum
-  for (const [di, d] of districts.entries()) {
-    const district = { position: di, name: d.name, subtitle: d.subtitle, layer: d.layer, color: d.color, cols: d.cols, goal: d.goal, note: d.note };
-    await prisma.district.upsert({ where: { id: d.slug }, update: district, create: { id: d.slug, ...district } });
-
-    for (const [ti, t] of d.topics.entries()) {
-      const topic = { districtId: d.slug, position: ti, name: t.name, description: t.description, priority: t.priority, estimatedHours: t.hours, exercise: t.exercise };
-      await prisma.topic.upsert({ where: { id: t.slug }, update: topic, create: { id: t.slug, ...topic } });
-
-      for (const [si, name] of t.subtopics.entries()) {
-        await prisma.subtopic.upsert({
-          where: { topicId_position: { topicId: t.slug, position: si } },
-          update: { name },
-          create: { topicId: t.slug, position: si, name },
-        });
-      }
-      // Remove sub-topics that no longer exist, but never ones the learner has ticked.
-      await prisma.subtopic.deleteMany({ where: { topicId: t.slug, position: { gte: t.subtopics.length }, completedAt: null } });
-
-      await prisma.resource.deleteMany({ where: { topicId: t.slug } });
-      await prisma.resource.createMany({ data: t.resources.map((r, i) => ({ topicId: t.slug, position: i, ...r })) });
-    }
+export async function seed(
+  prisma: PrismaClient,
+  log = console.log,
+  today = systemClock(process.env.APP_TODAY || undefined).today(),
+  options: { createEngineeringCity?: boolean } = {},
+) {
+  if (options.createEngineeringCity && !(await prisma.city.findUnique({ where: { id: "engineering" } }))) {
+    await prisma.city.create({ data: { id: "engineering", idPrefix: "", name: "Engineering City", status: "ACTIVE", template: "engineering", goal: "Become a strong full-stack software engineer." } });
   }
-  for (const t of districts.flatMap((d) => d.topics)) {
-    await prisma.topicDependency.deleteMany({ where: { topicId: t.slug } });
-    if (t.dependsOn?.length) {
-      await prisma.topicDependency.createMany({ data: t.dependsOn.map((dep) => ({ topicId: t.slug, dependsOnId: dep })) });
-    }
+  const cities = await prisma.city.findMany({ where: { template: "engineering", status: { not: "DRAFT" } }, select: { id: true, idPrefix: true } });
+  const doc = engineeringTemplate();
+  for (const c of cities) {
+    await applyCurriculum(cityScoped(prisma, c.id), doc, c.idPrefix, today, (m) => log(`Seed (${c.id}): ${m}`));
   }
-
-  // 1b. Curriculum revision prompts (Revision spec 4.1): one topic-level prompt per topic.
-  const seen = new Map<string, number>();
-  for (const p of curriculumPrompts) {
-    const n = (seen.get(p.topic) ?? 0) + 1;
-    seen.set(p.topic, n);
-    const key = `cur:${p.topic}:${n}`;
-    const data = { topicId: p.topic, title: p.title, content: p.content, retrievalMethod: p.method, expectedAnswer: p.expected };
-    await prisma.revisionPrompt.upsert({ where: { key }, update: data, create: { ...data, key, source: "CURRICULUM" } });
-  }
-
-  // 2. Calendar configuration (created once; learner may edit dates afterwards)
-  for (const [i, s] of stages.entries()) {
-    await prisma.stage.upsert({
-      where: { id: s.slug },
-      update: { name: s.name, kind: s.kind, position: i, districts: { set: s.districts.map((id) => ({ id })) } },
-      create: {
-        id: s.slug, position: i, name: s.name, kind: s.kind,
-        startDate: toDate(s.start), endDate: toDate(s.end),
-        districts: { connect: s.districts.map((id) => ({ id })) },
-      },
-    });
-  }
-  await prisma.settings.upsert({
-    where: { id: 1 },
-    update: {},
-    create: { id: 1, journeyStart: toDate(JOURNEY.start), journeyEnd: toDate(JOURNEY.end), timezone: JOURNEY.timezone },
-  });
-  for (const [weekday, targetMinutes] of Object.entries(DEFAULT_TARGETS)) {
-    await prisma.weeklyTarget.upsert({ where: { weekday: Number(weekday) }, update: {}, create: { weekday: Number(weekday), targetMinutes } });
-  }
-
-  // 3. Plan (generated once — never regenerated over existing tasks)
-  const existing = await prisma.task.count({ where: { source: "PLAN" } });
-  if (existing > 0) {
-    log(`Seed: curriculum updated; plan already exists (${existing} planned tasks), left untouched.`);
-  } else {
-    await generatePlan(prisma, log);
-  }
-
-  // 4. Revision backfill: schedules for learned sub-topics and eligible topics, placed from today.
-  const placed = await backfillRevision(prisma, today);
-  if (placed.length) log(`Seed: scheduled ${placed.length} revision task(s).`);
-}
-
-async function generatePlan(prisma: PrismaClient, log: (m: string) => void) {
-  const q = Object.fromEntries(
-    Object.entries(queues()).map(([k, v]) => [k, v.map((t) => ({ slug: t.slug, name: t.name, hours: t.hours, subtopics: t.subtopics, exercise: t.exercise }))]),
-  );
-  const plan = buildPlan(stages, q, DEFAULT_TARGETS);
-  const subs = await prisma.subtopic.findMany({ select: { id: true, topicId: true, position: true } });
-  const subId = new Map(subs.map((s) => [`${s.topicId}#${s.position}`, s.id]));
-  await prisma.task.createMany({
-    data: plan.map((t) => ({
-      topicId: t.topicSlug,
-      subtopicId: t.subtopicIndex === null ? null : (subId.get(`${t.topicSlug}#${t.subtopicIndex}`) ?? null),
-      stageId: t.stageSlug,
-      title: t.title,
-      notes: t.notes,
-      kind: t.kind,
-      estimatedMinutes: t.minutes,
-      originalDate: toDate(t.date),
-      scheduledDate: toDate(t.date),
-      position: t.position,
-      source: "PLAN" as const,
-    })),
-  });
-  log(`Seed: curriculum loaded; generated ${plan.length} planned tasks (${plan.reduce((a, t) => a + t.minutes, 0) / 60} h).`);
+  if (cities.length === 0) log("Seed: no Engineering template cities yet.");
 }
 
 // Run directly: `tsx prisma/seed.ts` or `node dist/prisma/seed.js`
