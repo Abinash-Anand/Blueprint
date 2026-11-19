@@ -3,16 +3,62 @@
  * Evaluation: a criterion is COVERED when most of its significant words appear in the answer, PARTIAL when some do.
  * Transcription: AI_FAKE_TRANSCRIPT, or a fixed sentence naming the recording length.
  */
-import type { EvaluateInput, EvaluationProvider, TranscribeInput, TranscriptionProvider } from "./types.js";
+import type { EvaluateInput, EvaluationProvider, GenerateInput, GenerationProvider, TranscribeInput, TranscriptionProvider } from "./types.js";
 import { ProviderError } from "./types.js";
 
 const tag = (text: string, name: string) => new RegExp(`<${name}>\\n([\\s\\S]*?)\\n</${name}>`).exec(text)?.[1] ?? "";
 const words = (s: string) => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 const STOP = new Set(["with", "that", "this", "from", "into", "only", "when", "what", "which", "their", "there", "they", "then", "than", "have", "does", "each", "used", "uses", "using", "over", "more", "less", "about", "your", "make", "makes", "sure", "like"]);
 
-export function fakeProvider(transcript = process.env.AI_FAKE_TRANSCRIPT || undefined): TranscriptionProvider & EvaluationProvider {
+/**
+ * Deterministic curriculum pieces (AI design §10.3), shaped by the request: an outline with three districts of three
+ * topics named after the learner's subjects, and the details for whatever topics a district request lists.
+ */
+function fakeGenerate(i: GenerateInput): { output: unknown; usage: { inputTokens: number; outputTokens: number } } {
+  const usage = { inputTokens: Math.ceil(i.user.length / 4), outputTokens: 900 };
+  if (tag(i.user, "stage") === "outline") {
+    let a: { goal?: string; subjects?: string[] } = {};
+    try {
+      a = JSON.parse(tag(i.user, "answers").replace(/‹/g, "<"));
+    } catch {
+      /* keep defaults */
+    }
+    const subjects = (a.subjects?.length ? a.subjects : ["Basics", "Practice", "Projects"]).slice(0, 3);
+    while (subjects.length < 3) subjects.push(`Part ${subjects.length + 1}`);
+    return {
+      usage,
+      output: {
+        title: (a.goal || "Learning city").slice(0, 80),
+        districts: subjects.map((name, di) => ({
+          key: `d${di + 1}`, name, subtitle: `All about ${name}`, goal: `Use ${name} confidently.`,
+          topics: [1, 2, 3].map((n) => ({ key: `d${di + 1}-t${n}`, name: `${name} ${n}`, priority: n === 3 ? "OPTIONAL" : "CORE", hours: 4 })),
+        })),
+      },
+    };
+  }
+  const topics = JSON.parse(tag(i.user, "topics").replace(/‹/g, "<")) as { key: string; name: string }[];
+  return {
+    usage,
+    output: {
+      topics: topics.map((t, n) => ({
+        key: t.key,
+        description: `${t.name} explained step by step.`,
+        subtopics: [`${t.name}: ideas`, `${t.name}: practice`],
+        exercise: `Build a small example that uses ${t.name}.`,
+        dependsOn: n > 0 ? [topics[n - 1].key] : [],
+        question: { title: t.name, content: `Explain ${t.name} in your own words.`, method: "CONCEPTUAL", expected: "What it is · Why it matters · One example" },
+      })),
+    },
+  };
+}
+
+export function fakeProvider(transcript = process.env.AI_FAKE_TRANSCRIPT || undefined): TranscriptionProvider & EvaluationProvider & GenerationProvider {
   return {
     name: "fake",
+    async generate(i: GenerateInput) {
+      if (i.signal.aborted) throw new ProviderError("TIMEOUT", "aborted");
+      return fakeGenerate(i);
+    },
     async transcribe(i: TranscribeInput) {
       if (i.signal.aborted) throw new ProviderError("TIMEOUT", "aborted");
       return { text: transcript ?? `This is a fake transcript of a ${i.audioSeconds}-second recording.`, usage: { audioSeconds: i.audioSeconds } };

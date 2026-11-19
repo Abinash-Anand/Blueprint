@@ -79,8 +79,10 @@ enum CheckpointResult {
 }
 
 model District {
-  id       String  @id // slug, e.g. "be"
-  position Int     @unique // 0..6, road order
+  id       String  @id // slug, e.g. "be" ("<cityPrefix>be" in later cities)
+  cityId   String  @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city     City    @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  position Int // 0..n-1, road order within the city
   name     String
   subtitle String
   layer    Int // 1..5
@@ -90,10 +92,14 @@ model District {
   note     String
   topics   Topic[]
   stages   Stage[]
+
+  @@unique([cityId, position])
 }
 
 model Topic {
   id                String               @id // slug, e.g. "be.api"
+  cityId            String               @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city              City                 @relation(fields: [cityId], references: [id], onDelete: Cascade)
   districtId        String
   district          District             @relation(fields: [districtId], references: [id], onDelete: Cascade)
   position          Int
@@ -116,6 +122,7 @@ model Topic {
   checkpoints       LearningCheckpoint[]
 
   @@unique([districtId, position])
+  @@index([cityId])
 }
 
 model Subtopic {
@@ -156,17 +163,23 @@ model TopicDependency {
 
 model Stage {
   id        String     @id // slug, e.g. "bedb"
-  position  Int        @unique
+  cityId    String     @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city      City       @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  position  Int
   name      String
   kind      StageKind
   startDate DateTime   @db.Date
   endDate   DateTime   @db.Date
   districts District[]
   tasks     Task[]
+
+  @@unique([cityId, position])
 }
 
 model Task {
   id                 Int               @id @default(autoincrement())
+  cityId             String            @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city               City              @relation(fields: [cityId], references: [id], onDelete: Cascade)
   topicId            String?
   topic              Topic?            @relation(fields: [topicId], references: [id], onDelete: SetNull)
   subtopicId         Int?
@@ -192,8 +205,8 @@ model Task {
   sessions           StudySession[]
   attempts           RevisionAttempt[]
 
-  @@index([scheduledDate])
-  @@index([status, scheduledDate])
+  @@index([cityId, scheduledDate])
+  @@index([cityId, status, scheduledDate])
   @@index([topicId])
   @@index([stageId])
   @@index([revisionScheduleId])
@@ -201,6 +214,8 @@ model Task {
 
 model StudySession {
   id        Int      @id @default(autoincrement())
+  cityId    String   @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city      City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
   date      DateTime @db.Date
   minutes   Int
   taskId    Int?
@@ -210,12 +225,14 @@ model StudySession {
   note      String   @default("")
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
-  @@index([date])
+  @@index([cityId, date])
   @@index([taskId])
 }
 
 model Settings {
-  id                            Int       @id @default(1)
+  id                            Int       @id @default(autoincrement())
+  cityId                        String    @unique @default("")
+  city                          City      @relation(fields: [cityId], references: [id], onDelete: Cascade)
   journeyStart                  DateTime  @db.Date
   journeyEnd                    DateTime  @db.Date
   timezone                      String
@@ -228,8 +245,12 @@ model Settings {
 }
 
 model WeeklyTarget {
-  weekday       Int @id // ISO 8601: 1 = Monday … 7 = Sunday
+  cityId        String @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city          City   @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  weekday       Int // ISO 8601: 1 = Monday … 7 = Sunday
   targetMinutes Int
+
+  @@id([cityId, weekday])
 }
 
 /// A question or challenge for retrieval practice (spec §4). Curriculum prompts are seeded; template prompts are
@@ -238,6 +259,8 @@ model RevisionPrompt {
   id              Int                  @id @default(autoincrement())
   /// Stable key for seeded and template prompts ("cur:<topic>:<n>", "tpl:<template>:<unit>"); null for learner prompts.
   key             String?              @unique
+  cityId          String               @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city            City                 @relation(fields: [cityId], references: [id], onDelete: Cascade)
   topicId         String
   topic           Topic                @relation(fields: [topicId], references: [id], onDelete: Cascade)
   subtopicId      Int?
@@ -257,6 +280,7 @@ model RevisionPrompt {
   evaluations     RevisionEvaluation[]
 
   @@index([topicId])
+  @@index([cityId])
 }
 
 /// Current scheduling state of one revision unit: a sub-topic or a whole topic (spec §12.1).
@@ -265,6 +289,8 @@ model RevisionSchedule {
   id                   Int                  @id @default(autoincrement())
   /// "s:<subtopicId>" or "t:<topicId>" (a CHECK keeps it consistent), so topic and sub-topic units never collide.
   unit                 String               @unique
+  cityId               String               @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city                 City                 @relation(fields: [cityId], references: [id], onDelete: Cascade)
   scope                RevisionScope
   topicId              String
   topic                Topic                @relation(fields: [topicId], references: [id], onDelete: Cascade)
@@ -289,11 +315,14 @@ model RevisionSchedule {
   evaluations          RevisionEvaluation[]
 
   @@index([topicId])
+  @@index([cityId, nextDueDate])
 }
 
 /// One retrieval attempt (spec §7.2). Immutable after submission except for confirming the correction.
 model RevisionAttempt {
   id                  Int                 @id @default(autoincrement())
+  cityId              String              @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city                City                @relation(fields: [cityId], references: [id], onDelete: Cascade)
   scheduleId          Int
   schedule            RevisionSchedule    @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
   promptId            Int?
@@ -331,6 +360,8 @@ model RevisionAttempt {
 /// Active recall embedded in initial learning (spec §6). Never changes learned status or the revision schedule.
 model LearningCheckpoint {
   id               Int              @id @default(autoincrement())
+  cityId           String           @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city             City             @relation(fields: [cityId], references: [id], onDelete: Cascade)
   topicId          String
   topic            Topic            @relation(fields: [topicId], references: [id], onDelete: Cascade)
   subtopicId       Int
@@ -362,11 +393,14 @@ enum InputMode {
 enum AiOperation {
   TRANSCRIBE
   EVALUATE
+  GENERATE
 }
 
 /// One AI assessment of one answer to one prompt (AI design §5.1). Immutable once SUCCEEDED or FAILED.
 model RevisionEvaluation {
   id               Int                  @id @default(autoincrement())
+  cityId           String               @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city             City                 @relation(fields: [cityId], references: [id], onDelete: Cascade)
   scheduleId       Int
   schedule         RevisionSchedule     @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
   promptId         Int?
@@ -415,4 +449,173 @@ model AiUsage {
   outcome      String
 
   @@index([at])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Multi-user foundation (sprint, 18 Nov 2026; docs/Sprint-Multi-User.md)
+// ---------------------------------------------------------------------------------------------------------------------
+
+enum CityStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum AuthTokenPurpose {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+enum CurriculumSource {
+  BUILTIN
+  TEMPLATE
+  IMPORT
+  GENERATED
+}
+
+enum CurriculumVersionStatus {
+  /// A generator is writing it (background job); content is filled in when it finishes.
+  GENERATING
+  /// Generation failed; `error` says why. Nothing in the city changed.
+  FAILED
+  PROPOSED
+  APPLIED
+  REJECTED
+}
+
+/// An account. Only what sign-in, display and the learner's own settings need (data minimisation).
+model User {
+  id                String          @id @default(cuid())
+  /// Lower-cased; unique.
+  email             String          @unique
+  name              String
+  /// Argon2id hash (PHC string); the password itself is never stored.
+  passwordHash      String
+  emailVerifiedAt   DateTime?       @db.Timestamptz(3)
+  timezone          String          @default("Europe/Berlin")
+  language          String          @default("en")
+  /// Application preferences: reduced motion, default daily minutes, … (validated by the settings API).
+  preferences       Json            @default("{}")
+  onboardedAt       DateTime?       @db.Timestamptz(3)
+  passwordChangedAt DateTime        @default(now()) @db.Timestamptz(3)
+  createdAt         DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime        @updatedAt @db.Timestamptz(3)
+  sessions          Session[]
+  tokens            AuthToken[]
+  consents          ConsentRecord[]
+  cities            City[]
+}
+
+/// A signed-in browser. The id is the SHA-256 of the cookie value, so a database leak does not leak sessions.
+model Session {
+  id         String   @id
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  remember   Boolean  @default(false)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  lastSeenAt DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt  DateTime @db.Timestamptz(3)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// One-time e-mail token (verification, password reset). The id is the SHA-256 of the token sent by e-mail.
+model AuthToken {
+  id        String           @id
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose   AuthTokenPurpose
+  expiresAt DateTime         @db.Timestamptz(3)
+  usedAt    DateTime?        @db.Timestamptz(3)
+  createdAt DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, purpose])
+}
+
+/// Append-only record of what the user agreed to or withdrew, with the policy version (GDPR Art. 7(1)).
+model ConsentRecord {
+  id            Int      @id @default(autoincrement())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// TERMS and PRIVACY_NOTICE are required acknowledgements; AI_PROCESSING is optional and can be withdrawn.
+  purpose       String
+  policyVersion String
+  granted       Boolean
+  at            DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, purpose, at])
+}
+
+/// Ids of deleted accounts (no personal data), so a deletion can be re-applied after restoring an older backup.
+model DeletedAccount {
+  userId    String   @id
+  deletedAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+/// A learning environment ("city"). Every learning record belongs to exactly one city, and a city to one user.
+model City {
+  id            String               @id
+  /// null only for the original Engineering City until an account claims it (docs/Sprint-Multi-User.md §3).
+  ownerId       String?
+  owner         User?                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Prefix of every curriculum id in this city ("" for the original city, so its ids never change).
+  idPrefix      String               @unique
+  name          String
+  description   String               @default("")
+  goal          String               @default("")
+  category      String?
+  status        CityStatus           @default(DRAFT)
+  /// Built-in template the curriculum came from ("engineering"); its text is refreshed on start-up like before.
+  template      String?
+  /// Creation workflow answers (requirements and constraints), kept for a future curriculum generator.
+  requirements  Json?
+  constraints   Json?
+  createdAt     DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime             @updatedAt @db.Timestamptz(3)
+  pausedAt      DateTime?            @db.Timestamptz(3)
+  archivedAt    DateTime?            @db.Timestamptz(3)
+  completedAt   DateTime?            @db.Timestamptz(3)
+  versions      CurriculumVersion[]
+  districts     District[]
+  stages        Stage[]
+  settings      Settings?
+  weeklyTargets WeeklyTarget[]
+  topics        Topic[]
+  tasks         Task[]
+  sessions      StudySession[]
+  prompts       RevisionPrompt[]
+  schedules     RevisionSchedule[]
+  attempts      RevisionAttempt[]
+  checkpoints   LearningCheckpoint[]
+  evaluations   RevisionEvaluation[]
+
+  @@index([ownerId, status])
+}
+
+/// A version of a city's curriculum in the curriculum contract (CURRICULUM_CONTRACT_VERSION). Applying one never
+/// deletes learning history: removed topics with progress are refused (docs/Sprint-Multi-User.md §versioning).
+model CurriculumVersion {
+  id              Int                     @id @default(autoincrement())
+  cityId          String
+  city            City                    @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  version         Int
+  status          CurriculumVersionStatus
+  source          CurriculumSource
+  contractVersion Int
+  /// The validated curriculum document.
+  content         Json
+  /// Added, modified and removed districts and topics compared with the previously applied version.
+  changes         Json?
+  /// Background generation: { step, label, done, total } while GENERATING.
+  progress        Json?
+  /// Why generation failed (FAILED), for the learner.
+  error           String?
+  note            String                  @default("")
+  createdAt       DateTime                @default(now()) @db.Timestamptz(3)
+  appliedAt       DateTime?               @db.Timestamptz(3)
+
+  @@unique([cityId, version])
 }

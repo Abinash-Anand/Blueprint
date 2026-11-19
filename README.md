@@ -92,6 +92,21 @@ Back up weekly, after the Saturday review, and keep the last four. `backups/*.du
 
 Only the web server is published, and only on `127.0.0.1`. The API and the database are not reachable from your network.
 
+### 5.1 E-mail (account confirmation and password reset)
+
+Without a mail server, Blueprint saves each e-mail as a text file in `mail-outbox/` (git-ignored; the links in it are one-time secrets). To receive real e-mails, give it an SMTP account in `.env`. With Gmail:
+
+1. Turn on 2-Step Verification for the Google account, then create an app password at https://myaccount.google.com/apppasswords (a 16-letter code, not your normal password).
+2. In `.env`: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_USER=` your Gmail address, `SMTP_PASS=` the app password. Messages are sent from that address (Gmail allows about 500 a day).
+3. Apply and test:
+
+```bash
+docker compose up -d backend
+docker compose exec backend node dist/src/tools/mailTest.js you@example.com
+```
+
+The backend log says "Mail server reachable and login accepted" at start-up, or "Mail server check failed" with an error code (`EAUTH`: wrong user or app password). Any other SMTP provider works the same way (its host, port 587 or 465, user, password). Note that the provider handles the address and content of these e-mails. For a public deployment use a transactional provider with your own domain and SPF/DKIM records.
+
 ## 6. How the plan works
 
 | Stage | Dates | Days |

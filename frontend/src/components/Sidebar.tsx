@@ -5,6 +5,7 @@ import { hm, pct, shortDate, plural } from "../lib/format";
 import { LAYERS, LAYER_SUB } from "../lib/layers";
 import { useAppData } from "../state/AppData";
 import { Bar } from "./ui";
+import { useSession } from "../state/Session";
 
 interface Props {
   today: Today | null;
@@ -18,6 +19,7 @@ interface Props {
 
 export function Sidebar({ today, selectedId, open, onOpenTopic, onOpenDistrict, onOpenToday, onOpenRevision }: Props) {
   const { curriculum, progress, topicById, districtById } = useAppData();
+  const { city } = useSession();
   const [openDist, setOpenDist] = useState<Set<number>>(new Set());
   const initialised = useRef(false);
 
@@ -51,12 +53,9 @@ export function Sidebar({ today, selectedId, open, onOpenTopic, onOpenDistrict, 
 
   return (
     <aside className={open ? "open" : ""} aria-label="Roadmap overview">
-      <p className="brand">Engineering City</p>
-      <h1>Full-stack engineer roadmap</h1>
-      <p className="goal">
-        Become a strong full-stack software engineer, with foundations in software architecture, cloud engineering and applied AI.
-        17 Nov 2026 – 17 Aug 2027.
-      </p>
+      <p className="brand">{city?.name ?? "Blueprint"}</p>
+      <h1>{city?.goal || city?.name || "Roadmap"}</h1>
+      {city?.description && <p className="goal">{city.description}</p>}
 
       <div className="overall">
         <div className="row">
@@ -132,8 +131,8 @@ export function Sidebar({ today, selectedId, open, onOpenTopic, onOpenDistrict, 
         return (
           <div className="layer" key={L}>
             <h3>
-              <span>0{L}</span>
-              {LAYERS[L]} · {LAYER_SUB[L]}
+              {/* The layer names belong to the Engineering City; other cities just list their districts. */}
+              {city?.template === "engineering" ? <><span>0{L}</span>{LAYERS[L]} · {LAYER_SUB[L]}</> : "Districts"}
             </h3>
             {ds.map((d) => {
               const p = progress.districts.find((x) => x.id === d.id)!;

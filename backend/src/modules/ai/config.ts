@@ -2,7 +2,7 @@
  * AI configuration (AI design §10). Everything comes from the backend environment; nothing here reaches the browser
  * except the limits that `GET /ai/status` reports. With AI_ENABLED unset or false the app behaves exactly as before.
  */
-export type ProviderName = "fake" | "gemini" | "anthropic";
+export type ProviderName = "fake" | "gemini" | "anthropic" | "gwdg";
 
 export interface AiConfig {
   enabled: boolean;
@@ -16,8 +16,18 @@ export interface AiConfig {
    */
   evaluationFallbackModel: string | null;
   transcriptionFallbackModel: string | null;
+  /** Curriculum generation (AI design §10.3): a large model, called a few times per city, in the background. */
+  generationProvider: ProviderName;
+  generationModel: string;
+  /** Per call: a district's detail can take minutes on a large model. */
+  generationTimeoutMs: number;
+  maxGenerationsPerHour: number;
+  /** Daily cap on calls to the generation provider (GWDG allows far more than Gemini's free tier). 0 = none. */
+  generationDailyLimit: number;
   geminiApiKey?: string;
   anthropicApiKey?: string;
+  /** GWDG Academic Cloud (SAIA): one key for the chat and the audio host. */
+  gwdg: { apiKey?: string; chatBaseUrl: string; audioBaseUrl: string; disableThinking: boolean };
   language: string;
   maxRecordingSeconds: number;
   maxAudioBytes: number;
@@ -35,19 +45,34 @@ export interface AiConfig {
   promptVersion: string;
 }
 
-const DEFAULT_MODELS: Record<ProviderName, string> = {
-  fake: "fake-1",
-  gemini: "gemini-3.8-flash", // chosen 18 Nov 2026 after the benchmark (docs/AI-Voice-Design.md §10.1)
-  anthropic: "claude-haiku-5-5",
+type Role = "evaluation" | "transcription" | "generation";
+
+/**
+ * Default model per provider and job. GWDG ids follow the SAIA naming; the exact ids come from GET /v1/models
+ * (eval/models.ts) and can be set with AI_EVALUATION_MODEL / AI_TRANSCRIPTION_MODEL.
+ */
+const DEFAULT_MODELS: Record<ProviderName, Record<Role, string>> = {
+  fake: { evaluation: "fake-1", transcription: "fake-1", generation: "fake-1" },
+  gemini: { evaluation: "gemini-3.8-flash", transcription: "gemini-3.8-flash", generation: "gemini-3.8-flash" }, // benchmarked 18 Nov 2026 (§10.1)
+  anthropic: { evaluation: "claude-haiku-5-5", transcription: "", generation: "" },
+  gwdg: { evaluation: "qwen3.8-27b", transcription: "whisper-large-v3", generation: "qwen3.5-397b-a17b" }, // chosen 19 Nov 2026 (§10.2, §10.3)
 };
 
-/** Fallback when the main model is overloaded: Gemini 2.5 Flash has its own free quota and answered every benchmark case it ran. */
-const DEFAULT_FALLBACK: Record<ProviderName, string | null> = { fake: null, gemini: "gemini-2.5-flash", anthropic: null };
+/** Same-provider fallback when the main model is overloaded (HTTP 5xx). Never another provider: no second company. */
+const DEFAULT_FALLBACK: Record<ProviderName, Record<Role, string | null>> = {
+  fake: { evaluation: null, transcription: null, generation: null },
+  gemini: { evaluation: "gemini-2.5-flash", transcription: "gemini-2.5-flash", generation: null },
+  anthropic: { evaluation: null, transcription: null, generation: null },
+  gwdg: { evaluation: "gemma-4-31b-it", transcription: "whisper-large-v2", generation: null },
+};
 
-/** AI_FALLBACK_MODEL: unset = the provider's default, "none" = off; a fallback equal to the main model is pointless. */
-const fallback = (v: string | undefined, p: ProviderName, main: string): string | null => {
-  const raw = v?.trim();
-  const m = raw === undefined || raw === "" ? DEFAULT_FALLBACK[p] : raw.toLowerCase() === "none" ? null : raw;
+/**
+ * AI_EVALUATION_FALLBACK_MODEL / AI_TRANSCRIPTION_FALLBACK_MODEL, else AI_FALLBACK_MODEL, else the provider's default;
+ * "none" = off. A fallback equal to the main model is pointless.
+ */
+const fallback = (specific: string | undefined, shared: string | undefined, p: ProviderName, role: Role, main: string): string | null => {
+  const raw = specific?.trim() || shared?.trim();
+  const m = !raw ? DEFAULT_FALLBACK[p][role] : raw.toLowerCase() === "none" ? null : raw;
   return m && m !== main ? m : null;
 };
 
@@ -60,7 +85,7 @@ const num = (v: string | undefined, d: number, min = 0, max = Number.MAX_SAFE_IN
 
 const provider = (v: string | undefined, d: ProviderName): ProviderName => {
   const p = (v ?? "").trim() || d;
-  if (p !== "fake" && p !== "gemini" && p !== "anthropic") throw new Error(`Unknown AI provider: ${p}`);
+  if (p !== "fake" && p !== "gemini" && p !== "anthropic" && p !== "gwdg") throw new Error(`Unknown AI provider: ${p}`);
   return p;
 };
 
@@ -69,18 +94,32 @@ export function loadAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
   // Claude has no speech-to-text, so transcription stays on Gemini unless set otherwise.
   const transcriptionProvider = provider(env.AI_TRANSCRIPTION_PROVIDER, evaluationProvider === "anthropic" ? "gemini" : evaluationProvider);
   if (transcriptionProvider === "anthropic") throw new Error("AI_TRANSCRIPTION_PROVIDER cannot be anthropic: Claude has no speech-to-text");
-  const evaluationModel = env.AI_EVALUATION_MODEL?.trim() || DEFAULT_MODELS[evaluationProvider];
-  const transcriptionModel = env.AI_TRANSCRIPTION_MODEL?.trim() || DEFAULT_MODELS[transcriptionProvider];
+  const evaluationModel = env.AI_EVALUATION_MODEL?.trim() || DEFAULT_MODELS[evaluationProvider].evaluation;
+  // Generation defaults to GWDG when its key is set (the free Gemini quota is too small for a whole curriculum).
+  const generationProvider = provider(env.AI_GENERATION_PROVIDER, env.SAIA_API_KEY?.trim() ? "gwdg" : evaluationProvider === "anthropic" ? "gemini" : evaluationProvider);
+  if (generationProvider === "anthropic") throw new Error("AI_GENERATION_PROVIDER cannot be anthropic (no adapter for long structured output)");
+  const transcriptionModel = env.AI_TRANSCRIPTION_MODEL?.trim() || DEFAULT_MODELS[transcriptionProvider].transcription;
   return {
     enabled: env.AI_ENABLED === "true",
     evaluationProvider,
     transcriptionProvider,
     evaluationModel,
     transcriptionModel,
-    evaluationFallbackModel: fallback(env.AI_FALLBACK_MODEL, evaluationProvider, evaluationModel),
-    transcriptionFallbackModel: fallback(env.AI_FALLBACK_MODEL, transcriptionProvider, transcriptionModel),
+    generationProvider,
+    generationModel: env.AI_GENERATION_MODEL?.trim() || DEFAULT_MODELS[generationProvider].generation,
+    generationTimeoutMs: num(env.AI_GENERATION_TIMEOUT_MS, 300_000, 10_000, 900_000),
+    maxGenerationsPerHour: num(env.AI_MAX_GENERATIONS_PER_HOUR, 3, 1, 100),
+    generationDailyLimit: num(env.AI_GENERATION_DAILY_LIMIT, 300, 0, 100_000),
+    evaluationFallbackModel: fallback(env.AI_EVALUATION_FALLBACK_MODEL, env.AI_FALLBACK_MODEL, evaluationProvider, "evaluation", evaluationModel),
+    transcriptionFallbackModel: fallback(env.AI_TRANSCRIPTION_FALLBACK_MODEL, env.AI_FALLBACK_MODEL, transcriptionProvider, "transcription", transcriptionModel),
     geminiApiKey: env.GEMINI_API_KEY?.trim() || undefined,
     anthropicApiKey: env.ANTHROPIC_API_KEY?.trim() || undefined,
+    gwdg: {
+      apiKey: env.SAIA_API_KEY?.trim() || undefined,
+      chatBaseUrl: (env.SAIA_BASE_URL?.trim() || "https://chat-ai.academiccloud.de/v1").replace(/\/+$/, ""),
+      audioBaseUrl: (env.SAIA_AUDIO_BASE_URL?.trim() || "https://saia.gwdg.de/v1").replace(/\/+$/, ""),
+      disableThinking: env.AI_DISABLE_THINKING !== "false",
+    },
     language: env.AI_LANGUAGE?.trim() || "en",
     maxRecordingSeconds: num(env.AI_MAX_RECORDING_SECONDS, 120, 10, 600),
     maxAudioBytes: num(env.AI_MAX_AUDIO_BYTES, 4_000_000, 100_000, 20_000_000),

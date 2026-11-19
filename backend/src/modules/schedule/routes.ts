@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { type Request, Router } from "express";
 import { z } from "zod";
 import type { Deps } from "../../app.js";
 import { validate } from "../../lib/http.js";
@@ -33,21 +33,21 @@ const settingsBody = z
     message: "Provide weeklyTargets, revisionDailyMinutes and/or revisionWeeklyOvertimeMinutes",
   });
 
-export function scheduleRoutes({ prisma }: Deps) {
-  const svc = scheduleService(prisma);
+export function scheduleRoutes(_deps: Deps) {
+  const svc = (req: Request) => scheduleService(req.db);
   const r = Router();
-  r.get("/stages", async (_req, res) => {
-    res.json(await svc.listStages());
+  r.get("/stages", async (req, res) => {
+    res.json(await svc(req).listStages());
   });
   r.patch("/stages/:id", async (req, res) => {
     const { id } = validate(slugParam, req.params);
-    res.json(await svc.patchStage(id, validate(stageBody, req.body)));
+    res.json(await svc(req).patchStage(id, validate(stageBody, req.body)));
   });
-  r.get("/settings", async (_req, res) => {
-    res.json(await svc.getSettings());
+  r.get("/settings", async (req, res) => {
+    res.json(await svc(req).getSettings());
   });
   r.patch("/settings", async (req, res) => {
-    res.json(await svc.patchSettings(validate(settingsBody, req.body)));
+    res.json(await svc(req).patchSettings(validate(settingsBody, req.body)));
   });
   return r;
 }

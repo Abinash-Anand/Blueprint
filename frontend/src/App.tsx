@@ -9,6 +9,7 @@ import { TodayView } from "./components/TodayView";
 import { WeekView } from "./components/WeekView";
 import { toneOf } from "./components/Status";
 import { Loading } from "./components/ui";
+import { TopBar } from "./Root";
 import { shortDate } from "./lib/format";
 import { layout } from "./map/geometry";
 import { useAppData } from "./state/AppData";
@@ -118,14 +119,14 @@ export function App() {
     return (
       <div className="loading">
         <div>
-          <p>Engineering City can't reach its server.</p>
+          <p>Blueprint can't load this city.</p>
           <p style={{ fontSize: 13 }}>{loadError} Is <code>docker compose up</code> running?</p>
           <button className="btn primary" onClick={() => void reload()}>Try again</button>
         </div>
       </div>
     );
   }
-  if (!curriculum || !progress || !L) return <Loading text="Loading Engineering City…" />;
+  if (!curriculum || !progress || !L) return <Loading text="Loading your city…" />;
 
   const { view, param } = route;
   return (
@@ -161,6 +162,7 @@ export function App() {
             })}
           </nav>
           <span className="vdate">{today ? `${shortDate(today.today)} · Europe/Berlin` : ""}</span>
+          <TopBar />
         </header>
         {view === "today" && <TodayView date={param} onDate={(d) => go({ view: "today", param: d }, true)} onOpenTopic={openTopic} onOpenRevision={openRevision} />}
         {view === "revision" && <RevisionView onOpenTopic={openTopic} />}

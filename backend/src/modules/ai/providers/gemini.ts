@@ -2,7 +2,7 @@
  * Gemini adapter (AI design §10.1): Gemini API `generateContent` over HTTPS with the key in a header.
  * Transcription sends the WAV recording inline; evaluation asks for JSON constrained by the schema from §6.3.
  */
-import type { EvaluateInput, EvaluationProvider, TranscribeInput, TranscriptionProvider, ProviderUsage } from "./types.js";
+import type { EvaluateInput, EvaluationProvider, GenerateInput, GenerationProvider, TranscribeInput, TranscriptionProvider, ProviderUsage } from "./types.js";
 import { ProviderError, asProviderError } from "./types.js";
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -13,7 +13,7 @@ interface GeminiResponse {
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
 }
 
-export function geminiProvider(apiKey: string | undefined): TranscriptionProvider & EvaluationProvider {
+export function geminiProvider(apiKey: string | undefined): TranscriptionProvider & EvaluationProvider & GenerationProvider {
   async function call(model: string, body: unknown, signal: AbortSignal): Promise<{ text: string; usage: ProviderUsage }> {
     if (!apiKey) throw new ProviderError("PROVIDER_ERROR", "GEMINI_API_KEY is not set");
     let res: Response;
@@ -54,12 +54,17 @@ export function geminiProvider(apiKey: string | undefined): TranscriptionProvide
       );
       return { text: r.text.trim(), usage: { ...r.usage, audioSeconds: i.audioSeconds } };
     },
-    async evaluate(i: EvaluateInput) {
+    evaluate: (i: EvaluateInput) => structured(i, 8192, 0),
+    generate: (i: GenerateInput) => structured(i, i.maxTokens, 0.3),
+  };
+
+  async function structured(i: EvaluateInput, maxOutputTokens: number, temperature: number) {
+    {
       const base = {
         systemInstruction: { parts: [{ text: i.system }] },
         contents: [{ role: "user", parts: [{ text: i.user }] }],
       };
-      const config = { temperature: 0, maxOutputTokens: 8192, responseMimeType: "application/json" };
+      const config = { temperature, maxOutputTokens, responseMimeType: "application/json" };
       let r: { text: string; usage: ProviderUsage };
       try {
         r = await call(i.model, { ...base, generationConfig: { ...config, responseJsonSchema: i.jsonSchema } }, i.signal);
@@ -73,6 +78,6 @@ export function geminiProvider(apiKey: string | undefined): TranscriptionProvide
       } catch {
         throw new ProviderError("INVALID_OUTPUT", "Gemini did not return JSON");
       }
-    },
-  };
+    }
+  }
 }

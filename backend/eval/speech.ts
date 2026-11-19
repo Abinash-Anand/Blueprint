@@ -73,7 +73,7 @@ for (const s of sentences) {
   const t0 = performance.now();
   try {
     const r = await provider.transcribe({
-      audio, mimeType, audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms),
+      audio, mimeType, audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms), language: config.language, vocabulary: terms,
       model: config.transcriptionModel, signal: AbortSignal.timeout(config.requestTimeoutMs),
     });
     const h = termHits(r.text, s.terms);

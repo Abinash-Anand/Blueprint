@@ -4,12 +4,15 @@
  */
 import { execSync } from "node:child_process";
 import { PrismaClient } from "@prisma/client";
-import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { TestClock } from "../../src/lib/clock.js";
 import { PRESENTATION_VERSION, STATES, TONES } from "../../src/domain/presentation.js";
 import { seed } from "../../prisma/seed.js";
+import { asUser, signIn } from "../helpers/auth.js";
+
+/** Session cookie and city for every request (filled in beforeAll). */
+const H: Record<string, string> = {};
 
 const base = process.env.TEST_DATABASE_URL;
 const suite = base ? describe : describe.skip;
@@ -46,7 +49,8 @@ suite("presentation metadata", () => {
     process.env.NODE_ENV = "test";
     execSync("npx prisma migrate deploy", { env: { ...process.env, DATABASE_URL: url }, stdio: "pipe" });
     prisma = new PrismaClient({ datasourceUrl: url });
-    await seed(prisma, () => {}, clock.date);
+    await seed(prisma, () => {}, clock.date, { createEngineeringCity: true });
+    Object.assign(H, (await signIn(prisma)).headers);
     app = createApp({ prisma, clock });
   });
   afterAll(async () => {
@@ -56,7 +60,7 @@ suite("presentation metadata", () => {
   });
 
   it("publishes the versioned catalogue", async () => {
-    const r = (await request(app).get("/api/presentation").expect(200)).body;
+    const r = (await asUser(app, H).get("/api/presentation").expect(200)).body;
     expect(r.version).toBe(PRESENTATION_VERSION);
     expect(r.tones).toEqual([...TONES]);
     expect(Object.keys(r.states)).toEqual(Object.keys(STATES));
@@ -64,7 +68,7 @@ suite("presentation metadata", () => {
 
   it("adds valid semantic presentation to every view, with no colour values", async () => {
     for (const path of ["/api/curriculum", "/api/today", "/api/week", "/api/progress", "/api/revision/overview"]) {
-      const body = (await request(app).get(path).expect(200)).body;
+      const body = (await asUser(app, H).get(path).expect(200)).body;
       const all = collect(body);
       expect(all.length, path).toBeGreaterThan(0);
       all.forEach(isPresentation);
@@ -73,8 +77,8 @@ suite("presentation metadata", () => {
   });
 
   it("presents states consistently across endpoints, and changes nothing else", async () => {
-    const progressBefore = (await request(app).get("/api/progress").expect(200)).body;
-    const cur = (await request(app).get("/api/curriculum").expect(200)).body;
+    const progressBefore = (await asUser(app, H).get("/api/progress").expect(200)).body;
+    const cur = (await asUser(app, H).get("/api/curriculum").expect(200)).body;
     const ts = cur.districts.flatMap((d: { topics: { id: string; status: string; presentation: P; subtopics: { presentation: P }[] }[] }) => d.topics);
     expect(ts.every((t: { status: string; presentation: P }) => t.presentation.state === `topic.${t.status.toLowerCase().replace("_", "-")}`)).toBe(true);
     expect(ts[0].subtopics[0].presentation.state).toBe("subtopic.not-learned");
@@ -85,35 +89,35 @@ suite("presentation metadata", () => {
 
     // Learn a sub-topic: its revision appears with the same presentation in the topic view, the overview and the task.
     const sub = await prisma.subtopic.findFirstOrThrow({ where: { topicId: "fe.ts", position: 0 } });
-    await request(app).patch(`/api/subtopics/${sub.id}`).send({ completed: true }).expect(200);
+    await asUser(app, H).patch(`/api/subtopics/${sub.id}`).send({ completed: true }).expect(200);
     clock.date = "2026-11-19";
-    const topicRev = (await request(app).get("/api/topics/fe.ts/revision").expect(200)).body;
+    const topicRev = (await asUser(app, H).get("/api/topics/fe.ts/revision").expect(200)).body;
     const unit = topicRev.units.find((u: { subtopicId: number | null }) => u.subtopicId === sub.id);
     expect(unit.schedule.presentation).toMatchObject({ state: "revision.due", tone: "info", label: "Due today" });
-    const overview = (await request(app).get("/api/revision/overview").expect(200)).body;
+    const overview = (await asUser(app, H).get("/api/revision/overview").expect(200)).body;
     expect(overview.due[0].presentation).toEqual(unit.schedule.presentation);
     expect(overview.attention).toMatchObject({ state: "attention.due", label: "1 due" });
-    const today = (await request(app).get("/api/today").expect(200)).body;
+    const today = (await asUser(app, H).get("/api/today").expect(200)).body;
     const task = today.tasks.find((t: { revision: { scheduleId: number } | null }) => t.revision?.scheduleId === unit.schedule.id);
     expect(task.revision.presentation).toEqual(unit.schedule.presentation);
     expect(today.revision.attention).toMatchObject({ state: "attention.due", tone: "info" });
 
     // A day later it is overdue everywhere.
     clock.date = "2026-11-20";
-    const late = (await request(app).get("/api/revision/overview").expect(200)).body;
+    const late = (await asUser(app, H).get("/api/revision/overview").expect(200)).body;
     expect(late.overdue[0].presentation).toMatchObject({ state: "revision.overdue", tone: "danger", label: "1 day overdue" });
     expect(late.attention).toMatchObject({ state: "attention.overdue", tone: "danger" });
 
     // A recall outcome is presented by the score the learner chose.
-    const a = (await request(app).post("/api/revision/attempts")
+    const a = (await asUser(app, H).post("/api/revision/attempts")
       .send({ topicId: "fe.ts", subtopicId: sub.id, templateKey: "explain", retrievalMethod: "CONCEPTUAL", score: 1, usedHints: false, usedNotes: false, mistakes: "forgot constraints" })
       .expect(201)).body;
     expect(a.attempt.presentation).toMatchObject({ state: "outcome.struggled", tone: "warning", label: "Struggled" });
-    const after = (await request(app).get("/api/revision/overview").expect(200)).body;
+    const after = (await asUser(app, H).get("/api/revision/overview").expect(200)).body;
     expect(after.awaitingCorrection[0].presentation).toMatchObject({ state: "revision.correction", tone: "warning" });
 
     // Presentation is derived only: progress numbers are what they were apart from the sub-topic just learned.
-    const progressAfter = (await request(app).get("/api/progress").expect(200)).body;
+    const progressAfter = (await asUser(app, H).get("/api/progress").expect(200)).body;
     expect(progressAfter.road.currentDistrictIndex).toBe(progressBefore.road.currentDistrictIndex);
     expect(progressAfter.districts[0].passed).toBe(progressBefore.districts[0].passed);
   });

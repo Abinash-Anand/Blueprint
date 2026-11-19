@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { type Request, Router } from "express";
 import { z } from "zod";
 import type { PrismaClient } from "@prisma/client";
 import type { Deps } from "../../app.js";
@@ -58,18 +58,18 @@ export function sessionService(prisma: PrismaClient, clock: Clock) {
   };
 }
 
-export function sessionRoutes({ prisma, clock }: Deps) {
-  const svc = sessionService(prisma, clock);
+export function sessionRoutes({ clock }: Deps) {
+  const svc = (req: Request) => sessionService(req.db, clock);
   const r = Router();
   r.get("/sessions", async (req, res) => {
     const { from, to } = validate(listQuery, req.query);
-    res.json(await svc.list(from, to));
+    res.json(await svc(req).list(from, to));
   });
   r.post("/sessions", async (req, res) => {
-    res.status(201).json(await svc.create(validate(createBody, req.body)));
+    res.status(201).json(await svc(req).create(validate(createBody, req.body)));
   });
   r.delete("/sessions/:id", async (req, res) => {
-    await svc.remove(validate(idParam, req.params).id);
+    await svc(req).remove(validate(idParam, req.params).id);
     res.status(204).end();
   });
   return r;

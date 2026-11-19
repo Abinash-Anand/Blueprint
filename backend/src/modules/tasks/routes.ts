@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { type Request, Router } from "express";
 import { z } from "zod";
 import type { Deps } from "../../app.js";
 import { diffDays } from "../../domain/dates.js";
@@ -39,27 +39,27 @@ const patchBody = z
   .strict()
   .refine((b) => Object.keys(b).length > 0, { message: "Provide at least one field" });
 
-export function taskRoutes({ prisma, clock }: Deps) {
-  const svc = taskService(prisma, clock);
+export function taskRoutes({ clock }: Deps) {
+  const svc = (req: Request) => taskService(req.db, clock);
   const r = Router();
   r.get("/tasks", async (req, res) => {
-    res.json(await svc.list(validate(listQuery, req.query)));
+    res.json(await svc(req).list(validate(listQuery, req.query)));
   });
-  r.post("/tasks/reschedule-overdue", async (_req, res) => {
-    res.json(await svc.rescheduleOverdue());
+  r.post("/tasks/reschedule-overdue", async (req, res) => {
+    res.json(await svc(req).rescheduleOverdue());
   });
   r.post("/tasks", async (req, res) => {
-    res.status(201).json(await svc.create(validate(createBody, req.body)));
+    res.status(201).json(await svc(req).create(validate(createBody, req.body)));
   });
   r.get("/tasks/:id", async (req, res) => {
-    res.json(await svc.get(validate(idParam, req.params).id));
+    res.json(await svc(req).get(validate(idParam, req.params).id));
   });
   r.patch("/tasks/:id", async (req, res) => {
     const { id } = validate(idParam, req.params);
-    res.json(await svc.patch(id, validate(patchBody, req.body)));
+    res.json(await svc(req).patch(id, validate(patchBody, req.body)));
   });
   r.delete("/tasks/:id", async (req, res) => {
-    await svc.remove(validate(idParam, req.params).id);
+    await svc(req).remove(validate(idParam, req.params).id);
     res.status(204).end();
   });
   return r;

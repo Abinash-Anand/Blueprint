@@ -89,13 +89,19 @@ export function evaluationDTO(e: EvalRow, maxFollowUps: number, depth: number) {
   };
 }
 
-export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, providers: AiProviders) {
-  const usage = usageService(prisma, config, () => clock.now());
+/** The signed-in user's consent to AI processing (a ConsentRecord, GDPR Art. 7): read and grant. */
+export interface AiConsent { get(): Promise<Date | null>; grant(): Promise<Date> }
+const NO_CONSENT: AiConsent = { get: async () => null, grant: async () => { throw new HttpError(401, "AUTH_REQUIRED", "Sign in to continue."); } };
+
+/**
+ * `usage` must be shared by all requests of one app (its hourly counter lives in memory); routes pass the app's one
+ * instance. Without it, a fresh one is used (start-up jobs, tests).
+ */
+export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, providers: AiProviders, consentOf: AiConsent = NO_CONSENT, usage = usageService(prisma, config, () => clock.now())) {
 
   async function requireReady() {
     if (!config.enabled) throw new HttpError(403, "AI_DISABLED", "AI checks are switched off.");
-    const s = await prisma.settings.findUnique({ where: { id: 1 }, select: { aiConsentAt: true } });
-    if (!s?.aiConsentAt) throw new HttpError(403, "AI_CONSENT_REQUIRED", "Read and accept the AI notice first.");
+    if (!(await consentOf.get())) throw new HttpError(403, "AI_CONSENT_REQUIRED", "Read and accept the AI notice first.");
   }
 
   async function timed<T>(op: "TRANSCRIBE" | "EVALUATE", provider: string, model: string, run: (signal: AbortSignal) => Promise<T & { usage: ProviderUsage }>) {
@@ -129,7 +135,7 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
       return { ...(await timed(op, provider, model, (signal) => run(model, signal))), model };
     } catch (e) {
       if (!(e instanceof ProviderError) || !fallbackModel || !isProviderOutage(e)) throw e;
-      await usage.check(op);
+      await usage.check(op, provider);
       console.warn(JSON.stringify({ level: "warn", msg: "AI fallback model", op, from: model, to: fallbackModel, status: e.status ?? null }));
       return { ...(await timed(op, provider, fallbackModel, (signal) => run(fallbackModel, signal))), model: fallbackModel };
     }
@@ -166,12 +172,12 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
 
   return {
     async status() {
-      const s = await prisma.settings.findUnique({ where: { id: 1 }, select: { aiConsentAt: true } });
-      const u = config.enabled ? await usage.summary() : { spentThisMonthEur: 0, requestsLast24h: 0 };
+      const consentedAt = await consentOf.get();
+      const u = config.enabled ? await usage.summary(providers.evaluation.name) : { spentThisMonthEur: 0, requestsLast24h: 0 };
       return {
         enabled: config.enabled,
-        consented: !!s?.aiConsentAt,
-        consentedAt: s?.aiConsentAt?.toISOString() ?? null,
+        consented: !!consentedAt,
+        consentedAt: consentedAt?.toISOString() ?? null,
         evaluationProvider: config.evaluationProvider,
         transcriptionProvider: config.transcriptionProvider,
         evaluationModel: config.evaluationModel,
@@ -189,8 +195,7 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
     },
 
     async consent() {
-      const s = await prisma.settings.update({ where: { id: 1 }, data: { aiConsentAt: clock.now() }, select: { aiConsentAt: true } });
-      return { consentedAt: s.aiConsentAt!.toISOString() };
+      return { consentedAt: (await consentOf.grant()).toISOString() };
     },
 
     async transcribe(scheduleId: number, audio: Buffer, contentType: string | undefined) {
@@ -208,12 +213,12 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
       if (seconds > config.maxRecordingSeconds + 1) throw new HttpError(413, "AUDIO_TOO_LARGE", `Recordings can be at most ${config.maxRecordingSeconds} seconds.`);
       const schedule = await prisma.revisionSchedule.findUnique({ where: { id: scheduleId }, select: { id: true } });
       if (!schedule) throw notFound("Revision unit");
-      await usage.check("TRANSCRIBE");
+      await usage.check("TRANSCRIBE", providers.transcription.name);
       const terms = await unitTerms(scheduleId);
       const p = providers.transcription;
       try {
         const r = await withFallback("TRANSCRIBE", p.name, config.transcriptionModel, config.transcriptionFallbackModel, (model, signal) =>
-          p.transcribe({ audio, mimeType: "audio/wav", audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms), model, signal }),
+          p.transcribe({ audio, mimeType: "audio/wav", audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms), language: config.language, vocabulary: terms, model, signal }),
         );
         return { text: r.text.slice(0, 5000), audioSeconds: Math.round(seconds * 10) / 10 };
       } catch (e) {
@@ -270,7 +275,7 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
         .digest("hex");
       const depth = chain.length;
 
-      await usage.check("EVALUATE");
+      await usage.check("EVALUATE", providers.evaluation.name);
 
       // Reserve the work (§7.1). A repeat of the same answer returns the stored result and costs nothing.
       let row: EvalRow;

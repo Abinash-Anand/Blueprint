@@ -15,8 +15,22 @@ export const MOTION = {
 /** Standard ease-in-out (the camera's original curve). */
 export const easeInOut = (p: number) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
 
-export const prefersReducedMotion = () =>
-  typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+/** The account's choice wins over the system setting (Settings → Reduced motion); "system" follows the OS. */
+export const prefersReducedMotion = () => {
+  const forced = typeof document !== "undefined" ? document.documentElement.dataset.motion : undefined;
+  if (forced === "reduce") return true;
+  if (forced === "full") return false;
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+};
+
+/** Applies the account's motion preference to the page (CSS reads :root[data-motion]). */
+export function applyMotionPreference(p: "system" | "reduce" | "no-preference" | undefined) {
+  if (typeof document === "undefined") return;
+  const el = document.documentElement;
+  if (p === "reduce") el.dataset.motion = "reduce";
+  else if (p === "no-preference") el.dataset.motion = "full";
+  else delete el.dataset.motion;
+}
 
 /**
  * Animates a displayed number towards `value` (e.g. a percentage). The real value is always what screen readers get:

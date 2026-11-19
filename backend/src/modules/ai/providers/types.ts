@@ -28,7 +28,12 @@ export interface TranscribeInput {
   audio: Buffer;
   mimeType: string;
   audioSeconds: number;
+  /** Natural-language instruction (Gemini reads it; Whisper does not take instructions). */
   instruction: string;
+  /** Spoken language code ("en", "de"), for speech models that take it. */
+  language?: string;
+  /** Curriculum terms to spell correctly (Whisper's prompt; Gemini gets them inside the instruction). */
+  vocabulary?: string[];
   model: string;
   signal: AbortSignal;
 }
@@ -39,6 +44,18 @@ export interface EvaluateInput {
   jsonSchema: Record<string, unknown>;
   model: string;
   signal: AbortSignal;
+}
+
+/** Long structured output (curriculum generation, AI design §10.3): same shape as evaluation, more tokens. */
+export interface GenerateInput extends EvaluateInput {
+  /** Short schema name for providers that label structured output ("curriculum_outline"). */
+  name: string;
+  maxTokens: number;
+}
+
+export interface GenerationProvider {
+  readonly name: string;
+  generate(input: GenerateInput): Promise<{ output: unknown; usage: ProviderUsage }>;
 }
 
 export interface TranscriptionProvider {
@@ -54,6 +71,8 @@ export interface EvaluationProvider {
 export interface AiProviders {
   transcription: TranscriptionProvider;
   evaluation: EvaluationProvider;
+  /** Curriculum generation; absent when no provider is configured for it. */
+  generation?: GenerationProvider;
 }
 
 /** Map a thrown error to a ProviderError (aborts are timeouts). */

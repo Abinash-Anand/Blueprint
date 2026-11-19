@@ -8,3 +8,7 @@ backend/eval/results/
 
 # Voice recordings for the speech-term test (personal audio; never commit)
 recordings/
+
+# Local e-mail outbox: verification and reset links are one-time secrets (never commit)
+mail-outbox/
+backend/mail-outbox/

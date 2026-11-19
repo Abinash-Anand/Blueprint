@@ -50,7 +50,37 @@ services:
       AI_PRICE_OUTPUT_PER_MTOK_EUR: ${AI_PRICE_OUTPUT_PER_MTOK_EUR:-0}
       AI_PRICE_AUDIO_PER_MIN_EUR: ${AI_PRICE_AUDIO_PER_MIN_EUR:-0}
       AI_REQUEST_TIMEOUT_MS: ${AI_REQUEST_TIMEOUT_MS:-60000}
+      # GWDG Academic Cloud (AI design §10.2): AI_EVALUATION_PROVIDER=gwdg uses these.
+      SAIA_API_KEY: ${SAIA_API_KEY:-}
+      SAIA_BASE_URL: ${SAIA_BASE_URL:-}
+      SAIA_AUDIO_BASE_URL: ${SAIA_AUDIO_BASE_URL:-}
+      AI_DISABLE_THINKING: ${AI_DISABLE_THINKING:-}
+      AI_EVALUATION_FALLBACK_MODEL: ${AI_EVALUATION_FALLBACK_MODEL:-}
+      AI_TRANSCRIPTION_FALLBACK_MODEL: ${AI_TRANSCRIPTION_FALLBACK_MODEL:-}
+      # Curriculum generation (AI design §10.3): defaults to GWDG Qwen 3.5 397B when SAIA_API_KEY is set.
+      AI_GENERATION_PROVIDER: ${AI_GENERATION_PROVIDER:-}
+      AI_GENERATION_MODEL: ${AI_GENERATION_MODEL:-}
+      AI_GENERATION_TIMEOUT_MS: ${AI_GENERATION_TIMEOUT_MS:-}
+      AI_MAX_GENERATIONS_PER_HOUR: ${AI_MAX_GENERATIONS_PER_HOUR:-}
+      AI_GENERATION_DAILY_LIMIT: ${AI_GENERATION_DAILY_LIMIT:-}
       AI_FAKE_TRANSCRIPT: ${AI_FAKE_TRANSCRIPT:-}
+      # Accounts (docs/Deployment.md). Locally: plain http, e-mails written to ./mail-outbox (git-ignored).
+      APP_ENV: ${APP_ENV:-local}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${HTTP_PORT:-80}}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
+      LEGACY_OWNER_EMAIL: ${LEGACY_OWNER_EMAIL:-}
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-}
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_OUTBOX_DIR: /app/mail-outbox
+    volumes:
+      - ${MAIL_OUTBOX_HOST_DIR:-./mail-outbox}:/app/mail-outbox
     depends_on:
       db:
         condition: service_healthy

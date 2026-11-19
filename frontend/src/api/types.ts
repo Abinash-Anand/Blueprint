@@ -477,3 +477,112 @@ export interface AiEvaluation {
   assisted: boolean;
   createdAt: string;
 }
+
+/* ---------------- accounts and cities (multi-user sprint) ---------------- */
+
+export interface Account {
+  id: string;
+  name: string;
+  email: string;
+  emailVerified: boolean;
+  timezone: string;
+  language: "en" | "de" | string;
+  preferences: { reducedMotion?: "system" | "reduce" | "no-preference"; defaultDailyMinutes?: number; defaultDaysPerWeek?: number };
+  onboardedAt: string | null;
+  createdAt: string;
+}
+
+export type CityStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "COMPLETED" | "ARCHIVED";
+
+export interface CityRequirements {
+  outcome?: string;
+  currentLevel?: "NONE" | "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
+  targetLevel?: "FOUNDATIONS" | "WORKING" | "PROFESSIONAL" | "EXPERT";
+  subjects?: string[];
+  resources?: string[];
+  prerequisites?: string[];
+}
+export interface CityConstraints {
+  hoursPerDay?: number;
+  daysPerWeek?: number;
+  pace?: "LIGHT" | "STEADY" | "INTENSIVE";
+  startDate?: ISODate;
+  targetDate?: ISODate;
+  timezone?: string;
+}
+
+export interface CitySummary {
+  id: string;
+  name: string;
+  description: string;
+  goal: string;
+  category: string | null;
+  status: CityStatus;
+  presentation?: Presentation;
+  template: string | null;
+  requirements: CityRequirements | null;
+  constraints: CityConstraints | null;
+  createdAt: string;
+  updatedAt: string;
+  pausedAt: string | null;
+  archivedAt: string | null;
+  completedAt: string | null;
+  topics: number | null;
+  versions: number | null;
+}
+
+export interface NewCity {
+  name: string;
+  description?: string;
+  goal?: string;
+  category?: string | null;
+  requirements?: CityRequirements | null;
+  constraints?: CityConstraints | null;
+}
+
+export interface Template { id: "engineering"; name: string; description: string; districts: number; topics: number; hours: number; weeks: number }
+
+export interface CurriculumChanges {
+  added: { districts: string[]; topics: string[] };
+  modified: { districts: string[]; topics: string[] };
+  removed: { districts: string[]; topics: string[] };
+}
+
+export interface CurriculumDocumentView {
+  title: string;
+  journey: { start: ISODate; end: ISODate; timezone: string };
+  districts: { key: string; name: string; color: string; topics: { key: string; name: string; hours: number; priority: Priority; subtopics: string[]; exercise: string; dependsOn: string[] }[] }[];
+  stages: { key: string; name: string; start: ISODate; end: ISODate; districts: string[] }[];
+}
+
+export interface GenerationAvailability {
+  available: boolean;
+  reason: "AI_DISABLED" | "NO_PROVIDER" | "CONSENT_REQUIRED" | null;
+  consented: boolean;
+  provider: string;
+  model: string;
+}
+
+export interface CurriculumVersion {
+  version: number;
+  status: "GENERATING" | "FAILED" | "PROPOSED" | "APPLIED" | "REJECTED";
+  /** While GENERATING: what the generator is doing. */
+  progress: { step: string; label: string; done: number; total: number } | null;
+  /** When FAILED: why, for the learner. */
+  error: string | null;
+  source: "BUILTIN" | "TEMPLATE" | "IMPORT" | "GENERATED";
+  contractVersion: number;
+  note: string;
+  createdAt: string;
+  appliedAt: string | null;
+  changes: CurriculumChanges | null;
+  /** null while generating or after a failure. */
+  summary: { title: string; districts: number; topics: number; hours: number; start: ISODate; end: ISODate } | null;
+  content?: CurriculumDocumentView;
+}
+export type CityProposal = CurriculumVersion & { blockedRemovals: string[] };
+
+export interface ConsentState {
+  current: { purpose: "TERMS" | "PRIVACY_NOTICE" | "AI_PROCESSING" | "AI_CURRICULUM"; optional: boolean; granted: boolean; policyVersion: string | null; currentVersion: string; at: string | null }[];
+  history: { purpose: string; granted: boolean; policyVersion: string; at: string }[];
+}
