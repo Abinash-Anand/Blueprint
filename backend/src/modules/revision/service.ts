@@ -265,8 +265,42 @@ export async function resolvePrompt(
   });
 }
 
+export interface ReportInput {
+  reason: "OUT_OF_SYLLABUS" | "UNCLEAR" | "UNFAIR_CHECK" | "OTHER";
+  promptText: string;
+  note?: string;
+  topicId?: string;
+  scheduleId?: number;
+  promptId?: number;
+  evaluationId?: number;
+}
+
 export function revisionService(prisma: PrismaClient, clock: Clock) {
   return {
+    /**
+     * Records the learner flagging a question or an AI check. Only a record: no score, question or schedule changes.
+     * Every reference must belong to this city (the scoped client finds nothing in another city).
+     */
+    async report(b: ReportInput) {
+      const [topic, schedule, prompt, evaluation] = await Promise.all([
+        b.topicId ? prisma.topic.findFirst({ where: { id: b.topicId }, select: { id: true } }) : true,
+        b.scheduleId ? prisma.revisionSchedule.findFirst({ where: { id: b.scheduleId }, select: { id: true } }) : true,
+        b.promptId ? prisma.revisionPrompt.findFirst({ where: { id: b.promptId }, select: { id: true } }) : true,
+        b.evaluationId ? prisma.revisionEvaluation.findFirst({ where: { id: b.evaluationId }, select: { id: true } }) : true,
+      ]);
+      if (!topic) throw notFound("Topic");
+      if (!schedule) throw notFound("Revision unit");
+      if (!prompt) throw notFound("Prompt");
+      if (!evaluation) throw notFound("Evaluation");
+      const r = await prisma.revisionReport.create({
+        data: {
+          reason: b.reason, promptText: b.promptText.slice(0, 2000), note: (b.note ?? "").trim(),
+          topicId: b.topicId ?? null, scheduleId: b.scheduleId ?? null, promptId: b.promptId ?? null, evaluationId: b.evaluationId ?? null,
+        } as never,
+      });
+      return { id: r.id, reason: r.reason, createdAt: r.createdAt.toISOString() };
+    },
+
     async submitAttempt(b: AttemptInput) {
       const today = clock.today();
       if (b.score <= 1 && !b.mistakes?.trim())

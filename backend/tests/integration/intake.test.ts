@@ -178,7 +178,7 @@ suite("city creation intake", () => {
       expect(v!.status).toBe("PROPOSED");
       expect(v!.content.districts.map((d) => d.name).slice(0, 2)).toEqual(["Grammar", "Speaking"]);
       expect(v!.content.weeklyTargets).toEqual({ 1: 0, 2: 120, 3: 0, 4: 120, 5: 0, 6: 0, 7: 0 });
-      expect(v!.note).toMatch(/curriculum-gen-v3/);
+      expect(v!.note).toMatch(/curriculum-gen-v4/);
     });
   });
 });

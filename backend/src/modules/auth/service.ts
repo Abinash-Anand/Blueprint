@@ -236,7 +236,7 @@ export function authService(prisma: PrismaClient, cfg: AuthConfig, mailer: Maile
         prisma.city.findMany({
           where: { ownerId: user.id },
           include: {
-            settings: true, weeklyTargets: true, versions: true, stages: true, attachments: true,
+            settings: true, weeklyTargets: true, versions: true, stages: true, attachments: true, revisionReports: true,
             districts: { include: { topics: { include: { subtopics: true } } } },
             tasks: true, sessions: true, prompts: { where: { source: "LEARNER" } }, schedules: true, attempts: true, checkpoints: true, evaluations: true,
           },

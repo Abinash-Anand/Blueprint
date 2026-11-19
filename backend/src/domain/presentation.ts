@@ -180,7 +180,7 @@ const OUTCOME: [StateKey, string][] = [
   ["outcome.forgot", "Forgot"],
   ["outcome.struggled", "Struggled"],
   ["outcome.recalled", "Recalled"],
-  ["outcome.mastered", "Mastered this attempt"],
+  ["outcome.mastered", "Strong recall"],
 ];
 
 /** A recall score 0–3 as the learner chose it (Revision spec §7). */

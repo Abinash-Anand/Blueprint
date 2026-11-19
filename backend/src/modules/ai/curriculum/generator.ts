@@ -99,7 +99,7 @@ export const districtJsonSchema = () => z.toJSONSchema(DistrictDetail) as Record
 
 /* ---------------- prompts ---------------- */
 
-export const GENERATION_PROMPT_VERSION = "curriculum-gen-v3";
+export const GENERATION_PROMPT_VERSION = "curriculum-gen-v4";
 
 const SYSTEM = `You design learning curricula for Blueprint, a planning app that turns one learning goal into a "city":
 districts are the large areas of the subject, topics are buildings, sub-topics are floors learned one after another,
@@ -114,6 +114,7 @@ Rules:
 - Hours are realistic whole numbers for this learner's level and include practice.
 - Keys are short lower-case identifiers (letters, digits, dashes), unique, never reused.
 - Exercises are concrete tasks with a visible result; questions test understanding, not recall of trivia.
+- Revision questions are answered in words or code: never ask the learner to draw, sketch or upload anything.
 - Expected answers list 3 to 6 points separated by " · ", each a short checkable criterion.
 - Do not invent URLs, books or course names.
 - Reply with one JSON object matching the schema, nothing else.`;
