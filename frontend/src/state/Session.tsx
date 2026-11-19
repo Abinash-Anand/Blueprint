@@ -7,6 +7,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { ApiError, SESSION_ENDED, auth, cities as citiesApi, setCurrentCity } from "../api/client";
 import type { Account, CitySummary } from "../api/types";
 import { applyMotionPreference } from "../lib/motion";
+import { type CameraStore, cameraStore } from "../map/camera";
 
 const KEY = "blueprint.city";
 const remember = (id: string | null) => {
@@ -39,6 +40,8 @@ interface SessionValue {
   setUser: (u: Account) => void;
   signedIn: (u: Account) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Map cameras per account and city; emptied whenever the signed-in account changes or signs out. */
+  cameras: CameraStore;
 }
 
 const Ctx = createContext<SessionValue | null>(null);
@@ -55,6 +58,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [list, setList] = useState<CitySummary[]>([]);
   const [cityId, setCityId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cameras] = useState(cameraStore);
 
   const setUser = useCallback((u: Account) => {
     setUserState(u);
@@ -74,13 +78,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const enter = useCallback(async (u: Account) => {
+    cameras.clear(); // a new sign-in never sees another session's map position
     setUser(u);
     const xs = await refreshCities();
     const saved = recalled();
     const pick = xs.find((c) => c.id === saved && isOpenable(c)) ?? xs.find((c) => c.status === "ACTIVE") ?? xs.find(isOpenable) ?? null;
     selectCity(pick?.id ?? null);
     setStatus("signedIn");
-  }, [refreshCities, selectCity, setUser]);
+  }, [refreshCities, selectCity, setUser, cameras]);
 
   useEffect(() => {
     auth.me().then(
@@ -94,27 +99,29 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const ended = () => {
+      cameras.clear();
       setCurrentCity(null);
       setUserState(null);
       setStatus("signedOut");
     };
     addEventListener(SESSION_ENDED, ended);
     return () => removeEventListener(SESSION_ENDED, ended);
-  }, []);
+  }, [cameras]);
 
   const signOut = useCallback(async () => {
     await auth.logout().catch(() => undefined);
+    cameras.clear();
     setCurrentCity(null);
     setUserState(null);
     setList([]);
     setCityId(null);
     setStatus("signedOut");
     location.hash = "#/login";
-  }, []);
+  }, [cameras]);
 
   const value = useMemo<SessionValue>(() => ({
     status, user, cities: list, city: list.find((c) => c.id === cityId) ?? null, error,
-    selectCity, refreshCities, setUser, signedIn: enter, signOut,
-  }), [status, user, list, cityId, error, selectCity, refreshCities, setUser, enter, signOut]);
+    selectCity, refreshCities, setUser, signedIn: enter, signOut, cameras,
+  }), [status, user, list, cityId, error, selectCity, refreshCities, setUser, enter, signOut, cameras]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

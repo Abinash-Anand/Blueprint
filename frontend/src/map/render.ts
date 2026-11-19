@@ -3,10 +3,14 @@
  * Pure: (layout, state) → markup for one <g>. Every text value goes through esc().
  */
 import { ACCENT, INK, PAPER, esc, mix } from "../lib/color";
-import { BASE, FH, FP, type Block, type Building, type Layout, type Pt, iso } from "./geometry";
-import { type CarPos, zone } from "./vehicle";
+import { BADGE, GOAL_MARK, SIGN, badgeAnchor, goalAnchor, labelAnchor, labelSpace, signAnchor, startAnchor } from "./bounds";
+import { BASE, FH, FP, type Block, type Building, type Layout, type Pt, iso, roadQuads } from "./geometry";
+import { CAPTION, type Meter, estimateMeter, fitLabel } from "./text";
+import type { CarPos } from "./vehicle";
 
 export interface RenderState {
+  /** Extra classes for one building (e.g. "fresh" to animate a district that has just appeared); optional. */
+  buildingClass?: (b: Building) => string | undefined;
   /** Learned sub-topics per topic id. */
   floors: (topicId: string) => number;
   selectedId: string | null;
@@ -21,6 +25,8 @@ export interface RenderState {
   car: CarPos;
   /** Month signposts per district index, e.g. ["JAN–MAR"]. */
   signs: string[][];
+  /** Measures label text (canvasMeter in the browser); defaults to the estimate. */
+  meter?: Meter;
 }
 
 const P = (pts: Pt[]) => pts.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
@@ -34,23 +40,24 @@ function box(x0: number, y0: number, x1: number, y1: number, z0: number, h: numb
   );
 }
 
-export function roadSVG(W: Pt[]): string {
+/**
+ * The road (one strip per segment, the same width in every direction), its centre line, START and GOAL.
+ * `caption` is the city's goal as wrapped by wrapCaption(); without one, GOAL has no caption.
+ */
+export function roadSVG(W: Pt[], caption: string[] = []): string {
   let s = "";
-  const hw = 0.6;
-  for (let i = 0; i < W.length - 1; i++) {
-    const a = W[i], b = W[i + 1];
-    const xa = Math.min(a[0], b[0]) - hw, xb = Math.max(a[0], b[0]) + hw, ya = Math.min(a[1], b[1]) - hw, yb = Math.max(a[1], b[1]) + hw;
-    s += `<polygon fill="#d9d4c9" points="${P([iso(xa, ya), iso(xb, ya), iso(xb, yb), iso(xa, yb)])}"/>`;
-  }
+  for (const q of roadQuads(W)) s += `<polygon class="road" fill="#d9d4c9" points="${P(q.map(([x, y]) => iso(x, y)))}"/>`;
   s += `<polyline fill="none" stroke="#f3f0ea" stroke-width="2" stroke-dasharray="7 9" stroke-linecap="round" points="${P(W.map((p) => iso(p[0], p[1])))}"/>`;
-  const st = iso(W[0][0] - 0.3, W[0][1] - 1.0);
+  const st = startAnchor(W);
   s += `<text class="roadtext" text-anchor="middle" x="${st[0]}" y="${st[1]}">START</text>`;
-  const e = W[W.length - 1], [gx, gy] = iso(e[0], e[1] + 0.4);
+  const [gx, gy] = goalAnchor(W), { post, flag, flagH, word } = GOAL_MARK;
   s +=
-    `<line x1="${gx}" y1="${gy}" x2="${gx}" y2="${gy - 64}" stroke="${INK}" stroke-width="2"/>` +
-    `<path d="M${gx} ${gy - 64} l30 9 l-30 9z" fill="#5f7480"/>` +
-    `<text class="roadtext" text-anchor="middle" x="${gx}" y="${gy + 24}" style="fill:${INK}">GOAL</text>` +
-    `<text text-anchor="middle" x="${gx}" y="${gy + 42}" font-size="12" fill="#6c6f71">Strong full-stack engineer</text>`;
+    `<line x1="${gx}" y1="${gy}" x2="${gx}" y2="${gy - post}" stroke="${INK}" stroke-width="2"/>` +
+    `<path d="M${gx} ${gy - post} l${flag} ${flagH / 2} l-${flag} ${flagH / 2}z" fill="#5f7480"/>` +
+    `<text class="roadtext" text-anchor="middle" x="${gx}" y="${gy + word}" style="fill:${INK}">GOAL</text>`;
+  caption.forEach((line, i) => {
+    s += `<text class="goalcap" text-anchor="middle" x="${gx}" y="${gy + GOAL_MARK.caption + i * CAPTION.lineHeight}" font-size="${CAPTION.size}" fill="#6c6f71">${esc(line)}</text>`;
+  });
   return s;
 }
 
@@ -60,23 +67,25 @@ function signsSVG(L: Layout, signs: string[][]): string {
   L.blocks.forEach((_, i) => {
     const lines = signs[i];
     if (!lines?.length) return;
-    const z = zone(L, i);
-    const mid = (z.start + z.end) / 2;
-    const [x, y] = z.ax === "x" ? iso(mid, z.fixed - 1.25) : iso(z.fixed - 1.25, mid);
-    s += `<line x1="${x}" y1="${y}" x2="${x}" y2="${y - 14}" stroke="#b9b4a9" stroke-width="1"/>`;
+    const [x, y] = signAnchor(L, i);
+    s += `<line x1="${x}" y1="${y}" x2="${x}" y2="${y - SIGN.post}" stroke="#b9b4a9" stroke-width="1"/>`;
     lines.forEach((t, li) => {
-      s += `<text class="signtext" text-anchor="middle" x="${x}" y="${y - 19 - (lines.length - 1 - li) * 13}">${esc(t)}</text>`;
+      s += `<text class="signtext" text-anchor="middle" x="${x}" y="${y - SIGN.first - (lines.length - 1 - li) * SIGN.line}">${esc(t)}</text>`;
     });
   });
   return s;
 }
 
-function platform(b: Block): string {
+function platform(b: Block, meter: Meter): string {
   const c = b.district.color;
   let s = `<polygon fill="rgba(60,55,45,.07)" points="${P([iso(b.x0 + 0.35, b.y0 + 0.35, -0.32), iso(b.x1 + 0.35, b.y0 + 0.35, -0.32), iso(b.x1 + 0.35, b.y1 + 0.35, -0.32), iso(b.x0 + 0.35, b.y1 + 0.35, -0.32)])}"/>`;
   s += box(b.x0, b.y0, b.x1, b.y1, -0.32, 0.32, mix(c, PAPER, 0.74), mix(c, PAPER, 0.42), mix(c, PAPER, 0.25));
-  const [lx, ly] = iso(b.x0 + 0.32, b.y1 - 0.2);
-  s += `<text class="dlabel" fill="${mix(c, INK, 0.5)}" transform="matrix(0.894 0.447 -0.894 0.447 ${lx.toFixed(1)} ${ly.toFixed(1)})">${esc(b.district.name.toUpperCase())}</text>`;
+  // The name runs along the front edge and is fitted to it (smaller, tighter, or shortened as a last resort).
+  const [lx, ly] = labelAnchor(b);
+  const name = b.district.name.toUpperCase();
+  const f = fitLabel(name, labelSpace(b), meter);
+  const style = f.truncated || f.size !== 15 || f.spacing !== 0.16 ? ` style="font-size:${f.size}px;letter-spacing:${f.spacing}em"` : "";
+  s += `<text class="dlabel" fill="${mix(c, INK, 0.5)}"${style}${f.truncated ? ` aria-label="${esc(name)}"` : ""} transform="matrix(0.894 0.447 -0.894 0.447 ${lx.toFixed(1)} ${ly.toFixed(1)})">${esc(f.text)}</text>`;
   return s;
 }
 
@@ -91,7 +100,7 @@ export function buildingSVG(b: Building, st: RenderState): string {
   const sel = t.id === st.selectedId;
   const state = st.stateOf?.(t.id);
   let s =
-    `<g class="bld${sel ? " sel" : ""}${sel && st.selectionEnter ? " enter" : ""}" data-t="${esc(t.id)}"` +
+    `<g class="bld${sel ? " sel" : ""}${sel && st.selectionEnter ? " enter" : ""}${st.buildingClass?.(b) ? ` ${esc(st.buildingClass(b))}` : ""}" data-t="${esc(t.id)}"` +
     `${state ? ` data-state="${esc(state)}"` : ""} tabindex="0" role="button" aria-label="${esc(label)}"${sel ? ' aria-current="true"' : ""}>`;
   // The ground outline stays put; the building itself (.vis) lifts on hover and selection, the hit area never moves.
   if (sel) {
@@ -138,7 +147,7 @@ export function carSVG(p: CarPos): string {
 }
 
 function badge(b: Block, st: RenderState): string {
-  const [x, y] = iso(b.x0 - 0.35, b.y1 + 0.35);
+  const [x, y] = badgeAnchor(b);
   const c = b.district.color;
   const state = st.passed[b.idx] ? "done" : b.idx === st.currentIdx ? "cur" : "later";
   const fill = state === "done" ? mix(c, INK, 0.15) : PAPER;
@@ -147,16 +156,16 @@ function badge(b: Block, st: RenderState): string {
   const label = `Checkpoint ${b.idx + 1}: ${b.district.name}${state === "done" ? ", passed" : state === "cur" ? ", current" : ""}`;
   return (
     `<g class="badge" data-d="${b.idx}" role="button" tabindex="0" aria-label="${esc(label)}">` +
-    `<line x1="${x}" y1="${y}" x2="${x}" y2="${y - 40}" stroke="${mix(c, INK, 0.35)}" stroke-width="1.5"/>` +
-    `<circle cx="${x}" cy="${y - 54}" r="14" fill="${fill}" stroke="${stroke}" stroke-width="${state === "cur" ? 2.2 : 1.4}"/>` +
-    `<text x="${x}" y="${y - 49.5}" text-anchor="middle" font-size="13" font-weight="700" fill="${tcol}">${state === "done" ? "✓" : b.idx + 1}</text></g>`
+    `<line x1="${x}" y1="${y}" x2="${x}" y2="${y - BADGE.post}" stroke="${mix(c, INK, 0.35)}" stroke-width="1.5"/>` +
+    `<circle cx="${x}" cy="${y - BADGE.cy}" r="${BADGE.r}" fill="${fill}" stroke="${stroke}" stroke-width="${state === "cur" ? BADGE.stroke : 1.4}"/>` +
+    `<text x="${x}" y="${y - BADGE.cy + 4.5}" text-anchor="middle" font-size="13" font-weight="700" fill="${tcol}">${state === "done" ? "✓" : b.idx + 1}</text></g>`
   );
 }
 
 /** Draw order (DESIGN.md §3): road → platforms → buildings and car by depth → badges. */
 export function renderCity(L: Layout, st: RenderState, road = roadSVG(L.W)): string {
   const out = [road, signsSVG(L, st.signs)];
-  for (const b of L.blocks) out.push(platform(b));
+  for (const b of L.blocks) out.push(platform(b, st.meter ?? estimateMeter));
   const objs: { z: number; f: () => string }[] = L.route.map((b) => ({ z: b.x0 + b.y0 + FP, f: () => buildingSVG(b, st) }));
   objs.push({ z: st.car.x + st.car.y, f: () => carSVG(st.car) });
   objs.sort((a, b) => a.z - b.z).forEach((o) => out.push(o.f()));
