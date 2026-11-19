@@ -52,6 +52,31 @@ function fakeGenerate(i: GenerateInput): { output: unknown; usage: { inputTokens
   };
 }
 
+/**
+ * "Here's what I understood" for a new city (AI design §10.4): the subjects are the plan's "Phase …" or "Month …" lines
+ * when there is a plan, otherwise three generic ones, so tests can see that the plan reached the model.
+ */
+function fakeUnderstand(i: EvaluateInput) {
+  const goal = tag(i.user, "goal").replace(/‹/g, "<");
+  const plan = tag(i.user, "plan").replace(/‹/g, "<");
+  const phases = [...plan.matchAll(/^(?:phase|month)\s*\d+\s*[:–-]\s*(.+)$/gim)].map((m) => m[1].trim().slice(0, 40)).slice(0, 7);
+  const first = goal.split(/\s+/).slice(0, 3).join(" ") || "My goal";
+  return {
+    output: {
+      name: first.slice(0, 60), category: "Learning", goal: goal.slice(0, 200) || "Learn something new",
+      currentLevel: /\bA2\b/.test(goal) ? "A2" : "Beginner", targetLevel: /\bC1\b/.test(goal) ? "C1" : "Confident",
+      subjects: phases.length ? phases : ["Basics", "Practice", "Projects"],
+      alreadyKnown: [], resources: /podcast/i.test(goal) ? ["Podcasts"] : [],
+      focusOptions: ["Everyday use", "Exam"],
+      questions: [{ question: "What matters most to you?", options: ["Speaking", "Exam", "Both"] }],
+      plan: phases.length ? `${phases.length} phases` : null,
+      planMonths: phases.length ? phases.length * 3 : null,
+      estimatedHours: 120,
+    },
+    usage: { inputTokens: Math.ceil(i.user.length / 4), outputTokens: 150 },
+  };
+}
+
 export function fakeProvider(transcript = process.env.AI_FAKE_TRANSCRIPT || undefined): TranscriptionProvider & EvaluationProvider & GenerationProvider {
   return {
     name: "fake",
@@ -65,6 +90,7 @@ export function fakeProvider(transcript = process.env.AI_FAKE_TRANSCRIPT || unde
     },
     async evaluate(i: EvaluateInput) {
       if (i.signal.aborted) throw new ProviderError("TIMEOUT", "aborted");
+      if (i.user.startsWith("<goal>")) return fakeUnderstand(i);
       const criteria = tag(i.user, "criteria").split("\n").filter(Boolean).map((l) => l.replace(/^\d+\.\s*/, ""));
       const answer = [tag(i.user, "answer"), tag(i.user, "follow_up_answer")].filter((s) => s && s !== "(empty)").join("\n");
       const answerWords = new Set(words(answer));

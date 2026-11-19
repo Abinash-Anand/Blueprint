@@ -591,6 +591,21 @@ interface Presentation {
 
 The presentation is derived only: it reads the same values the endpoint already returns and changes no learning, scheduling, scoring, district or car logic. `RevisionStatus.tsx` (the former client-side status rules) is gone; its cases are now backend unit tests.
 
+## 4.7 City creation (frontend, 19 Nov 2026)
+
+Four screens, one question each, in `components/cities/create/` (route `#/cities/new[/<draft id>]`):
+
+| File | Responsibility |
+|---|---|
+| `CreateCity.tsx` | State, saving after every step (draft created on the first save, file or recording), consent sheet, resuming a draft on the right screen, approval |
+| `Steps.tsx` | The screens: goal (text, voice, example pills, plan files), understood (editable summary, districts, focus, questions), time (stepper, weekdays, pace, dates, live finish date), build (progress, review) and the one-value edit sheet |
+| `logic.ts` | Pure: the time promise (`timePlan`, same pace shares and three-year limit as the generator), accepted file types, resume rules |
+| `useGeneration.ts` | Starts and follows the background generation, through brief server restarts |
+| `CityPreview.tsx` | The city drawn by the real map engine (`layout`, `renderCity`): grey ghost districts until written, then coloured and fully built; the proposal exactly as it will be |
+| `components/kit.tsx` | Flow building blocks: `NumberStepper`, `Segmented` (radio group, roving focus), `DayToggles`, `Group` with `DisclosureRow` / `CheckRow` / `SwitchRow` / `TextRow`, `Switch`, `Pill`, `FlowHeader`, `Sheet` (modal, focus trapped and restored) |
+
+Endpoints used: `POST/PATCH /cities`, `GET/POST/DELETE /cities/:id/attachments`, `POST /cities/:id/dictation`, `POST /cities/:id/understand`, `GET /curriculum/generation` (now with `paces` and `understandModel`), `POST /cities/:id/curriculum/generate`, `GET /cities/:id/curriculum/versions/:v`, `POST …/approve` (AI design §10.3–10.4). City requirements gain `brief`, `understood`, `focus` and `answers`; constraints gain `weekdays`. The Engineering City template and JSON import remain in the API but are no longer offered here.
+
 # 5. Validation rules
 
 | Field | Rule |

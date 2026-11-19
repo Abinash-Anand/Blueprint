@@ -9,6 +9,8 @@ import { addDays, diffDays, isValidISODate } from "../../domain/dates.js";
 export const CURRICULUM_CONTRACT_VERSION = 1;
 /** The map has room for seven districts (frontend map/geometry.ts ORIGINS). */
 export const MAX_DISTRICTS = 7;
+/** The longest journey a city may plan. */
+export const MAX_JOURNEY_DAYS = 3 * 366;
 
 const key = z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/, "lower-case letters, digits and dashes, at most 24 characters");
 const topicKey = z.string().regex(/^[a-z0-9][a-z0-9.-]{0,47}$/, "lower-case letters, digits, dots and dashes");
@@ -112,7 +114,7 @@ export function validateCurriculum(input: unknown): Validation {
   for (const k of topics.keys()) visit(k, []);
 
   if (doc.journey.start > doc.journey.end) add("journey", "the journey ends before it starts");
-  if (diffDays(doc.journey.start, doc.journey.end) > 3 * 366) add("journey", "at most three years");
+  if (diffDays(doc.journey.start, doc.journey.end) > MAX_JOURNEY_DAYS) add("journey", "at most three years");
   const stageKeys = new Set<string>();
   const usedQueues = new Set<string>();
   doc.stages.forEach((s, i) => {

@@ -15,7 +15,11 @@ import { dummyVerify, hashPassword, newToken, normaliseEmail, tokenHash, verifyP
  * AI_PROCESSING 2026-11-19: the AI check and transcription moved from Google (Gemini) to GWDG Academic Cloud, so
  * consent given under the earlier notice no longer counts and is asked again.
  */
-export const POLICY_VERSIONS = { TERMS: "2026-11-18", PRIVACY_NOTICE: "2026-11-18", AI_PROCESSING: "2026-11-19", AI_CURRICULUM: "2026-11-19" } as const;
+/**
+ * AI_CURRICULUM 2026-11-19.2: city creation also sends the learner's own plan files (their text) and voice recordings of
+ * their goal to the AI provider, so consent given under the earlier notice is asked again.
+ */
+export const POLICY_VERSIONS = { TERMS: "2026-11-18", PRIVACY_NOTICE: "2026-11-18", AI_PROCESSING: "2026-11-19", AI_CURRICULUM: "2026-11-19.2" } as const;
 export type ConsentPurpose = keyof typeof POLICY_VERSIONS;
 /** Optional purposes can be granted and withdrawn at any time; the others are required to have an account. */
 export const OPTIONAL_PURPOSES: ConsentPurpose[] = ["AI_PROCESSING", "AI_CURRICULUM"];
@@ -232,7 +236,7 @@ export function authService(prisma: PrismaClient, cfg: AuthConfig, mailer: Maile
         prisma.city.findMany({
           where: { ownerId: user.id },
           include: {
-            settings: true, weeklyTargets: true, versions: true, stages: true,
+            settings: true, weeklyTargets: true, versions: true, stages: true, attachments: true,
             districts: { include: { topics: { include: { subtopics: true } } } },
             tasks: true, sessions: true, prompts: { where: { source: "LEARNER" } }, schedules: true, attempts: true, checkpoints: true, evaluations: true,
           },

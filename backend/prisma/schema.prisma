@@ -394,6 +394,8 @@ enum AiOperation {
   TRANSCRIBE
   EVALUATE
   GENERATE
+  /// Reading a new city's goal and plan into a structured summary (city creation, AI design §10.4).
+  UNDERSTAND
 }
 
 /// One AI assessment of one answer to one prompt (AI design §5.1). Immutable once SUCCEEDED or FAILED.
@@ -579,6 +581,7 @@ model City {
   archivedAt    DateTime?            @db.Timestamptz(3)
   completedAt   DateTime?            @db.Timestamptz(3)
   versions      CurriculumVersion[]
+  attachments   CityAttachment[]
   districts     District[]
   stages        Stage[]
   settings      Settings?
@@ -593,6 +596,23 @@ model City {
   evaluations   RevisionEvaluation[]
 
   @@index([ownerId, status])
+}
+
+/// A learner's own plan (PDF or text) added while creating a city. Only the extracted text is kept, never the file;
+/// it is sent to the AI with the city's answers and is deleted with the city.
+model CityAttachment {
+  id        Int      @id @default(autoincrement())
+  cityId    String
+  city      City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  name      String
+  mimeType  String
+  size      Int
+  pages     Int?
+  chars     Int
+  text      String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([cityId])
 }
 
 /// A version of a city's curriculum in the curriculum contract (CURRICULUM_CONTRACT_VERSION). Applying one never

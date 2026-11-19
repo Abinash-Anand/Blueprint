@@ -38,7 +38,8 @@ export function usageService(prisma: PrismaClient, config: AiConfig, now: () => 
       const t = now().getTime();
       const xs = (recent.get(op) ?? []).filter((x) => t - x < HOUR);
       recent.set(op, xs);
-      const perHour = op === "EVALUATE" ? config.maxEvaluationsPerHour : op === "GENERATE" ? config.maxGenerationsPerHour : config.maxTranscriptionsPerHour;
+      // Reading a new city's goal is a short structured call like an answer check, so it shares that hourly limit.
+      const perHour = op === "EVALUATE" || op === "UNDERSTAND" ? config.maxEvaluationsPerHour : op === "GENERATE" ? config.maxGenerationsPerHour : config.maxTranscriptionsPerHour;
       if (xs.length >= perHour)
         throw new HttpError(429, "AI_RATE_LIMITED", op === "GENERATE" ? `Curriculum generation is limited to ${perHour} an hour. Try again later.` : `AI checks are limited to ${perHour} an hour. Carry on without AI, or try again later.`);
       if (dailyLimit > 0 && (await usedLast24h(provider)) + reserve > dailyLimit)

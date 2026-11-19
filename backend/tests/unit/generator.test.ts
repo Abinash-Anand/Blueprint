@@ -1,7 +1,7 @@
 /** Curriculum generation pipeline (AI design §10.3) with the deterministic fake provider: no network. */
 import { describe, expect, it } from "vitest";
 import { buildPlan } from "../../src/domain/planner.js";
-import { type GenerationRequest, type StructuredCall, assemble, generateCurriculum, hourBudget, outlinePrompt } from "../../src/modules/ai/curriculum/generator.js";
+import { type GenerationRequest, type StructuredCall, assemble, generateCurriculum, hourBudget, hoursFor, maxSubtopics, outlinePrompt } from "../../src/modules/ai/curriculum/generator.js";
 import { fakeProvider } from "../../src/modules/ai/providers/fake.js";
 import { validateCurriculum } from "../../src/modules/cities/contract.js";
 
@@ -23,7 +23,8 @@ describe("curriculum generation", () => {
     expect(doc.districts.map((d) => d.name)).toEqual(["Grammar", "Vocabulary", "Speaking"]);
     expect(doc.districts[0].topics[0].key).toBe("d1.d1-t1");
     expect(doc.journey.start).toBe("2026-11-23"); // a Monday, the chosen start
-    expect(doc.weeklyTargets).toMatchObject({ 1: 90, 5: 90, 6: 0, 7: 0 }); // 1.5 h on five days
+    // 1.5 h on five days at the steady pace: 75 % (68 min) for new material, in whole half hours; the rest is for revision.
+    expect(doc.weeklyTargets).toMatchObject({ 1: 60, 5: 60, 6: 0, 7: 0 });
     expect(doc.stages.every((s, i) => i === 0 || s.start > doc.stages[i - 1].end)).toBe(true);
     // The real planner fits every planned topic into the generated stages.
     const plan = buildPlan(
@@ -36,7 +37,47 @@ describe("curriculum generation", () => {
     );
     expect(plan.every((t) => t.minutes <= 90)).toBe(true);
     expect(steps[0]).toMatch(/Designing/);
-    expect(steps.some((s) => s.startsWith("Writing district 3 of 3"))).toBe(true);
+    expect(steps).toContain("Writing 3 districts at once: 3 of 3 done");
+  });
+
+  it("gives a topic enough hours for all its sub-topics (30 min of study each)", async () => {
+    expect([1, 2, 3, 4].map(maxSubtopics)).toEqual([1, 3, 4, 6]);
+    expect(hoursFor(6, 3)).toBe(4); // the failing GWDG trial: 6 sub-topics in 3 h
+    expect(hoursFor(2, 1)).toBe(2);
+    expect(hoursFor(3, 5)).toBe(5); // never lowered
+    // A model that writes 6 sub-topics for every topic still yields a curriculum the planner accepts.
+    const wordy: StructuredCall = async (stage, prompt, schema, max) => {
+      const out = (await viaFake(stage, prompt, schema, max)) as { topics?: { subtopics: string[] }[] };
+      if (stage.name === "curriculum_district") for (const t of out.topics ?? []) t.subtopics = ["a", "b", "c", "d", "e", "f"];
+      return out;
+    };
+    const doc = await generateCurriculum(req(), wordy);
+    expect(validateCurriculum(doc).ok).toBe(true);
+    expect(doc.districts.flatMap((d) => d.topics).every((t) => t.hours >= 4)).toBe(true);
+  });
+
+  it("writes the districts at the same time and keeps them in outline order", async () => {
+    let inFlight = 0;
+    let most = 0;
+    const order: string[] = [];
+    // District 1 is the slowest, district 3 the fastest: finishing order is the reverse of the outline.
+    const slow: StructuredCall = async (stage, prompt, schema, max) => {
+      inFlight++;
+      most = Math.max(most, inFlight);
+      const n = Number(/district (\d)/.exec(stage.label)?.[1] ?? 0);
+      await new Promise((r) => setTimeout(r, n ? 60 - n * 15 : 0));
+      inFlight--;
+      order.push(stage.label);
+      return viaFake(stage, prompt, schema, max);
+    };
+    const doc = await generateCurriculum(req(), slow);
+    expect(most).toBe(3);
+    expect(order).toEqual(["outline", "district 3", "district 2", "district 1"]);
+    expect(doc.districts.map((d) => d.name)).toEqual(["Grammar", "Vocabulary", "Speaking"]);
+    // With a limit of 2, never more than 2 requests at once.
+    most = 0;
+    await generateCurriculum(req(), slow, undefined, 2);
+    expect(most).toBe(2);
   });
 
   it("keeps the learner's answers as data and budgets hours from their time", () => {

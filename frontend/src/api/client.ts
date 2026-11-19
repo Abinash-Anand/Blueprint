@@ -1,5 +1,5 @@
 import type {
-  Account, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template,
+  Account, CityAttachment, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template, Understanding,
   AiEvaluation, AiStatus, AttemptResult, Checkpoint, CheckpointResult, Curriculum, Progress, Prompt, RetrievalMethod, Session, Stage, Task, TaskKind,
   RevisionOverview, TaskStatus, Today, Topic, TopicRevision, Week,
 } from "./types";
@@ -190,5 +190,12 @@ export const cities = {
   generation: () => request<GenerationAvailability>("GET", "/curriculum/generation"),
   generate: (id: string) => request<{ version: number; status: "GENERATING" }>("POST", `/cities/${encodeURIComponent(id)}/curriculum/generate`, {}),
   approve: (id: string, v: number) => request<CitySummary>("POST", `/cities/${encodeURIComponent(id)}/curriculum/versions/${v}/approve`, {}),
+  /* City creation intake (AI design §10.4) */
+  attachments: (id: string) => request<CityAttachment[]>("GET", `/cities/${encodeURIComponent(id)}/attachments`),
+  addAttachment: (id: string, file: Blob, name: string, type: string) =>
+    request<CityAttachment>("POST", `/cities/${encodeURIComponent(id)}/attachments?name=${encodeURIComponent(name)}`, undefined, { data: file, type }),
+  removeAttachment: (id: string, attachmentId: number) => request<void>("DELETE", `/cities/${encodeURIComponent(id)}/attachments/${attachmentId}`),
+  dictate: (id: string, wav: Blob) => request<{ text: string; audioSeconds: number }>("POST", `/cities/${encodeURIComponent(id)}/dictation`, undefined, { data: wav, type: "audio/wav" }),
+  understand: (id: string) => request<Understanding & { promptVersion: string; model: string; provider: string }>("POST", `/cities/${encodeURIComponent(id)}/understand`, {}),
   reject: (id: string, v: number) => request<void>("POST", `/cities/${encodeURIComponent(id)}/curriculum/versions/${v}/reject`, {}),
 };

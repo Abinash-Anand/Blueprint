@@ -170,6 +170,17 @@ npx tsx --env-file=../.env eval/speech.ts --dir ../recordings/laptop --device la
 
 It reports how many of the 60 curriculum terms were spelled correctly (gate 95 %) and the word error rate. Blueprint never stores the recordings in its database, and `recordings/` is git-ignored so they are never committed. Each one is sent once to Google for transcription (12 requests per microphone); on the free tier Google may keep it and people at Google may review it. The benchmark and this test share the daily quota with your real revisions, so run them on days you revise less.
 
+### 6.3 Creating a city
+
+**New city** opens four short screens, with the city drawn at the top as it takes shape:
+
+1. **What would you like to learn?** Say it in your own words, type it or press **Speak instead**. Optionally add your own plan as a PDF or text file (up to 3 files of 5 MB); only its text is kept, never the file.
+2. **Here's what I understood.** The AI's reading of your goal: name, goal, levels, study time, focus and one district per subject. Tap anything to correct it, leave districts out, add your own, and answer at most two questions. If you added a plan, the districts follow it.
+3. **How much time do you have?** Hours a day, the days you study and the pace (Light, Steady or Intensive: 60, 75 or 90 % of your time for new material, the rest for revision). Blueprint shows when you will finish, or how much fits before your date, and warns when your goal needs more time.
+4. **Build.** The AI writes the city in the background (usually 1 to 5 minutes; you can leave the page). Review its districts and topics, then approve it.
+
+The first time, Blueprint asks once whether it may send your goal, plan text and voice to GWDG Academic Cloud. Every step is saved, so you can close the page and continue later from **Cities**. Design: `docs/AI-Voice-Design.md` §10.3–10.4. Try the AI parts without the app: `cd backend && npx tsx --env-file=../.env eval/intake.ts [--sample plan --generate | --goal "…" | --audio goal.wav]`.
+
 ## 7. Development without Docker
 
 You need Node.js 22+ and a PostgreSQL database.

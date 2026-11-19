@@ -494,7 +494,31 @@ export interface Account {
 
 export type CityStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "COMPLETED" | "ARCHIVED";
 
+/** "Here's what I understood" for a new city (backend ai/curriculum/intake.ts), as the AI wrote it or the learner corrected it. */
+export interface Understanding {
+  name?: string;
+  category?: string;
+  goal?: string;
+  currentLevel?: string;
+  targetLevel?: string;
+  subjects?: string[];
+  alreadyKnown?: string[];
+  resources?: string[];
+  focusOptions?: string[];
+  questions?: { question: string; options: string[] }[];
+  plan?: string | null;
+  planMonths?: number | null;
+  estimatedHours?: number;
+}
+/** A learner's own plan file: only its extracted text is kept on the server; this is what the browser sees of it. */
+export interface CityAttachment { id: number; name: string; mimeType: string; size: number; pages: number | null; chars: number; hasText: boolean; preview: string }
+
 export interface CityRequirements {
+  /** The learner's own words (city creation, step 1). */
+  brief?: string;
+  understood?: Understanding;
+  focus?: string;
+  answers?: { question: string; answer: string }[];
   outcome?: string;
   currentLevel?: "NONE" | "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
   targetLevel?: "FOUNDATIONS" | "WORKING" | "PROFESSIONAL" | "EXPERT";
@@ -509,6 +533,8 @@ export interface CityConstraints {
   startDate?: ISODate;
   targetDate?: ISODate;
   timezone?: string;
+  /** ISO weekdays the learner studies (1 = Monday). */
+  weekdays?: number[];
 }
 
 export interface CitySummary {
@@ -561,13 +587,17 @@ export interface GenerationAvailability {
   consented: boolean;
   provider: string;
   model: string;
+  /** The model that reads a new city's goal. */
+  understandModel?: string;
+  /** Share of study time each pace plans for new material. */
+  paces?: Record<"LIGHT" | "STEADY" | "INTENSIVE", number>;
 }
 
 export interface CurriculumVersion {
   version: number;
   status: "GENERATING" | "FAILED" | "PROPOSED" | "APPLIED" | "REJECTED";
   /** While GENERATING: what the generator is doing. */
-  progress: { step: string; label: string; done: number; total: number } | null;
+  progress: { step: string; label: string; done: number; total: number; districts?: { name: string; done: boolean }[] } | null;
   /** When FAILED: why, for the learner. */
   error: string | null;
   source: "BUILTIN" | "TEMPLATE" | "IMPORT" | "GENERATED";
