@@ -735,3 +735,13 @@ button.kit-row:hover,.kit-switch-row:hover{background:var(--paper)}
 .cc-topic .kit-row-label b{font-weight:600;color:var(--ink)}
 .cc-topic .kit-row-label small{margin-top:3px}
 @media (max-width:520px){.cc-hero-map,.cc-hero-empty{height:140px}}
+/* laptop and wider: the city large on the left and in view while scrolling, the question on the right */
+@media (min-width:960px){
+  .cc{padding:28px 24px 56px}
+  .cc-card{width:min(1100px,100%);padding:20px 32px 32px}
+  .cc-split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:36px;align-items:start}
+  .cc-aside{position:sticky;top:0}
+  .cc-aside .cc-hero{margin-top:14px}
+  .cc-aside .cc-hero-map,.cc-aside .cc-hero-empty{height:clamp(320px,58vh,560px)}
+  .cc-body .cc-head{margin-top:14px}
+}

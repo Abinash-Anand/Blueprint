@@ -299,8 +299,10 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
     <div className="cc">
       <div className="cc-card">
         <FlowHeader step={n + 1} total={4} onBack={back} onCancel={() => (location.hash = "#/cities")} cancelLabel={id ? "Save and close" : "Cancel"} />
-        <CityPreview districts={hero.districts} caption={hero.caption} />
-        <div className="cc-body" key={step}>
+        {/* Phones: one column. Laptops: the city on the left (stays in view), the question on the right. */}
+        <div className="cc-split">
+          <div className="cc-aside"><CityPreview districts={hero.districts} caption={hero.caption} /></div>
+          <div className="cc-body" key={step}>
           {step === "goal" && (
             <GoalStep
               brief={brief} onBrief={setBrief} files={files} onAddFiles={(fs) => void addFiles(fs)} onRemoveFile={(x) => void removeFile(x)} uploading={uploading}
@@ -330,6 +332,7 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
               approving={approving} onApprove={() => void approve()} onRebuild={build} error={error}
             />
           )}
+          </div>
         </div>
       </div>
 
