@@ -6,7 +6,8 @@ import { useEffect, useState } from "react";
 import { App } from "./App";
 import { AccountSettings, Onboarding } from "./components/account/Account";
 import { type AuthRoute, AuthScreens } from "./components/account/AuthScreens";
-import { CityManager, CityWizard } from "./components/cities/Cities";
+import { CityManager } from "./components/cities/Cities";
+import { CreateCity } from "./components/cities/create/CreateCity";
 import { Loading } from "./components/ui";
 import { AppDataProvider } from "./state/AppData";
 import { useSession } from "./state/Session";
@@ -100,7 +101,7 @@ export function Root() {
   if (first === "account") return <Page><AccountSettings /></Page>;
   if (first === "cities" && second === "new") {
     const draft = hash.split("?")[0].split("/")[3] ?? null;
-    return <Page><CityWizard key={draft ?? "new"} draftId={draft} /></Page>;
+    return <Page><CreateCity key={draft ?? "new"} draftId={draft} /></Page>;
   }
   if (first === "cities" || !s.city) return <Page><CityManager /></Page>;
   return (

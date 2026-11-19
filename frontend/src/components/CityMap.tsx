@@ -6,8 +6,11 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { Curriculum, Progress } from "../api/types";
 import { esc } from "../lib/color";
 import { PRIORITY_LABEL, monthRange } from "../lib/format";
-import { BASE, FH, type Building, type Layout, cityBox, districtBox, iso } from "../map/geometry";
+import { cityBox, districtBox } from "../map/bounds";
+import { FILL, type Insets, type Size, type View, centreOn, clampK, fitView, viewBoxOf } from "../map/camera";
+import { type Building, type Layout, buildingHeight, iso } from "../map/geometry";
 import { renderCity, roadSVG } from "../map/render";
+import { canvasMeter, wrapCaption } from "../map/text";
 import { type CarPos, alongPath, carPath, carPosition, pathLength } from "../map/vehicle";
 import { MOTION, easeInOut, prefersReducedMotion, useAnimatedNumber } from "../lib/motion";
 import { TopicPanel } from "./TopicPanel";
@@ -26,15 +29,15 @@ interface Props {
   currentTopicId: string | null;
   selectedId: string | null;
   focus: Focus | null;
+  /** The city's goal, shown under GOAL (nothing when empty). */
+  goal?: string | null;
+  /** Where this city's camera is kept (per account and city); without one the camera starts fresh each time. */
+  camera?: { load: () => View | null; save: (v: View) => void };
   today: string;
   onOpenTopic: (id: string) => void;
   onClose: () => void;
 }
 
-interface View { cx: number; cy: number; k: number }
-let savedView: View | null = null; // camera survives switching tabs
-
-const clampK = (k: number) => Math.max(0.3, Math.min(2.6, k));
 const reduceMotion = prefersReducedMotion;
 
 /** Month signposts from the main stages of each district (plus the parallel track). */
@@ -47,28 +50,37 @@ function signposts(c: Curriculum): string[][] {
   });
 }
 
-export function CityMap({ layout: L, curriculum, progress, currentTopicId, selectedId, focus, today, onOpenTopic, onClose }: Props) {
+export function CityMap({ layout: L, curriculum, progress, currentTopicId, selectedId, focus, goal, camera, today, onOpenTopic, onClose }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const layerRef = useRef<SVGGElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  const view = useRef<View>(savedView ?? { cx: 0, cy: 0, k: 1 });
+  const topRef = useRef<HTMLDivElement>(null);
+  const ctrlsRef = useRef<HTMLDivElement>(null);
+  // This city's camera from earlier in the session (switching tabs), if any.
+  const saved = useRef(camera?.load() ?? null);
+  const view = useRef<View>(saved.current ?? { cx: 0, cy: 0, k: 1 });
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
   const anim = useRef<number | null>(null);
   const carAnim = useRef<number | null>(null);
   const carShown = useRef<{ pos: CarPos; idx: number } | null>(null);
 
-  const road = useMemo(() => roadSVG(L.W), [L]);
+  // Text is measured in the page's own font, so labels and the GOAL caption fit what is actually drawn.
+  const meter = useMemo(() => canvasMeter(getComputedStyle(document.body).fontFamily || "sans-serif"), []);
+  const caption = useMemo(() => wrapCaption(goal, meter), [goal, meter]);
+  const road = useMemo(() => roadSVG(L.W, caption), [L, caption]);
   const signs = useMemo(() => signposts(curriculum), [curriculum]);
   const byId = useMemo(() => new Map(L.route.map((b) => [b.topic.id, b])), [L]);
   const selected = selectedId ? byId.get(selectedId) ?? null : null;
 
   /* ---------------- camera ---------------- */
+  const size = (): Size => ({ w: svgRef.current?.clientWidth || 1, h: svgRef.current?.clientHeight || 1 });
   const applyView = useCallback(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const w = svg.clientWidth || 1, h = svg.clientHeight || 1, v = view.current;
-    svg.setAttribute("viewBox", `${v.cx - w / 2 / v.k} ${v.cy - h / 2 / v.k} ${w / v.k} ${h / v.k}`);
-    savedView = { ...v };
+    svg.setAttribute("viewBox", viewBoxOf(view.current, size()));
+    cameraRef.current?.save(view.current);
   }, []);
 
   const stopAnim = () => {
@@ -94,34 +106,40 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
     anim.current = requestAnimationFrame(step);
   }, [applyView]);
 
-  const panelOffset = useCallback(() => {
-    const p = panelRef.current;
-    if (!p) return { x: 0, y: 0 };
-    return innerWidth <= 820 ? { x: 0, y: p.offsetHeight / 2 } : { x: (p.offsetWidth + 14) / 2, y: 0 };
+  /** Screen px covered by the top bar, the zoom controls and the topic panel (beside the map on wide screens, below on narrow). */
+  const insets = useCallback((): Insets => {
+    const ins = { top: 0, right: 0, bottom: 0, left: 0 };
+    const top = topRef.current, ctrls = ctrlsRef.current, p = panelRef.current;
+    if (top) ins.top = top.offsetTop + top.offsetHeight;
+    if (ctrls && ctrls.offsetHeight) ins.bottom = ctrls.offsetHeight + 14;
+    if (p) {
+      if (innerWidth <= 820) ins.bottom = Math.max(ins.bottom, p.offsetHeight + 8);
+      else ins.right = p.offsetWidth + 14;
+    }
+    return ins;
   }, []);
 
+  const districtView = useCallback((idx: number) => {
+    const b = L.blocks[idx];
+    return b ? fitView(districtBox(b), size(), insets(), FILL.district) : null;
+  }, [L, insets]);
+  const cityView = useCallback(() => fitView(cityBox(L, { signs, caption }), size(), insets(), FILL.city), [L, signs, caption, insets]);
+
   const flyToDistrict = useCallback((idx: number) => {
-    const b = L.blocks[idx], svg = svgRef.current;
-    if (!b || !svg) return;
-    const bb = districtBox(b), o = panelOffset();
-    const k = clampK(Math.min((svg.clientWidth * 0.8) / bb.w, (svg.clientHeight * 0.78) / bb.h));
-    flyTo(bb.x + bb.w / 2 + o.x / k, bb.y + bb.h / 2 + o.y / k, k);
-  }, [L, flyTo, panelOffset]);
+    const v = districtView(idx);
+    if (v) flyTo(v.cx, v.cy, v.k);
+  }, [districtView, flyTo]);
 
   const flyToBuilding = useCallback((b: Building) => {
-    const H = BASE + b.topic.subtopics.length * FH;
-    const [x, y] = iso((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, H / 2);
-    const k = Math.max(view.current.k, 1.05), o = panelOffset();
-    flyTo(x + o.x / k, y + o.y / k, k);
-  }, [flyTo, panelOffset]);
+    const p = iso((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, buildingHeight(b.topic) / 2);
+    const v = centreOn(p, Math.max(view.current.k, 1.05), insets());
+    flyTo(v.cx, v.cy, v.k);
+  }, [flyTo, insets]);
 
   const fitAll = useCallback(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const bb = cityBox(L), o = panelOffset();
-    const k = clampK(Math.min(((svg.clientWidth - o.x * 2) * 0.92) / bb.w, ((svg.clientHeight - o.y * 2) * 0.92) / bb.h));
-    flyTo(bb.x + bb.w / 2 + o.x / k, bb.y + bb.h / 2 + o.y / k, k);
-  }, [L, flyTo, panelOffset]);
+    const v = cityView();
+    flyTo(v.cx, v.cy, v.k);
+  }, [cityView, flyTo]);
 
   const whereAmI = useCallback(() => {
     const i = progress.road.currentDistrictIndex;
@@ -169,10 +187,11 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
         currentIdx: progress.road.currentDistrictIndex,
         car,
         signs,
+        meter,
       },
       road,
     );
-  }, [L, floors, selectedId, currentTopicId, passed, progress.road.currentDistrictIndex, signs, road, states]);
+  }, [L, floors, selectedId, currentTopicId, passed, progress.road.currentDistrictIndex, signs, road, states, meter]);
 
   // Draw, driving the car along the road to its new position when progress changes (across districts too).
   useEffect(() => {
@@ -200,23 +219,24 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
     carAnim.current = requestAnimationFrame(step);
   }, [L, progress.road, draw]);
 
-  // Initial camera: restore the previous view, or frame the current district.
-  useEffect(() => {
-    if (savedView) {
-      applyView();
-      return;
+  // Initial camera: this city's camera from earlier in the session, or its current district (the whole city once
+  // every district is passed). Framing needs the map's real size, so it waits until the map has been laid out.
+  const framed = useRef(false);
+  const frameInitial = useCallback(() => {
+    const svg = svgRef.current;
+    if (framed.current || !svg) return;
+    if (!saved.current && (!svg.clientWidth || !svg.clientHeight)) return; // not laid out yet: the resize observer retries
+    framed.current = true;
+    if (!saved.current) {
+      const i = progress.road.currentDistrictIndex;
+      view.current = (i < L.blocks.length ? districtView(i) : null) ?? cityView();
     }
-    const svg = svgRef.current!;
-    const i = progress.road.currentDistrictIndex;
-    if (i >= L.blocks.length) {
-      fitAll();
-      return;
-    }
-    const bb = districtBox(L.blocks[i]);
-    const k = clampK(Math.min((svg.clientWidth * 0.8) / bb.w, (svg.clientHeight * 0.78) / bb.h));
-    view.current = { cx: bb.x + bb.w / 2, cy: bb.y + bb.h / 2, k };
     applyView();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [L, progress.road.currentDistrictIndex, districtView, cityView, applyView]);
+  const frameRef = useRef(frameInitial);
+  frameRef.current = frameInitial;
+  useEffect(() => {
+    frameRef.current();
   }, []);
 
   // External focus requests (sidebar, Today view, deep links).
@@ -333,7 +353,9 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
     svg.addEventListener("wheel", wheel, { passive: false });
     svg.addEventListener("keydown", key);
     document.addEventListener("keydown", onEsc);
-    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => applyView()) : null;
+    const ro = typeof ResizeObserver === "function"
+      ? new ResizeObserver(() => (framed.current ? applyView() : frameRef.current()))
+      : null;
     ro?.observe(svg);
     return () => {
       svg.removeEventListener("pointerdown", down);
@@ -360,7 +382,7 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
       <svg ref={svgRef} className="world" role="img" aria-label="Isometric city map of the roadmap. Each district is a skill domain and each building a topic.">
         <g ref={layerRef} />
       </svg>
-      <div className="topbar">
+      <div className="topbar" ref={topRef}>
         <span className="chip">
           Road <b aria-hidden="true">{Math.round(roadPct)}%</b>
           <span className="sr">{Math.round(road0.overall * 100)}%</span>
@@ -379,7 +401,7 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
           onClose={onClose}
         />
       )}
-      <div className="ctrls">
+      <div className="ctrls" ref={ctrlsRef}>
         <button className="btn" aria-label="Zoom in" onClick={() => zoomAt(1.25, ...mid())}>+</button>
         <button className="btn" aria-label="Zoom out" onClick={() => zoomAt(0.8, ...mid())}>−</button>
         <button className="btn" onClick={fitAll}>Whole city</button>

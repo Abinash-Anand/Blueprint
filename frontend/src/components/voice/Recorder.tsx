@@ -17,15 +17,21 @@ export const canRecord = () =>
 
 export function Recorder({
   scheduleId,
+  transcribe,
   maxSeconds,
   maxBytes,
   label = "Answer by voice",
+  workingText = "Transcribing your answer…",
   onTranscript,
 }: {
-  scheduleId: number;
+  /** The revision unit the answer belongs to (answers are transcribed for it)… */
+  scheduleId?: number;
+  /** …or any other transcription, e.g. dictating a new city's goal. */
+  transcribe?: (wav: Blob) => Promise<{ text: string }>;
   maxSeconds: number;
   maxBytes: number;
   label?: string;
+  workingText?: string;
   onTranscript: (text: string) => void;
 }) {
   const [state, setState] = useState<State>("idle");
@@ -111,7 +117,7 @@ export function Recorder({
     try {
       const { wav } = await toWav(new Blob(chunks, { type: chunks[0].type }));
       if (wav.size > maxBytes) throw new ApiError(413, "AUDIO_TOO_LARGE", "The recording is too long. Keep answers under the time limit.");
-      const t = await api.transcribe(scheduleId, wav);
+      const t = transcribe ? await transcribe(wav) : await api.transcribe(scheduleId!, wav);
       if (!t.text.trim()) setError("No speech was recognised. Try again closer to the microphone, or type.");
       else onTranscript(t.text.trim());
     } catch (e) {
@@ -148,7 +154,7 @@ export function Recorder({
           <button type="button" className="btn" onClick={cancel}>Cancel</button>
         </>
       )}
-      {state === "working" && <LoadingState tone="ai" text="Transcribing your answer…" />}
+      {state === "working" && <LoadingState tone="ai" text={workingText} />}
       {error && <FeedbackMessage tone="danger" className="rv-rec-err" onDismiss={() => setError(null)}>{error}</FeedbackMessage>}
     </div>
   );

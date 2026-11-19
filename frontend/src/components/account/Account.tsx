@@ -12,7 +12,7 @@ import { FeedbackMessage, LoadingState, StatusBadge } from "../Status";
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong.");
 const PURPOSE: Record<string, string> = {
   TERMS: "Terms of use", PRIVACY_NOTICE: "Privacy notice", AI_PROCESSING: "AI check of revision answers",
-  AI_CURRICULUM: "AI curriculum generation from your city answers",
+  AI_CURRICULUM: "Building new cities with AI (your goal, plan files and voice)",
 };
 
 /* ======================================================================= onboarding */

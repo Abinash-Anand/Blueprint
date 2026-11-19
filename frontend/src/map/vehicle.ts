@@ -3,7 +3,7 @@
  * current district, advancing with that district's demonstrated core progress.
  */
 import type { Road } from "../api/types";
-import type { Layout, Pt } from "./geometry";
+import { type Layout, type Pt, ZONE_CLEAR } from "./geometry";
 
 export interface CarPos {
   x: number;
@@ -21,8 +21,8 @@ export function zone(L: Layout, i: number): { ax: "x" | "y"; start: number; end:
   const k = ax === "x" ? 0 : 1;
   const cur = L.blocks[i];
   const prev = L.blocks[i - 1];
-  const start = i === 0 || !prev ? a[k] + 0.6 : (k === 0 ? prev.x1 : prev.y1) + 0.7;
-  const end = (k === 0 ? cur.x0 : cur.y0) - 0.7;
+  const start = i === 0 || !prev ? a[k] + 0.6 : (k === 0 ? prev.x1 : prev.y1) + ZONE_CLEAR;
+  const end = (k === 0 ? cur.x0 : cur.y0) - ZONE_CLEAR;
   return { ax, start, end: Math.max(end, start), fixed: b[1 - k] };
 }
 

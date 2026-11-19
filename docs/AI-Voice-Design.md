@@ -637,18 +637,55 @@ The Gemini free tier (about 20 requests a day) is too small for daily use. Bluep
 
 | Job | Model | Same-provider fallback |
 |---|---|---|
-| Answer checking | Qwen 3.8 27B (`qwen3.8-27b`), thinking off | Gemma 4 31B (`gemma-4-31b-it`) |
-| Speech to text | Whisper Large v3 (`whisper-large-v3`), curriculum terms as Whisper's prompt | Whisper Large v2 |
-| Curriculum generation (later) | Qwen 3.5 397B A17B | none (retry) |
+| Answer checking | Gemma 4 31B (`gemma-4-31b-it`), the benchmark winner | Qwen 3.8 27B (`qwen3.8-27b`), thinking off |
+| Speech to text (answers and dictated goals) | Whisper Large v3 (`whisper-large-v3`), curriculum terms as Whisper's prompt | Whisper Large v2 |
+| Reading a new city's goal (§10.4) | Gemma 4 31B | Qwen 3.8 27B |
+| Curriculum generation (§10.3) | Qwen 3.5 397B A17B (`qwen3.5-397b-a17b`) | Mistral Large 4 (`mistral-large-4-1t-a52b`), after two retries |
 
 - **Adapter:** `providers/gwdg.ts`. Answer checking uses `/chat/completions` and asks for schema-constrained JSON. If the server rejects that, it steps down to JSON mode with the schema in the prompt. Every reply passes the same schema, quote and score checks as before. Speech uses `/audio/transcriptions` (multipart).
 - **Settings:** `AI_EVALUATION_PROVIDER=gwdg`, `SAIA_API_KEY`, optional `SAIA_BASE_URL` / `SAIA_AUDIO_BASE_URL`, per-job fallbacks (`AI_EVALUATION_FALLBACK_MODEL`, `AI_TRANSCRIPTION_FALLBACK_MODEL`), `AI_DISABLE_THINKING`.
 - **Fallbacks:** stay with GWDG and trigger on HTTP 5xx only. There is never a fallback to Gemini, so answers never reach a second company.
 - **Access check:** `eval/models.ts` lists the models available to the key, matches the planned ids and tests Whisper access.
 - **Switch-over conditions:** the key is in place; the ids are confirmed; the 96-case benchmark shows zero false passes (the winner of Qwen and Gemma becomes primary); the speech test passes; the AI notice and privacy notice name GWDG and consent is asked again under a new policy version. Gemini then leaves the defaults; its adapter stays.
-- **Still to do:** per-user limits on the shared key (usage ledger with a user column), and curriculum generation as a background job (staged, validated against the contract, one repair round).
+- **Still to do:** per-user limits on the shared key in the usage ledger (city creation already limits each account in memory, §10.4).
 
 `AI_ENABLED=false` (the default) leaves the application exactly as it is today. The health check never depends on the provider.
+
+## 10.3 Curriculum generation (19 Nov 2026)
+
+A new city's curriculum is written by the generation model as a **background job**; the city changes only when the learner approves the proposal.
+
+- **Pipeline** (`ai/curriculum/generator.ts`, pure): one **outline** call (districts and topics with priority and hours) → one call **per district** (description, sub-topics, exercise, dependencies, one revision question), written **in parallel** (at most `AI_GENERATION_CONCURRENCY`, default 6), each with one repair round → **assembly in code** (keys, colours, dependencies only backwards, planner queues, calendar sized from the learner's time and checked with the real planner) → **contract validation**. The model writes content only; structure, dates and references are code.
+- **Job** (`ai/curriculum/service.ts`): the `CurriculumVersion` row carries `GENERATING` → `PROPOSED` or `FAILED`, with `progress` (`{ step, label, done, total, districts: [{ name, done }] }`) for the wizard and a learner-readable `error`. One job per city; a server restart marks running jobs failed (`recoverGenerations`). HTTP 5xx is retried twice, then the fallback model writes the rest of the job (never two models taking turns).
+- **Time:** pace sets the share of study time planned for new material (`PACE_SHARE`: Light 0.6, Steady 0.75, Intensive 0.9), both for the hour budget and for the daily minutes in the calendar; the study days are the learner's chosen weekdays. Without a finish-by date the budget is the learner-confirmed estimate of hours; it never exceeds what fits in three years (`MAX_JOURNEY_DAYS`). With a finish-by date, IMPORTANT topics that do not fit become OPTIONAL from the end of the city (`fitDeadline`), never CORE topics or ones a planned topic depends on.
+- **Prompt version** `curriculum-gen-v3`, recorded in the proposal's note with the models that wrote it.
+- **Limits:** 3 generations an hour, `AI_GENERATION_DAILY_LIMIT` calls a day, 15 calls reserved per job.
+
+## 10.4 City creation intake (19 Nov 2026)
+
+City creation asks one thing first, in the learner's own words, and lets the AI do the form-filling (`ai/curriculum/intake.ts`, routes in `cities/routes.ts`):
+
+| Endpoint | Does |
+|---|---|
+| `POST /cities/:id/attachments?name=` (raw PDF or text body, ≤ 5 MB, ≤ 3 per city) | Extracts the text (PDF with `unpdf`, a serverless PDF.js build that never runs code from the file) and keeps **only the text** (`CityAttachment`), never the file; reports pages, characters and whether any text was found (a scan has none) |
+| `GET` / `DELETE /cities/:id/attachments[/:aid]` | Lists (without the text) or removes them |
+| `POST /cities/:id/dictation` (raw 16-bit PCM WAV, ≤ 60 s) | Transcribes the spoken goal with the speech model; the recording is never stored |
+| `POST /cities/:id/understand` | Reads `requirements.brief` and the plan text with the answer-checking model and stores "Here's what I understood" as `requirements.understood`: name, category, goal, current and target level, subjects (become the districts), already known, resources, focus options, at most two follow-up questions (never about time), the plan in one sentence, the plan's length in months, and the estimated hours |
+
+- **Ownership and state:** only the owner of a **draft** city; another user's city is 404, an active one 409.
+- **Consent:** every call that sends data needs `AI_CURRICULUM`, whose notice moved to version **2026-11-19.2** (plan files and voice are new), so earlier consent is asked again once.
+- **Untrusted text:** the goal and the plan are passed as data in tags (`<` escaped) and the prompt says they are never instructions; the reply must match the schema or the call fails.
+- **Limits:** per account 20 readings and 30 dictations an hour, 30 uploads an hour; the shared hourly and daily provider limits still apply (usage operation `UNDERSTAND`).
+- **Prompt version** `city-intake-v2`.
+
+**Trials on GWDG (19 Nov 2026, `eval/intake.ts`, results in `backend/eval/results/`):**
+
+| Trial | Result |
+|---|---|
+| Goal in text (German C1 for work) | 6.7 s, valid: A2 → C1, about 800 h, 4 districts, one follow-up question |
+| A different goal (AWS Solutions Architect exam) | 10–29 s, valid: 6 districts, about 120 h, "learns by building" as the first focus; after `city-intake-v2` the question is about study resources instead of time |
+| Spoken goal (synthetic speech, 14 s, Whisper Large v3) | Transcript word for word in 2.8 s; understood in 7.4 s (Spanish for Madrid, beginner → B1, videos and flashcards) |
+| Goal plus a 4-phase PDF plan, then the whole city (Qwen 3.5 397B) | Understood in 6.7 s with the districts following the plan's phases and its 12 months; city written in 63 s, contract passed (4 districts, 22 topics). At 1 h on five days the plan ends after the 12 months: core topics alone need more time, which the time screen and the review both say |
 
 # 11. Implementation plan
 

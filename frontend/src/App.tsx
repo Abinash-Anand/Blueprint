@@ -11,8 +11,10 @@ import { toneOf } from "./components/Status";
 import { Loading } from "./components/ui";
 import { TopBar } from "./Root";
 import { shortDate } from "./lib/format";
+import type { View as MapView } from "./map/camera";
 import { layout } from "./map/geometry";
 import { useAppData } from "./state/AppData";
+import { useSession } from "./state/Session";
 
 type View = "today" | "week" | "revision" | "city" | "progress";
 const VIEWS: { id: View; label: string }[] = [
@@ -71,6 +73,12 @@ export function App() {
   }, [curriculum === null]);
 
   const L = useMemo(() => (curriculum ? layout(curriculum.districts) : null), [curriculum]);
+  // The map camera belongs to this account and this city (kept while switching tabs, never shared between cities).
+  const { user, city, cameras } = useSession();
+  const camera = useMemo(
+    () => (user && city ? { load: () => cameras.get(user.id, city.id), save: (v: MapView) => cameras.set(user.id, city.id, v) } : undefined),
+    [user, city, cameras],
+  );
 
   const openTopic = useCallback((id: string) => {
     setSideOpen(false);
@@ -177,6 +185,8 @@ export function App() {
             currentTopicId={progress.road.currentTopicId}
             selectedId={param}
             focus={focus}
+            goal={city?.goal ?? null}
+            camera={camera}
             today={today?.today ?? progress.today}
             onOpenTopic={openTopic}
             onClose={() => go({ view: "city", param: null }, true)}

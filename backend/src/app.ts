@@ -10,6 +10,7 @@ import { AI_DISABLED, type AiConfig } from "./modules/ai/config.js";
 import { createProviders } from "./modules/ai/providers/factory.js";
 import type { AiProviders } from "./modules/ai/providers/types.js";
 import { aiRoutes } from "./modules/ai/routes.js";
+import { type IntakeService, intakeService } from "./modules/ai/curriculum/intake.js";
 import { type GenerationService, generationService } from "./modules/ai/curriculum/service.js";
 import { type UsageService, usageService } from "./modules/ai/usage.js";
 import { type Mailer, createMailer } from "./modules/auth/mailer.js";
@@ -34,6 +35,8 @@ export interface Deps {
   /** One AI usage tracker per app: the hourly limits are counted in memory across requests, users and cities. */
   aiUsage: UsageService;
   generation: GenerationService;
+  /** City creation: plan files, dictation and "Here's what I understood" (AI design §10.4). */
+  intake: IntakeService;
 }
 
 export interface AppInput {
@@ -51,15 +54,17 @@ export function createApp(input: AppInput) {
   const ai = input.ai ?? { config: AI_DISABLED, providers: createProviders({ ...AI_DISABLED, evaluationProvider: "fake", transcriptionProvider: "fake", generationProvider: "fake" }) };
   const auth = authService(input.prisma, authConfig, mailer, () => input.clock.now());
   const aiUsage = usageService(input.prisma, ai.config, () => input.clock.now());
+  const limiter = input.limiter ?? rateLimiter();
   const deps: Deps = {
     prisma: input.prisma,
     clock: input.clock,
     ai,
     authConfig,
     auth,
-    limiter: input.limiter ?? rateLimiter(),
+    limiter,
     aiUsage,
     generation: generationService({ prisma: input.prisma, clock: input.clock, ai, usage: aiUsage, auth }),
+    intake: intakeService({ prisma: input.prisma, clock: input.clock, ai, usage: aiUsage, auth, limiter }),
   };
   const app = express();
   app.disable("x-powered-by");
