@@ -11,7 +11,11 @@ import type { Mailer } from "./mailer.js";
 import { dummyVerify, hashPassword, newToken, normaliseEmail, tokenHash, verifyPassword } from "./security.js";
 
 /** Policy versions the user acknowledges. Bump when the text changes; consent records keep the version agreed to. */
-export const POLICY_VERSIONS = { TERMS: "2026-11-18", PRIVACY_NOTICE: "2026-11-18", AI_PROCESSING: "2026-11-18", AI_CURRICULUM: "2026-11-19" } as const;
+/**
+ * AI_PROCESSING 2026-11-19: the AI check and transcription moved from Google (Gemini) to GWDG Academic Cloud, so
+ * consent given under the earlier notice no longer counts and is asked again.
+ */
+export const POLICY_VERSIONS = { TERMS: "2026-11-18", PRIVACY_NOTICE: "2026-11-18", AI_PROCESSING: "2026-11-19", AI_CURRICULUM: "2026-11-19" } as const;
 export type ConsentPurpose = keyof typeof POLICY_VERSIONS;
 /** Optional purposes can be granted and withdrawn at any time; the others are required to have an account. */
 export const OPTIONAL_PURPOSES: ConsentPurpose[] = ["AI_PROCESSING", "AI_CURRICULUM"];
@@ -214,9 +218,10 @@ export function authService(prisma: PrismaClient, cfg: AuthConfig, mailer: Maile
       await prisma.consentRecord.create({ data: { userId, purpose, policyVersion: POLICY_VERSIONS[purpose], granted } });
     },
 
+    /** Consent counts only if the latest choice granted it under the current notice (policy version). */
     async hasConsent(userId: string, purpose: ConsentPurpose) {
       const r = await prisma.consentRecord.findFirst({ where: { userId, purpose }, orderBy: [{ at: "desc" }, { id: "desc" }] });
-      return r?.granted ? r.at : null;
+      return r?.granted && r.policyVersion === POLICY_VERSIONS[purpose] ? r.at : null;
     },
 
     /** GDPR Art. 15 and 20: everything Blueprint holds about the user, machine-readable. Secrets (hashes, tokens) excluded. */

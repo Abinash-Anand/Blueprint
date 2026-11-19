@@ -622,7 +622,16 @@ Free-tier conditions:
 
 **Same-provider fallback (added 18 Nov 2026).** On the first live day, `gemini-3.8-flash` answered every call with HTTP 503 "high demand" while `gemini-2.5-flash` answered normally. When the provider reports an outage (HTTP 5xx) for the main model, the app now tries `AI_FALLBACK_MODEL` once (default `gemini-2.5-flash`; `none` turns it off). This is not the cross-provider failover rejected above: it stays with Google under the same notice and data terms, and each evaluation stores the model that actually answered (`RevisionEvaluation.model`), so analytics can tell them apart. Quota refusals (429), timeouts, bad requests and invalid output are never retried: another model would not fix them, or would double the wait. The fallback is a second request: it passes the same hourly and daily limits and is recorded in `AiUsage`. If both models fail, the learner sees `AI_PROVIDER_BUSY` ("the AI provider is overloaded right now") and the revision continues without AI (I-4). Each provider error is logged with its kind and HTTP status (no content, no key).
 
-## 10.2 GWDG Academic Cloud (decision, 19 Nov 2026; adapter built, not yet switched on)
+## 10.2 GWDG Academic Cloud (decision and switch-over, 19 Nov 2026)
+
+**Benchmark on GWDG (96 cases, two runs each):**
+
+| Model | False passes | Valid output (gate ≥ 98 %) | Repeatable | Injections ignored | Exact | Within ±1 | Latency p50 / p95 |
+|---|---|---|---|---|---|---|---|
+| **Gemma 4 31B** | **0 of 119** | **99.0 %** | 100 % | 12 of 12 | 86.2 % | 100 % | 6.0 s / 8.1 s |
+| Qwen 3.8 27B | 0 of 108 | 92.7 % (fails: 12 replies omitted a criterion, mostly Docker and Kubernetes) | 100 % | 11 of 11 | 88.8 % | 100 % | 5.8 s / 7.8 s |
+
+Gemma 4 31B is the primary answer checker and Qwen 3.8 27B its fallback. Both models score strictly: Gemma marked 13 complete answers one point low. That is the safe direction, and the learner's own score is always the one saved. Whisper Large v3 is the speech model (access confirmed; the speech test on the learner's voice is still to do). The AI notice moved to policy version 2026-11-19, so consent given under the Gemini notice no longer counts and is asked again.
 
 The Gemini free tier (about 20 requests a day) is too small for daily use. Blueprint moves to the GWDG Academic Cloud SAIA API (OpenAI-compatible; GWDG states that prompts to its self-hosted models are never stored):
 
