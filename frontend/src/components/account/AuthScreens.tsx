@@ -227,9 +227,9 @@ export function LegalPage({ kind }: { kind: "privacy" | "terms" }) {
       {kind === "privacy" ? (
         <div className="legal">
           <h2>What Blueprint stores</h2>
-          <p>Your account (name, e-mail, a password hash, time zone, language, preferences), your cities and learning records (including what you wrote about a new city's goal and the text of plan files you added; never the files themselves, never recordings), sign-in sessions, and the choices you made below with their date and version. Nothing else, and no tracking.</p>
+          <p>Your account (name, e-mail, a password hash, time zone, language, preferences), your cities and learning records (including what you wrote about a new city's goal, the text of plan files you added and of revision material you added for a topic, and the revision questions built from it; never the files themselves, never recordings), sign-in sessions, and the choices you made below with their date and version. Nothing else, and no tracking.</p>
           <h2>Why</h2>
-          <p>To provide the service you signed up for (your account and learning data), and, only with your separate consent for each, to send revision answers to an AI provider for checking, and to send a new city's goal (typed or spoken), the text of your plan files and your time settings to an AI provider to build the city.</p>
+          <p>To provide the service you signed up for (your account and learning data), and, only with your separate consent for each, to send revision answers to an AI provider for checking and the text of a topic's revision material to build its revision questions, and to send a new city's goal (typed or spoken), the text of your plan files and your time settings to an AI provider to build the city.</p>
           <h2>Who else receives data</h2>
           <p>The hosting and e-mail providers that operate Blueprint, and, only if you enable the AI features, the AI provider named in their notices (currently GWDG Academic Cloud, Göttingen). See the processor list in the documentation.</p>
           <h2>How long</h2>

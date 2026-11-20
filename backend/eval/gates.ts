@@ -14,7 +14,11 @@ import { ZodError } from "zod/v4";
 import { VerificationError } from "../src/modules/ai/evaluation/verify.js";
 import { ProviderError } from "../src/modules/ai/providers/types.js";
 
-export interface Case { id: string; topic: string; variant: string; answer: string; expect: [number, number]; twin?: string }
+export interface Case {
+  id: string; topic: string; variant: string; answer: string; expect: [number, number]; twin?: string;
+  /** Cases reported from revision v2 (eval/reported.ts) bring their own question, expected points and question kind. */
+  question?: string; criteria?: string[]; method?: string;
+}
 export type ErrorKind = "MODEL_INVALID" | "TIMEOUT" | "PROVIDER_ERROR" | "CONFIG" | "QUOTA" | "SKIPPED";
 export interface Run { score: number | null; error?: string; kind?: ErrorKind; ms: number; downgraded: number }
 export interface CaseResult { c: Case; runs: Run[] }

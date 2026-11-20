@@ -1,7 +1,8 @@
 import type {
   Account, CityAttachment, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template, Understanding,
   AiEvaluation, AiStatus, AttemptResult, Checkpoint, CheckpointResult, Curriculum, Progress, Prompt, RetrievalMethod, Session, Stage, Task, TaskKind,
-  RevisionOverview, TaskStatus, Today, Topic, TopicRevision, Week,
+  RevisionOverview, TaskStatus, Today, Topic, TopicRevision, Week, PackConcept, PackItem, PackOverview, RevisionMaterial,
+  CompletionCard, RevisionHistory, RevisionHome, RevisionSessionView, SessionFeedback, SessionKind,
 } from "./types";
 
 export class ApiError extends Error {
@@ -148,8 +149,39 @@ export const api = {
   transcribe: (scheduleId: number, wav: Blob) =>
     request<{ text: string; audioSeconds: number }>("POST", `/ai/transcriptions?scheduleId=${scheduleId}`, undefined, { data: wav, type: "audio/wav" }),
   evaluate: (body: EvaluationInput) => request<AiEvaluation>("POST", "/revision/evaluations", body),
-  report: (body: { reason: "OUT_OF_SYLLABUS" | "UNCLEAR" | "UNFAIR_CHECK" | "OTHER"; promptText: string; note?: string; topicId?: string; scheduleId?: number; promptId?: number; evaluationId?: number }) =>
+  report: (body: { reason: "OUT_OF_SYLLABUS" | "UNCLEAR" | "UNFAIR_CHECK" | "OTHER"; promptText: string; note?: string; topicId?: string; scheduleId?: number; promptId?: number; evaluationId?: number; responseId?: number; itemId?: number; removeConcept?: boolean }) =>
     request<{ id: number; reason: string; createdAt: string }>("POST", "/revision/reports", body),
+
+  /* Revision v2, phase 1: a topic's material and revision pack. */
+  pack: (topicId: string) => request<PackOverview>("GET", `/topics/${encodeURIComponent(topicId)}/revision/pack`),
+  addMaterial: (topicId: string, data: Blob, name: string, type: string) =>
+    request<RevisionMaterial>("POST", `/topics/${encodeURIComponent(topicId)}/revision/material?name=${encodeURIComponent(name)}`, undefined, { data, type }),
+  removeMaterial: (topicId: string, id: number) => request<void>("DELETE", `/topics/${encodeURIComponent(topicId)}/revision/material/${id}`),
+  buildPack: (topicId: string, basis: "MATERIAL" | "OUTLINE") =>
+    request<{ version: number; status: string; basis: string }>("POST", `/topics/${encodeURIComponent(topicId)}/revision/pack`, { basis }),
+  deletePack: (topicId: string) => request<{ deleted: number }>("DELETE", `/topics/${encodeURIComponent(topicId)}/revision/pack`),
+  addConcept: (topicId: string, body: { title: string; summary?: string }) =>
+    request<PackConcept>("POST", `/topics/${encodeURIComponent(topicId)}/revision/concepts`, body),
+  patchConcept: (id: number, body: { title?: string; summary?: string; removed?: boolean }) => request<PackConcept>("PATCH", `/revision/concepts/${id}`, body),
+  conceptItems: (id: number) => request<PackItem[]>("GET", `/revision/concepts/${id}/items`),
+  patchItem: (id: number, body: { question?: string; situation?: string; expected?: string[]; modelAnswer?: string; removed?: boolean }) =>
+    request<PackItem>("PATCH", `/revision/items/${id}`, body),
+
+  /* Revision v2, phases 2 and 3: home, sessions, history. */
+  revisionHome: () => request<RevisionHome>("GET", "/revision/home"),
+  startSession: (kind: SessionKind) => request<RevisionSessionView>("POST", "/revision/sessions", { kind }),
+  session: (id: number) => request<RevisionSessionView>("GET", `/revision/sessions/${id}`),
+  sessionHint: (id: number, index: number) => request<{ index: number; hintsUsed: number; hints: string[]; hintsAvailable: number }>("POST", `/revision/sessions/${id}/hint`, { index }),
+  sessionAnswer: (id: number, body: { index: number; mode: "TYPED" | "SPOKEN" | "CODE" | "CHOICE"; answer?: string; choice?: number[]; confidence?: number; seconds?: number }) =>
+    request<SessionFeedback>("POST", `/revision/sessions/${id}/answers`, body),
+  sessionResult: (id: number, body: { responseId: number; final: number; modelShown?: boolean }) => request<RevisionSessionView>("POST", `/revision/sessions/${id}/results`, body),
+  sessionSkip: (id: number, index: number) => request<RevisionSessionView>("POST", `/revision/sessions/${id}/skip`, { index }),
+  finishSession: (id: number) => request<{ cards: CompletionCard[]; session: RevisionSessionView }>("POST", `/revision/sessions/${id}/finish`),
+  sessionTranscribe: (id: number, index: number, wav: Blob) =>
+    request<{ text: string; audioSeconds: number }>("POST", `/revision/sessions/${id}/transcriptions?index=${index}`, undefined, { data: wav, type: "audio/wav" }),
+  setMaintenance: (topicId: string, maintenance: boolean) =>
+    request<{ topicId: string; maintenance: boolean; nextDueDate: string | null }>("PATCH", `/topics/${encodeURIComponent(topicId)}/revision/track`, { maintenance }),
+  revisionHistory: (topicId: string) => request<RevisionHistory>("GET", `/topics/${encodeURIComponent(topicId)}/revision/history`),
 };
 
 /* ---------------- accounts, cities and curriculum versions (multi-user sprint) ---------------- */

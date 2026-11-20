@@ -31,6 +31,7 @@ const correctAttempt = vi.fn(async (_id: number) => ({}));
 vi.mock("../api/client", () => ({
   api: {
     revisionOverview: vi.fn(async () => overview),
+    revisionHome: vi.fn(() => new Promise(() => {})), // the v2 home is tested on its own
     topicRevision: vi.fn(() => new Promise(() => {})),
     correctAttempt: (id: number) => correctAttempt(id),
   },

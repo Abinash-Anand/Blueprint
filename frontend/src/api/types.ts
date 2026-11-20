@@ -616,3 +616,88 @@ export interface ConsentState {
   current: { purpose: "TERMS" | "PRIVACY_NOTICE" | "AI_PROCESSING" | "AI_CURRICULUM"; optional: boolean; granted: boolean; policyVersion: string | null; currentVersion: string; at: string | null }[];
   history: { purpose: string; granted: boolean; policyVersion: string; at: string }[];
 }
+
+/* ---------------- Revision v2, phase 1: material and the revision pack ---------------- */
+
+export interface RevisionMaterial { id: number; name: string; mimeType: string; size: number; pages: number | null; chars: number; hasText: boolean; preview: string; createdAt: string }
+
+export type PackStatus = "BUILDING" | "READY" | "FAILED" | "SUPERSEDED";
+export interface PackConcept {
+  id: number; position: number; title: string; summary: string; subtopicId: number | null; subtopicName: string | null;
+  keyPoints: string[]; misconceptions: string[]; source: "AI" | "EDITED" | "LEARNER"; status: "BUILDING" | "READY" | "NEEDS_QUESTIONS"; removed: boolean;
+  questions: { total: number; open: number; choice: number; levels: Record<string, number> };
+}
+export interface PackProgress { step: string; label: string; done: number; total: number; concepts?: { title: string; done: boolean }[] }
+export interface RevisionPack {
+  id: number; version: number; status: PackStatus; basis: "MATERIAL" | "OUTLINE"; language: string; provider: string; model: string; promptVersion: string;
+  createdAt: string; completedAt: string | null; progress: PackProgress | null; error: string | null; stale: boolean; concepts: PackConcept[] | null;
+}
+export interface PackOverview {
+  topicId: string;
+  ai: { available: boolean; reason: "AI_DISABLED" | "NO_PROVIDER" | "CONSENT_REQUIRED" | null; consented: boolean; provider: string; model: string };
+  limits: { maxFiles: number; maxBytes: number; maxChars: number; types: string[] };
+  materials: RevisionMaterial[];
+  pack: RevisionPack | null;
+  building: RevisionPack | null;
+  failed: { version: number; error: string | null; createdAt: string } | null;
+}
+export interface PackItem {
+  id: number; conceptId: number; level: number; kind: string; format: "OPEN" | "CHOICE" | "MULTI";
+  situation: string; code: string | null; question: string; answerSize: string; expected: string[]; modelAnswer: string; hints: string[];
+  options: { text: string; correct: boolean; explanation: string }[] | null; source: "AI" | "EDITED" | "LEARNER"; removed: boolean;
+}
+
+/* ---------------- Revision v2, phases 2 and 3: home, sessions, history ---------------- */
+
+export interface RevisionHome {
+  today: string;
+  budgetMinutes: number;
+  plan: { topics: { topicId: string; name: string; cycle: number; questions: number; minutes: number }[]; questions: number; minutes: number; laterToday: number };
+  activeSession: { id: number; kind: SessionKind } | null;
+  needsMaterial: { topicId: string; name: string; district: string }[];
+  tracks: {
+    topicId: string; name: string; cycle: number; inProgress: number; state: "ACTIVE" | "RETAINED"; nextDueDate: string | null; lastReviewDate: string | null;
+    weakOnly: boolean; maintenance: boolean; due: boolean; overdue: boolean; line: string;
+  }[];
+  keepGoing: { tomorrow: number; practice: boolean };
+}
+export type SessionKind = "PLANNED" | "EARLY" | "PRACTICE";
+export interface SessionQuestion {
+  index: number; topicId: string; topicName: string; conceptId: number; conceptTitle: string; cycle: number; relearn: boolean; minutes: number;
+  itemId: number; level: number | null; kind: string | null; format: "OPEN" | "CHOICE" | "MULTI" | null;
+  situation: string; code: string | null; question: string; answerSize: string; options: string[];
+  hintsUsed: number; hintsAvailable: number; hints: string[];
+}
+export interface AnswerCheck {
+  relevant: boolean;
+  criteria: { index: number; text: string; verdict: "COVERED" | "PARTIAL" | "MISSING" | "INCORRECT"; evidence: string | null }[];
+  misconceptions: { claim: string; correction: string }[];
+  feedback: string; suggestedScore: number; provider: string; model: string;
+}
+export interface SessionFeedback {
+  responseId: number; index: number; format: "OPEN" | "CHOICE" | "MULTI"; mode: string; answer: string; correct: boolean | null;
+  options: { text: string; correct: boolean; explanation: string; chosen: boolean }[];
+  expected: string[]; modelAnswer: { gist: string; full: string }; code: string | null; hints: string[]; misconceptions: string[];
+  evaluation: AnswerCheck | null; confidence: number | null; hintsUsed: number;
+  suggested: number | null; suggestedLabel: string | null; final: number | null; aiError?: string | null;
+}
+export interface RevisionSessionView {
+  id: number; kind: SessionKind; status: "ACTIVE" | "FINISHED"; date: string; budgetMinutes: number; plannedMinutes: number;
+  topics: { topicId: string; name: string; questions: number; done: number }[];
+  entries: { index: number; topicId: string; topicName: string; conceptTitle: string; relearn: boolean; minutes: number; state: "OPEN" | "ANSWERED" | "DONE"; final: number | null }[];
+  current: { question: SessionQuestion; feedback: SessionFeedback | null } | null;
+}
+export interface CompletionCard {
+  topicId: string; name: string; cycle: number; cycleDone: boolean; retained: boolean; nextDueDate: string | null; weakOnly: boolean;
+  results: { conceptId: number | null; title: string; result: number; label: string; relearned: boolean }[]; firstNext: string | null;
+}
+export interface HistoryAnswer {
+  id: number; relearn: boolean; kind: string; format: string; question: string; code: string | null; answer: string; mode: string; correct: boolean | null;
+  evaluation: AnswerCheck | null; expected: string[]; modelAnswer: string; hintsUsed: number; confidence: number | null; final: number; label: string; date: string;
+}
+export interface RevisionHistory {
+  topicId: string; name: string;
+  track: { cycle: number; state: string; nextDueDate: string | null; weakOnly: boolean } | null;
+  cycles: number[];
+  concepts: { conceptId: number | null; title: string; removed: boolean; story: string; cells: { cycle: number; result: number | null; label: string | null; firstResult: number | null; date: string | null; reviews: number; answers: HistoryAnswer[] }[] }[];
+}

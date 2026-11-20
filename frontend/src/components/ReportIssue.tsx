@@ -17,9 +17,10 @@ const REASONS: Record<ReportReason, string> = {
 export function ReportIssue({ label = "Report", reasons, context }: {
   label?: string;
   reasons: ReportReason[];
-  context: { promptText: string; topicId?: string; scheduleId?: number; promptId?: number | null; evaluationId?: number };
+  context: { promptText: string; topicId?: string; scheduleId?: number; promptId?: number | null; evaluationId?: number; responseId?: number; itemId?: number };
 }) {
   const [open, setOpen] = useState(false);
+  const [wholeConcept, setWholeConcept] = useState(false);
   const [reason, setReason] = useState<ReportReason>(reasons[0]);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,6 +37,8 @@ export function ReportIssue({ label = "Report", reasons, context }: {
       await api.report({
         reason, note: note.trim() || undefined, promptText: context.promptText,
         topicId: context.topicId, scheduleId: context.scheduleId, promptId: context.promptId ?? undefined, evaluationId: context.evaluationId,
+        responseId: context.responseId, itemId: context.itemId,
+        removeConcept: reason === "OUT_OF_SYLLABUS" && context.itemId && wholeConcept ? true : undefined,
       });
       setDone(true);
     } catch (e) {
@@ -55,6 +58,12 @@ export function ReportIssue({ label = "Report", reasons, context }: {
           ))}
         </div>
       )}
+      {reason === "OUT_OF_SYLLABUS" && context.itemId && (
+        <label className="rp-scope">
+          <input type="checkbox" checked={wholeConcept} onChange={(e) => setWholeConcept(e.target.checked)} /> Leave out the whole concept, not only this question
+        </label>
+      )}
+      {reason === "OUT_OF_SYLLABUS" && context.itemId && <p className="m">It won't be asked again. You can bring it back in the topic's revision pack.</p>}
       <textarea className="inp" rows={2} maxLength={1000} placeholder={reason === "UNFAIR_CHECK" ? "Which point did you cover? (optional)" : "Anything to add? (optional)"} value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" />
       {error && <p className="af-err">{error}</p>}
       <div className="rp-acts">

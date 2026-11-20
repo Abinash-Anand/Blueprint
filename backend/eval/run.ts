@@ -43,9 +43,10 @@ const cases = (JSON.parse(readFileSync(file, "utf8")) as { cases: Case[] }).case
 const promptOf = new Map(curriculumPrompts.map((p) => [p.topic, p]));
 
 async function once(c: Case): Promise<Run> {
-  const p = promptOf.get(c.topic);
+  // A case reported from revision v2 brings its own question and expected points (eval/reported.ts).
+  const p = c.question && c.criteria ? { content: c.question, method: c.method ?? "CONCEPTUAL", expected: c.criteria.join(" · ") } : promptOf.get(c.topic);
   if (!p) throw new Error(`No curriculum prompt for ${c.topic}`);
-  const criteria = splitCriteria(p.expected);
+  const criteria = c.criteria ?? splitCriteria(p.expected);
   if (quotaExhausted) return { score: null, error: "skipped: quota exhausted", kind: "SKIPPED", ms: 0, downgraded: 0 };
   if (delayMs) await sleep(delayMs);
   let t0 = performance.now();

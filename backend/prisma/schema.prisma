@@ -120,6 +120,11 @@ model Topic {
   prompts           RevisionPrompt[]
   revisionSchedules RevisionSchedule[]
   checkpoints       LearningCheckpoint[]
+  revisionMaterials RevisionMaterial[]
+  revisionPacks     RevisionPack[]
+  revisionTrack     RevisionTrack?
+  revisionResponses RevisionResponse[]
+  conceptResults    ConceptResult[]
 
   @@unique([districtId, position])
   @@index([cityId])
@@ -136,6 +141,7 @@ model Subtopic {
   prompts     RevisionPrompt[]
   revision    RevisionSchedule?
   checkpoints LearningCheckpoint[]
+  concepts    RevisionConcept[]
 
   @@unique([topicId, position])
 }
@@ -396,6 +402,8 @@ enum AiOperation {
   GENERATE
   /// Reading a new city's goal and plan into a structured summary (city creation, AI design §10.4).
   UNDERSTAND
+  /// Building a topic's revision pack (Revision v2 plan §5).
+  REVISION_PACK
 }
 
 /// One AI assessment of one answer to one prompt (AI design §5.1). Immutable once SUCCEEDED or FAILED.
@@ -559,42 +567,50 @@ model DeletedAccount {
 
 /// A learning environment ("city"). Every learning record belongs to exactly one city, and a city to one user.
 model City {
-  id            String               @id
+  id                String               @id
   /// null only for the original Engineering City until an account claims it (docs/Sprint-Multi-User.md §3).
-  ownerId       String?
-  owner         User?                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId           String?
+  owner             User?                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   /// Prefix of every curriculum id in this city ("" for the original city, so its ids never change).
-  idPrefix      String               @unique
-  name          String
-  description   String               @default("")
-  goal          String               @default("")
-  category      String?
-  status        CityStatus           @default(DRAFT)
+  idPrefix          String               @unique
+  name              String
+  description       String               @default("")
+  goal              String               @default("")
+  category          String?
+  status            CityStatus           @default(DRAFT)
   /// Built-in template the curriculum came from ("engineering"); its text is refreshed on start-up like before.
-  template      String?
+  template          String?
   /// Creation workflow answers (requirements and constraints), kept for a future curriculum generator.
-  requirements  Json?
-  constraints   Json?
-  createdAt     DateTime             @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime             @updatedAt @db.Timestamptz(3)
-  pausedAt      DateTime?            @db.Timestamptz(3)
-  archivedAt    DateTime?            @db.Timestamptz(3)
-  completedAt   DateTime?            @db.Timestamptz(3)
-  versions      CurriculumVersion[]
-  attachments   CityAttachment[]
-  revisionReports RevisionReport[]
-  districts     District[]
-  stages        Stage[]
-  settings      Settings?
-  weeklyTargets WeeklyTarget[]
-  topics        Topic[]
-  tasks         Task[]
-  sessions      StudySession[]
-  prompts       RevisionPrompt[]
-  schedules     RevisionSchedule[]
-  attempts      RevisionAttempt[]
-  checkpoints   LearningCheckpoint[]
-  evaluations   RevisionEvaluation[]
+  requirements      Json?
+  constraints       Json?
+  createdAt         DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime             @updatedAt @db.Timestamptz(3)
+  pausedAt          DateTime?            @db.Timestamptz(3)
+  archivedAt        DateTime?            @db.Timestamptz(3)
+  completedAt       DateTime?            @db.Timestamptz(3)
+  versions          CurriculumVersion[]
+  attachments       CityAttachment[]
+  revisionReports   RevisionReport[]
+  revisionMaterials RevisionMaterial[]
+  revisionPacks     RevisionPack[]
+  revisionConcepts  RevisionConcept[]
+  revisionItems     RevisionItem[]
+  revisionTracks    RevisionTrack[]
+  revisionSessions  RevisionSession[]
+  revisionResponses RevisionResponse[]
+  conceptResults    ConceptResult[]
+  districts         District[]
+  stages            Stage[]
+  settings          Settings?
+  weeklyTargets     WeeklyTarget[]
+  topics            Topic[]
+  tasks             Task[]
+  sessions          StudySession[]
+  prompts           RevisionPrompt[]
+  schedules         RevisionSchedule[]
+  attempts          RevisionAttempt[]
+  checkpoints       LearningCheckpoint[]
+  evaluations       RevisionEvaluation[]
 
   @@index([ownerId, status])
 }
@@ -616,6 +632,9 @@ model RevisionReport {
   scheduleId   Int?
   promptId     Int?
   evaluationId Int?
+  /// Revision v2: the answer and the stored question the report is about.
+  responseId   Int?
+  itemId       Int?
   promptText   String
   reason       RevisionReportReason
   note         String               @default("")
@@ -664,4 +683,290 @@ model CurriculumVersion {
   appliedAt       DateTime?               @db.Timestamptz(3)
 
   @@unique([cityId, version])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Revision v2, phase 1: material and the revision pack (docs/Revision-v2-Plan.md §5, §8)
+// ---------------------------------------------------------------------------------------------------------------------
+
+enum RevisionPackStatus {
+  BUILDING
+  READY
+  FAILED
+  /// An earlier version, kept when the pack is rebuilt.
+  SUPERSEDED
+}
+
+enum RevisionPackBasis {
+  /// Built from the learner's own material.
+  MATERIAL
+  /// Built from the topic's outline only (no material added).
+  OUTLINE
+}
+
+enum RevisionConceptStatus {
+  /// Its questions are being written (a concept the learner added).
+  BUILDING
+  READY
+  /// Some levels have no valid question; the fixed templates fill in.
+  NEEDS_QUESTIONS
+}
+
+enum RevisionContentSource {
+  AI
+  /// Changed by the learner.
+  EDITED
+  /// Written by the learner (a concept they added).
+  LEARNER
+}
+
+/// What the learner studied for one topic: the extracted text of a file or of pasted notes, never the file itself.
+/// Sent to the AI provider only to build this topic's revision pack; deleted with the topic or the city.
+model RevisionMaterial {
+  id        Int      @id @default(autoincrement())
+  cityId    String   @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city      City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  topicId   String
+  topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  name      String
+  mimeType  String
+  size      Int
+  pages     Int?
+  chars     Int
+  text      String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([topicId])
+  @@index([cityId])
+}
+
+/// One build of a topic's revision pack. The newest READY version is the one in use; rebuilding keeps older versions.
+model RevisionPack {
+  id            Int                @id @default(autoincrement())
+  cityId        String             @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city          City               @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  topicId       String
+  topic         Topic              @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  version       Int
+  status        RevisionPackStatus @default(BUILDING)
+  basis         RevisionPackBasis
+  language      String
+  provider      String
+  model         String
+  promptVersion String
+  /// Material ids and sizes the pack was built from (the text itself stays in RevisionMaterial).
+  sources       Json               @default("[]")
+  /// While BUILDING: { step, label, done, total, concepts? }.
+  progress      Json?
+  error         String?
+  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
+  completedAt   DateTime?          @db.Timestamptz(3)
+  concepts      RevisionConcept[]
+
+  @@unique([topicId, version])
+  @@index([cityId])
+}
+
+/// A concept the learner covered, found in their material. Concepts stay fixed across cycles so results compare.
+model RevisionConcept {
+  id             Int                   @id @default(autoincrement())
+  cityId         String                @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city           City                  @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  packId         Int
+  pack           RevisionPack          @relation(fields: [packId], references: [id], onDelete: Cascade)
+  position       Int
+  title          String
+  summary        String
+  subtopicId     Int?
+  subtopic       Subtopic?             @relation(fields: [subtopicId], references: [id], onDelete: SetNull)
+  /// string[]
+  keyPoints      Json                  @default("[]")
+  /// string[]
+  misconceptions Json                  @default("[]")
+  source         RevisionContentSource @default(AI)
+  status         RevisionConceptStatus @default(READY)
+  /// Left out by the learner ("not in what I studied"); kept so it can be brought back.
+  removedAt      DateTime?             @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+  items          RevisionItem[]
+  responses      RevisionResponse[]
+  results        ConceptResult[]
+
+  @@index([packId])
+  @@index([cityId])
+}
+
+/// One stored question for a concept at one level (1–6), open or multiple choice, with what a good answer contains.
+model RevisionItem {
+  id          Int                   @id @default(autoincrement())
+  cityId      String                @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city        City                  @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  conceptId   Int
+  concept     RevisionConcept       @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  level       Int
+  /// RECALL, EXPLAIN, TRICKY_CHOICE, PREDICT, SCENARIO, WHAT_HAPPENS, SPOT_ERROR, DEBUG, COMPARE, FIND_WRONG_LINE,
+  /// BEST_FIX, JUDGE, APPLY, TWO_PART, SELECT_ALL, TRANSFER (pack.ts ITEM_KINDS)
+  kind        String
+  /// OPEN, CHOICE (one correct option) or MULTI (select all that are true)
+  format      String
+  situation   String                @default("")
+  code        String?
+  question    String
+  answerSize  String                @default("")
+  /// string[]: the points a good answer covers
+  expected    Json
+  modelAnswer String
+  /// string[3]: direction, clue, partial example
+  hints       Json
+  /// [{ text, correct, explanation }] for CHOICE and MULTI
+  options     Json?
+  source      RevisionContentSource @default(AI)
+  removedAt   DateTime?             @db.Timestamptz(3)
+  createdAt   DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime              @updatedAt @db.Timestamptz(3)
+  responses   RevisionResponse[]
+
+  @@index([conceptId, level])
+  @@index([cityId])
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Revision v2, phases 2 and 3: cycles, sessions and the evidence per answer (docs/Revision-v2-Plan.md §4, §6, §8)
+// ---------------------------------------------------------------------------------------------------------------------
+
+enum RevisionTrackState {
+  ACTIVE
+  /// All six cycles done.
+  RETAINED
+}
+
+/// A topic's place in its six revision cycles. Created when its first pack is ready; the topic moves from sub-topic
+/// schedules to v2 on its first v2 review (startedAt), after which those schedules stop creating revision tasks.
+model RevisionTrack {
+  id             Int                @id @default(autoincrement())
+  cityId         String             @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city           City               @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  topicId        String             @unique
+  topic          Topic              @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  /// Completed cycles, 0 to 6; the cycle in progress is cycle + 1.
+  cycle          Int                @default(0)
+  state          RevisionTrackState @default(ACTIVE)
+  nextDueDate    DateTime?          @db.Date
+  lastReviewDate DateTime?          @db.Date
+  /// The next review asks only the concepts that are still weak in the cycle in progress (plan §4.2).
+  weakOnly       Boolean            @default(false)
+  /// Optional check every 3 to 6 months after cycle 6 (off by default, plan §14.4).
+  maintenance    Boolean            @default(false)
+  startedAt      DateTime?          @db.Timestamptz(3)
+  createdAt      DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(3)
+
+  @@index([cityId, nextDueDate])
+}
+
+enum RevisionSessionKind {
+  /// Today's planned questions.
+  PLANNED
+  /// "Keep going": topics due tomorrow, revised early.
+  EARLY
+  /// "Keep going": practice on the weakest concepts; never changes a cycle or a date.
+  PRACTICE
+}
+
+enum RevisionSessionStatus {
+  ACTIVE
+  FINISHED
+}
+
+/// One sitting: the questions planned in code, in order, with relearning questions appended while it runs.
+model RevisionSession {
+  id             Int                   @id @default(autoincrement())
+  cityId         String                @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city           City                  @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  date           DateTime              @db.Date
+  kind           RevisionSessionKind
+  status         RevisionSessionStatus @default(ACTIVE)
+  budgetMinutes  Int
+  plannedMinutes Int
+  /// [{ itemId, conceptId, topicId, cycle, minutes, relearn }]
+  queue          Json
+  startedAt      DateTime              @default(now()) @db.Timestamptz(3)
+  finishedAt     DateTime?             @db.Timestamptz(3)
+  responses      RevisionResponse[]
+  conceptResults ConceptResult[]
+
+  @@index([cityId, date])
+}
+
+/// One answered question (plan §4.4). Question, expected points and model answer are copied, so the history stays
+/// readable when the pack is edited, rebuilt or deleted. Nothing here is overwritten once the result is final.
+model RevisionResponse {
+  id          Int              @id @default(autoincrement())
+  cityId      String           @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city        City             @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  sessionId   Int
+  session     RevisionSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  itemId      Int?
+  item        RevisionItem?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  conceptId   Int?
+  concept     RevisionConcept? @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+  topicId     String
+  topic       Topic            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  cycle       Int
+  /// The easier question asked at the end of a session for a missed concept.
+  relearn     Boolean          @default(false)
+  position    Int
+  level       Int
+  kind        String
+  format      String
+  question    String
+  code        String?
+  expected    Json
+  modelAnswer String
+  /// 0 not at all · 1 shaky · 2 fairly · 3 sure (open questions, before the answer is revealed)
+  confidence  Int?
+  /// TYPED, SPOKEN, CODE or CHOICE
+  mode        String
+  answer      String           @default("")
+  /// Chosen option indexes (multiple choice).
+  choice      Json?
+  correct     Boolean?
+  /// The AI check of an open answer: verdicts per point with quotes, misconceptions, feedback.
+  evaluation  Json?
+  hintsUsed   Int              @default(0)
+  modelShown  Boolean          @default(false)
+  /// 0 Forgot · 1 Struggled · 2 Recalled · 3 Strong recall
+  suggested   Int?
+  final       Int?
+  seconds     Int?
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([sessionId])
+  @@index([conceptId])
+  @@index([cityId])
+}
+
+/// A concept's rolled-up result in one cycle of one review (plan §4.4): what the history table shows.
+model ConceptResult {
+  id           Int              @id @default(autoincrement())
+  cityId       String           @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city         City             @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  conceptId    Int?
+  concept      RevisionConcept? @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+  conceptTitle String
+  topicId      String
+  topic        Topic            @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  sessionId    Int
+  session      RevisionSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  cycle        Int
+  /// 0 Forgot · 1 Struggled · 2 Recalled · 3 Strong recall, after the end-of-session relearning
+  result       Int
+  /// The result before relearning, when the concept needed it.
+  firstResult  Int
+  date         DateTime         @db.Date
+  createdAt    DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([topicId, cycle])
+  @@index([conceptId])
+  @@index([cityId])
 }

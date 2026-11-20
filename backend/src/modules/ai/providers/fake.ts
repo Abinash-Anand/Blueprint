@@ -10,12 +10,79 @@ const tag = (text: string, name: string) => new RegExp(`<${name}>\\n([\\s\\S]*?)
 const words = (s: string) => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 const STOP = new Set(["with", "that", "this", "from", "into", "only", "when", "what", "which", "their", "there", "they", "then", "than", "have", "does", "each", "used", "uses", "using", "over", "more", "less", "about", "your", "make", "makes", "sure", "like"]);
 
+const unq = (x: string) => x.replace(/‹/g, "<");
+
+/**
+ * Revision pack concepts (Revision v2 plan §5.1): the material's "## " headings, otherwise the topic's sub-topics, so
+ * tests can see where the concepts came from. Always at least three.
+ */
+function fakeConcepts(user: string) {
+  const material = unq(tag(user, "material"));
+  let subs: { name: string }[] = [];
+  try {
+    subs = JSON.parse(unq(tag(user, "subtopics")));
+  } catch {
+    /* none */
+  }
+  const heads = [...material.matchAll(/^#{1,3}\s+(.+)$/gm)].map((m) => m[1].trim());
+  const titles = (heads.length ? heads : subs.map((x) => x.name)).slice(0, 8);
+  while (titles.length < 3) titles.push(`Concept ${titles.length + 1}`);
+  return {
+    concepts: titles.map((t) => ({
+      title: t.slice(0, 100), summary: `What the learner studied about ${t}.`, subtopic: subs.find((x) => x.name === t)?.name ?? subs[0]?.name ?? null,
+      keyPoints: [`${t} has a clear purpose`, `${t} is used in practice`], misconceptions: [`Thinking ${t} works by magic`],
+    })),
+  };
+}
+
+const FAKE_OPEN = ["RECALL", "EXPLAIN", "PREDICT", "DEBUG", "APPLY", "TRANSFER"];
+const FAKE_CHOICE = ["QUICK_CHOICE", "TRICKY_CHOICE", "WHAT_HAPPENS", "BEST_FIX", "TWO_PART", "SELECT_ALL"];
+
+/**
+ * Questions for one concept: for every level asked, one open and one multiple-choice question that pass the pack
+ * checks. A concept titled "Broken …" first gets a multiple-choice question with two correct options, so the repair
+ * round can be tested; the repair (a request listing problems) is valid.
+ */
+function fakeItems(user: string) {
+  const concept = JSON.parse(unq(tag(user, "concept"))) as { title: string };
+  const levels = tag(user, "levels").split(",").map((x) => Number(x.trim())).filter((n) => n >= 1 && n <= 6);
+  const repair = user.includes("<problems>");
+  const t = concept.title;
+  const items = levels.flatMap((level) => {
+    const multi = FAKE_CHOICE[level - 1] === "SELECT_ALL";
+    const broken = /^broken/i.test(t) && !repair && level === 1;
+    return [
+      {
+        level, kind: FAKE_OPEN[level - 1], situation: "", codeLines: null,
+        question: `Level ${level}: what does ${t} do, and why does it matter?`, answerSize: "2-3 sentences",
+        expected: [`${t} purpose`, `${t} example`, `${t} limits`], modelAnswer: `${t} solves a specific problem; for example it is used when the situation needs it.`,
+        hints: ["Think about the purpose.", "Recall an example.", "Start with: it is used to …"], options: null,
+      },
+      {
+        level, kind: FAKE_CHOICE[level - 1], situation: "", codeLines: null,
+        question: `Level ${level}: which statement about ${t} is ${multi ? "true (select all)" : "true"}?`, answerSize: multi ? "pick all that apply" : "pick one",
+        expected: [`The right statement names the purpose of ${t}`], modelAnswer: `The statement that names its purpose.`,
+        hints: ["Rule out the extreme claims.", "Which one names a purpose?", "It starts with: it is used …"],
+        options: [
+          { text: `It is used to solve a specific problem`, correct: true, explanation: "Right: that is its purpose." },
+          { text: `It works without any setup`, correct: multi || broken, explanation: "A common belief; it needs setup." },
+          { text: `It replaces everything else`, correct: false, explanation: "Too strong: it is one tool among others." },
+        ],
+      },
+    ];
+  });
+  return { items };
+}
+
 /**
  * Deterministic curriculum pieces (AI design §10.3), shaped by the request: an outline with three districts of three
  * topics named after the learner's subjects, and the details for whatever topics a district request lists.
  */
 function fakeGenerate(i: GenerateInput): { output: unknown; usage: { inputTokens: number; outputTokens: number } } {
   const usage = { inputTokens: Math.ceil(i.user.length / 4), outputTokens: 900 };
+  const stage = tag(i.user, "stage");
+  if (stage === "pack-concepts") return { usage, output: fakeConcepts(i.user) };
+  if (stage === "pack-items") return { usage, output: fakeItems(i.user) };
   if (tag(i.user, "stage") === "outline") {
     let a: { goal?: string; subjects?: string[] } = {};
     try {

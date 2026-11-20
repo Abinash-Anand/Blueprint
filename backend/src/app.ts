@@ -19,6 +19,9 @@ import { type RateLimiter, rateLimiter } from "./modules/auth/security.js";
 import { type AuthService, authService } from "./modules/auth/service.js";
 import { cityRoutes } from "./modules/cities/routes.js";
 import { curriculumRoutes } from "./modules/curriculum/routes.js";
+import { type PackService, packService } from "./modules/revision/packService.js";
+import { revisionPackRoutes } from "./modules/revision/packRoutes.js";
+import { revisionSessionRoutes } from "./modules/revision/sessionRoutes.js";
 import { revisionRoutes } from "./modules/revision/routes.js";
 import { scheduleRoutes } from "./modules/schedule/routes.js";
 import { sessionRoutes } from "./modules/sessions/routes.js";
@@ -37,6 +40,8 @@ export interface Deps {
   generation: GenerationService;
   /** City creation: plan files, dictation and "Here's what I understood" (AI design §10.4). */
   intake: IntakeService;
+  /** Revision material and packs (Revision v2 plan, phase 1). */
+  packs: PackService;
 }
 
 export interface AppInput {
@@ -65,6 +70,7 @@ export function createApp(input: AppInput) {
     aiUsage,
     generation: generationService({ prisma: input.prisma, clock: input.clock, ai, usage: aiUsage, auth }),
     intake: intakeService({ prisma: input.prisma, clock: input.clock, ai, usage: aiUsage, auth, limiter }),
+    packs: packService({ prisma: input.prisma, clock: input.clock, ai, usage: aiUsage, auth, limiter }),
   };
   const app = express();
   app.disable("x-powered-by");
@@ -101,6 +107,8 @@ export function createApp(input: AppInput) {
   city.use(summaryRoutes(deps));
   city.use(scheduleRoutes(deps));
   city.use(revisionRoutes(deps));
+  city.use(revisionPackRoutes(deps));
+  city.use(revisionSessionRoutes(deps));
   city.use(aiRoutes(deps));
   api.use(city);
 
