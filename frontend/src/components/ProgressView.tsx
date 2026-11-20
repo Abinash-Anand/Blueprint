@@ -141,7 +141,7 @@ export function ProgressView({ onOpenDistrict, onOpenRevision }: { onOpenDistric
             <Stat
               label="Scores 0 · 1 · 2 · 3"
               value={<span style={{ fontSize: 17 }}>{p.revision.distribution.join(" · ")}</span>}
-              detail="Forgot · Struggled · Recalled · Mastered"
+              detail="Forgot · Struggled · Recalled · Strong recall"
             />
             <Stat label="Weak units" value={p.revision.weakUnits.length} detail="failed twice or more in a row" />
             <Stat label="Overdue" value={p.revision.overdue} detail={p.revision.awaitingCorrection ? `${p.revision.awaitingCorrection} awaiting correction` : "none awaiting correction"} />

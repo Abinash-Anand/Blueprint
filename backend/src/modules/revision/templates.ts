@@ -63,8 +63,8 @@ export const TEMPLATES: PromptTemplate[] = [
     key: "design",
     label: "Design",
     method: designMethod,
-    content: (s) => `Sketch a small design that uses ${s} (a diagram, schema or code outline) and explain your key decisions.`,
-    expected: "A complete sketch · correct structure and relationships · at least one justified decision.",
+    content: (s) => `Describe a small design that uses ${s}: its parts, how they connect, and your key decisions. Words, a list or a code outline are fine.`,
+    expected: "All the main parts · how they connect · at least one justified decision.",
   },
   {
     key: "write",

@@ -105,7 +105,7 @@ describe("AI check in the recall dialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Continue to assessment" }));
     expect(screen.getByText(/Your first guess/)).toHaveTextContent("Your first guess: 2 · Recalled · AI suggestion: 1 · Struggled");
-    fireEvent.click(screen.getByLabelText(/3 · Mastered/));
+    fireEvent.click(screen.getByLabelText(/3 · Strong recall/));
     fireEvent.click(screen.getByRole("button", { name: "Save attempt" }));
     await waitFor(() => expect(submitAttempt).toHaveBeenCalled());
     expect(submitAttempt.mock.calls[0][0]).toMatchObject({ score: 3, selfScore: 2, evaluationId: 40, inputMode: "TYPED", response: "Generics keep the type." });

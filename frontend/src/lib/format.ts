@@ -47,12 +47,12 @@ export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n ==
 export const PRIORITY_LABEL = { CORE: "Core", IMPORTANT: "Important", OPTIONAL: "Optional" } as const;
 export const KIND_LABEL = { STUDY: "Study", PRACTICE: "Practice", REVISION: "Revision" } as const;
 
-/** Four-level recall assessment (Revision spec §7). "Mastered this attempt" on purpose: one success is not mastery. */
+/** Four-level recall assessment (Revision spec §7). "Strong recall", not "mastered": one success is not mastery. */
 export const SCORES = [
   { score: 0, label: "Forgot", help: "Couldn't retrieve it or give a meaningful answer." },
   { score: 1, label: "Struggled", help: "Fragments only; needed substantial hints, notes or help." },
   { score: 2, label: "Recalled", help: "The main idea was right, with some hesitation or small mistakes." },
-  { score: 3, label: "Mastered this attempt", help: "Retrieved it on my own, accurately, and met the criteria." },
+  { score: 3, label: "Strong recall", help: "Retrieved it on my own, accurately and completely." },
 ] as const;
 export const scoreLabel = (s: number | null | undefined) => (s === null || s === undefined ? "—" : (SCORES[s]?.label ?? String(s)));
 
@@ -60,7 +60,7 @@ export const METHOD_LABEL = {
   CONCEPTUAL: "Explain",
   QUESTION_ANSWER: "Answer",
   WRITTEN: "Write from memory",
-  VISUAL: "Draw",
+  VISUAL: "Describe a design",
   PRACTICAL: "Build or solve",
   SCENARIO: "Compare or decide",
 } as const;

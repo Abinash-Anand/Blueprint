@@ -9,7 +9,7 @@ import type { AiEvaluation, AiStatus } from "../api/types";
 import { scoreLabel } from "../lib/format";
 import { FeedbackMessage, LoadingState, StatusBadge } from "./Status";
 import { Recorder, canRecord } from "./voice/Recorder";
-import { canSpeak, speak } from "./voice/speak";
+import { ReadAloud } from "./voice/ReadAloud";
 
 export function AiConsent({ status, onAccept, busy }: { status: AiStatus; onAccept: () => void; busy: boolean }) {
   const [open, setOpen] = useState(false);
@@ -97,14 +97,14 @@ export function AiPanel({
       {shown.feedback && (
         <p className="rv-fb">
           {shown.feedback}{" "}
-          {canSpeak() && <button className="link" onClick={() => speak(shown.feedback)} aria-label="Read the feedback aloud">Read aloud</button>}
+          <ReadAloud text={shown.feedback} what="the feedback" />
         </p>
       )}
       {question && (
         <div className="rv-fu">
           <p>
             <b>Follow-up:</b> {question}{" "}
-            {canSpeak() && <button className="link" onClick={() => speak(question)} aria-label="Read the follow-up question aloud">Read aloud</button>}
+            <ReadAloud text={question} what="the follow-up question" />
           </p>
           {canRecord() && <Recorder scheduleId={scheduleId} maxSeconds={Math.min(60, status.maxRecordingSeconds)} maxBytes={status.maxAudioBytes} label="Answer by voice" onTranscript={(t) => setAnswer((a) => (a ? `${a} ${t}` : t))} />}
           <textarea className="inp" aria-label="Your follow-up answer" value={answer} maxLength={2000} rows={2} onChange={(e) => setAnswer(e.target.value)} />

@@ -745,3 +745,21 @@ button.kit-row:hover,.kit-switch-row:hover{background:var(--paper)}
   .cc-aside .cc-hero-map,.cc-aside .cc-hero-empty{height:clamp(320px,58vh,560px)}
   .cc-body .cc-head{margin-top:14px}
 }
+
+/* read-aloud player (voice/ReadAloud.tsx): a link until it reads, then pause / resume, stop and speed */
+.ra{display:inline-flex;align-items:center;gap:6px;margin-left:8px;vertical-align:middle;font-size:12.5px}
+.ra .ra-play{font-size:12.5px}
+.ra-live{color:var(--ai);font-weight:600}
+.ra-btn{width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:#fff;cursor:pointer;font-size:11px;line-height:1;color:var(--ink);padding:0}
+.ra-btn:hover{background:var(--soft)}
+.ra-rate{height:28px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;padding:0 4px;color:var(--ink)}
+/* report a question or an AI check (ReportIssue.tsx) */
+.rp-slot{display:inline-block;margin-left:10px}
+div.rp-slot{display:block;margin:6px 0 0}
+.rp-open{font-size:12.5px;color:var(--muted)}
+.rp{display:flex;flex-direction:column;gap:8px;margin:8px 0;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--paper);font-size:13px}
+.rp-reasons{display:flex;flex-wrap:wrap;gap:6px}
+.rp-reasons label{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:99px;padding:5px 10px;background:#fff;cursor:pointer}
+.rp-reasons label.on{border-color:var(--info-line);background:var(--info-bg);color:var(--info)}
+.rp-acts{display:flex;align-items:center;gap:12px}
+.rp-done{font-size:12.5px;color:var(--success)}

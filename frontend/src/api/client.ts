@@ -148,6 +148,8 @@ export const api = {
   transcribe: (scheduleId: number, wav: Blob) =>
     request<{ text: string; audioSeconds: number }>("POST", `/ai/transcriptions?scheduleId=${scheduleId}`, undefined, { data: wav, type: "audio/wav" }),
   evaluate: (body: EvaluationInput) => request<AiEvaluation>("POST", "/revision/evaluations", body),
+  report: (body: { reason: "OUT_OF_SYLLABUS" | "UNCLEAR" | "UNFAIR_CHECK" | "OTHER"; promptText: string; note?: string; topicId?: string; scheduleId?: number; promptId?: number; evaluationId?: number }) =>
+    request<{ id: number; reason: string; createdAt: string }>("POST", "/revision/reports", body),
 };
 
 /* ---------------- accounts, cities and curriculum versions (multi-user sprint) ---------------- */

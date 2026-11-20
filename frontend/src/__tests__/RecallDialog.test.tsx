@@ -33,8 +33,9 @@ const rev: TopicRevision = {
 
 const submitAttempt = vi.fn(async (_b: unknown) => ({ attempt: {}, nextDueDate: "2026-11-20", nextTaskDate: "2026-11-20", correctionPending: true, intervalDays: 1, effectiveScore: 1 }));
 const createCheckpoint = vi.fn(async (_b: unknown) => ({ id: 1 }));
+const report = vi.fn(async (_b: unknown) => ({ id: 1, reason: "UNCLEAR", createdAt: "" }));
 vi.mock("../api/client", () => ({
-  api: { topicRevision: vi.fn(async () => rev), submitAttempt: (b: unknown) => submitAttempt(b), createCheckpoint: (b: unknown) => createCheckpoint(b) },
+  api: { topicRevision: vi.fn(async () => rev), submitAttempt: (b: unknown) => submitAttempt(b), createCheckpoint: (b: unknown) => createCheckpoint(b), report: (b: unknown) => report(b) },
   ApiError: class extends Error {},
 }));
 vi.mock("../state/AppData", () => ({
@@ -114,6 +115,39 @@ describe("RecallDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByLabelText(/Your answer, from memory/)).toHaveValue("my recall");
     expect(screen.queryByText("extends limits T")).not.toBeInTheDocument(); // hidden again on the Retrieve step
+    expect(submitAttempt).not.toHaveBeenCalled();
+  });
+});
+
+describe("RecallDialog question controls (Revision v2 phase 0)", () => {
+  const open = async () => {
+    render(<RecallDialog items={[{ topicId: "fe.ts", scope: "SUBTOPIC", subtopicId: 11, mode: "revision" }]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText("How do constraints narrow T?")).toBeInTheDocument());
+  };
+
+  it("offers a different question in plain words, without a separate method choice", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Ask a different question" }));
+    expect(screen.getByRole("combobox", { name: "Question" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Method" })).toBeNull();
+    fireEvent.change(screen.getByRole("combobox", { name: "Question" }), { target: { value: "1" } });
+    expect(screen.getByText(/Without notes, explain Generics/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Keep this one" }));
+    expect(screen.queryByRole("combobox", { name: "Question" })).toBeNull();
+  });
+
+  it("reports a question as out of syllabus, with a note, without touching the attempt", async () => {
+    report.mockClear();
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Report" }));
+    fireEvent.click(screen.getByLabelText("Not in what I studied"));
+    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "We never covered constraints" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send report" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Thanks, noted"));
+    expect(report).toHaveBeenCalledWith({
+      reason: "OUT_OF_SYLLABUS", note: "We never covered constraints", promptText: "How do constraints narrow T?",
+      topicId: "fe.ts", scheduleId: 5, promptId: 31, evaluationId: undefined,
+    });
     expect(submitAttempt).not.toHaveBeenCalled();
   });
 });

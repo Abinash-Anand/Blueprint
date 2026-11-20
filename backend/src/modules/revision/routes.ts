@@ -37,6 +37,17 @@ const attemptBody = z
 
 const correctionBody = z.object({ mistakes: text(2000).optional() }).strict();
 
+/** Flag a question or an AI check (Revision v2 plan §3.4). */
+const reportBody = z.object({
+  reason: z.enum(["OUT_OF_SYLLABUS", "UNCLEAR", "UNFAIR_CHECK", "OTHER"]),
+  promptText: z.string().trim().min(1).max(2000),
+  note: text(1000).optional(),
+  topicId: slug.optional(),
+  scheduleId: z.number().int().positive().optional(),
+  promptId: z.number().int().positive().optional(),
+  evaluationId: z.number().int().positive().optional(),
+}).strict();
+
 const checkpointBody = z
   .object({
     topicId: slug,
@@ -82,6 +93,9 @@ export function revisionRoutes({ clock }: Deps) {
   });
   r.get("/topics/:id/revision", async (req, res) => {
     res.json(await svc(req).topicRevision(validate(slugParam, req.params).id));
+  });
+  r.post("/revision/reports", async (req, res) => {
+    res.status(201).json(await svc(req).report(validate(reportBody, req.body)));
   });
   r.post("/revision/attempts", async (req, res) => {
     res.status(201).json(await svc(req).submitAttempt(validate(attemptBody, req.body)));

@@ -102,7 +102,7 @@ describe("revision", () => {
 
   it("maps recall outcomes: failed, partial and successful are distinct", () => {
     expect([0, 1, 2, 3].map((s) => outcomePresentation(s).tone)).toEqual(["danger", "warning", "success", "success"]);
-    expect(outcomePresentation(3)).toMatchObject({ variant: "solid", label: "Mastered this attempt" });
+    expect(outcomePresentation(3)).toMatchObject({ variant: "solid", label: "Strong recall" });
     expect(outcomePresentation(2).label).toBe("Recalled");
     for (const c of Object.values(CheckpointResult)) expect(checkpointPresentation(c).state).toMatch(/^checkpoint\./);
     expect(checkpointPresentation("PARTIAL").tone).toBe("warning");

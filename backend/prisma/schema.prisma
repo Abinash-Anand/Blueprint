@@ -582,6 +582,7 @@ model City {
   completedAt   DateTime?            @db.Timestamptz(3)
   versions      CurriculumVersion[]
   attachments   CityAttachment[]
+  revisionReports RevisionReport[]
   districts     District[]
   stages        Stage[]
   settings      Settings?
@@ -596,6 +597,31 @@ model City {
   evaluations   RevisionEvaluation[]
 
   @@index([ownerId, status])
+}
+
+enum RevisionReportReason {
+  OUT_OF_SYLLABUS
+  UNCLEAR
+  UNFAIR_CHECK
+  OTHER
+}
+
+/// The learner flagging a revision question or an AI check (Revision v2 plan §3.4). Kept as a record: it never changes a
+/// score or a question by itself. The ids are references at the time of the report, not foreign keys.
+model RevisionReport {
+  id           Int                  @id @default(autoincrement())
+  cityId       String
+  city         City                 @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  topicId      String?
+  scheduleId   Int?
+  promptId     Int?
+  evaluationId Int?
+  promptText   String
+  reason       RevisionReportReason
+  note         String               @default("")
+  createdAt    DateTime             @default(now()) @db.Timestamptz(3)
+
+  @@index([cityId])
 }
 
 /// A learner's own plan (PDF or text) added while creating a city. Only the extracted text is kept, never the file;

@@ -12,14 +12,16 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError, api } from "../api/client";
 import type { AiEvaluation, AiStatus, CheckpointResult, Presentation, RetrievalMethod, RevisionScope, TopicRevision } from "../api/types";
-import { CHECKPOINT_RESULTS, METHOD_LABEL, SCORES, SOURCE_LABEL, scoreLabel, shortDate } from "../lib/format";
+import { CHECKPOINT_RESULTS, SCORES, SOURCE_LABEL, scoreLabel, shortDate } from "../lib/format";
 import { useExit } from "../lib/motion";
 import { useAppData } from "../state/AppData";
 import { AiConsent, AiPanel } from "./AiPanel";
 import { FeedbackMessage, LoadingState, StatusBadge, toneOf } from "./Status";
 import { Loading } from "./ui";
 import { Recorder, canRecord } from "./voice/Recorder";
-import { canSpeak, speak, stopSpeaking } from "./voice/speak";
+import { ReportIssue } from "./ReportIssue";
+import { ReadAloud } from "./voice/ReadAloud";
+import { stopSpeaking } from "./voice/speak";
 
 type Score = 0 | 1 | 2 | 3;
 
@@ -343,13 +345,13 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
         ) : step === "retrieve" ? (
           <div className="rd-step">
             <div className="rd-meta">
-              <span>{METHOD_LABEL[method]} · {option?.title} ({option ? SOURCE_LABEL[option.source] : ""})</span>
-              <button className="link" aria-expanded={changing} onClick={() => setChanging((x) => !x)}>{changing ? "Keep this question" : "Change question"}</button>
+              <span>{option?.title}{option ? ` · ${SOURCE_LABEL[option.source]}` : ""}</span>
+              <button className="link" aria-expanded={changing} onClick={() => setChanging((x) => !x)}>{changing ? "Keep this one" : "Ask a different question"}</button>
             </div>
             {changing && (
               <div className="rd-row">
                 <label>
-                  Prompt
+                  Question
                   <select className="inp" value={choice} onChange={(e) => {
                     const i = Number(e.target.value);
                     setChoice(i);
@@ -364,18 +366,15 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
                     )}
                   </select>
                 </label>
-                <label>
-                  Method
-                  <select className="inp" value={method} onChange={(e) => setMethod(e.target.value as RetrievalMethod)}>
-                    {Object.entries(METHOD_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </label>
               </div>
             )}
             <p className="rd-q">
               {option?.content}
-              {isRevision && canSpeak() && option && (
-                <button className="link rv-say" onClick={() => speak(option.content)} aria-label="Read the question aloud">Read aloud</button>
+              {isRevision && option && <ReadAloud text={option.content} what="the question" />}
+              {isRevision && option && (
+                <span className="rp-slot">
+                  <ReportIssue key={`q-${choice}`} reasons={["OUT_OF_SYLLABUS", "UNCLEAR", "OTHER"]} context={{ promptText: option.content, topicId: item.topicId, scheduleId, promptId: option.promptId }} />
+                </span>
               )}
             </p>
             {isRevision && ai?.enabled && !ai.consented && <AiConsent status={ai} busy={aiBusy} onAccept={() => void acceptAi()} />}
@@ -391,7 +390,7 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
               />
             )}
             <label className="rd-field">
-              {inputMode === "SPOKEN" ? "Your answer (transcript: fix any misheard terms before checking)" : <>Your answer, from memory {method === "VISUAL" ? "(describe what you drew, or the key relationships)" : method === "PRACTICAL" ? "(paste the code or describe what you built)" : "(key points are enough)"}</>}
+              {inputMode === "SPOKEN" ? "Your answer (transcript: fix any misheard terms before checking)" : <>Your answer, from memory {method === "VISUAL" ? "(describe the parts and how they connect, in words or as a list)" : method === "PRACTICAL" ? "(paste the code or describe what you built)" : "(key points are enough)"}</>}
               <textarea className="inp" value={response} maxLength={5000} onChange={(e) => setResponse(e.target.value)} rows={6} autoFocus />
             </label>
             {aiReady && response.trim() ? (
@@ -445,6 +444,11 @@ export function RecallDialog({ items, onClose }: { items: RecallItem[]; onClose:
             </div>
             {evaluation && ai && scheduleId && !stale && (
               <AiPanel evaluation={evaluation} followUp={followUp} status={ai} scheduleId={scheduleId} busy={aiBusy} error={aiError} onFollowUp={(a) => void answerFollowUp(a)} />
+            )}
+            {evaluation && scheduleId && !stale && option && (
+              <div className="rp-slot">
+                <ReportIssue key={`e-${(followUp ?? evaluation).id}`} label="This check seems unfair" reasons={["UNFAIR_CHECK"]} context={{ promptText: option.content, topicId: item.topicId, scheduleId, promptId: option.promptId, evaluationId: (followUp ?? evaluation).id }} />
+              </div>
             )}
             {evaluation && stale && (
               <div className="rv-ai-note">
