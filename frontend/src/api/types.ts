@@ -664,6 +664,8 @@ export interface RevisionHome {
 export type SessionKind = "PLANNED" | "EARLY" | "PRACTICE";
 export interface SessionQuestion {
   index: number; topicId: string; topicName: string; conceptId: number; conceptTitle: string; cycle: number; relearn: boolean; minutes: number;
+  /** The pack's language, "en" or "de". */
+  language: string;
   itemId: number; level: number | null; kind: string | null; format: "OPEN" | "CHOICE" | "MULTI" | null;
   situation: string; code: string | null; question: string; answerSize: string; options: string[];
   hintsUsed: number; hintsAvailable: number; hints: string[];
@@ -690,6 +692,8 @@ export interface RevisionSessionView {
 export interface CompletionCard {
   topicId: string; name: string; cycle: number; cycleDone: boolean; retained: boolean; nextDueDate: string | null; weakOnly: boolean;
   results: { conceptId: number | null; title: string; result: number; label: string; relearned: boolean }[]; firstNext: string | null;
+  /** Set when the gap before the next cycle was adapted to the concepts' record (phase 4): days instead of the fixed gap. */
+  interval?: { days: number; fixed: number; reason: string | null } | null;
 }
 export interface HistoryAnswer {
   id: number; relearn: boolean; kind: string; format: string; question: string; code: string | null; answer: string; mode: string; correct: boolean | null;

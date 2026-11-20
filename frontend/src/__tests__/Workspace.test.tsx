@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RevisionHistory, RevisionHome, RevisionSessionView, SessionFeedback, SessionQuestion } from "../api/types";
 
 const question = (over: Partial<SessionQuestion> = {}): SessionQuestion => ({
-  index: 0, topicId: "fe.rxjs", topicName: "RxJS", conceptId: 1, conceptTitle: "Cold vs hot", cycle: 1, relearn: false, minutes: 1,
+  index: 0, topicId: "fe.rxjs", topicName: "RxJS", conceptId: 1, conceptTitle: "Cold vs hot", cycle: 1, relearn: false, minutes: 1, language: "en",
   itemId: 11, level: 2, kind: "TRICKY_CHOICE", format: "CHOICE", situation: "", code: null,
   question: "Two subscribers to one HTTP observable: how many requests?", answerSize: "pick one", options: ["One", "Two", "It depends"],
   hintsUsed: 0, hintsAvailable: 3, hints: [], ...over,
@@ -35,7 +35,9 @@ const sessionHint = vi.fn(async () => ({ index: 0, hintsUsed: 1, hints: ["Hot or
 const finishSession = vi.fn(async () => ({
   session: session(null, { status: "FINISHED" }),
   cards: [{ topicId: "fe.rxjs", name: "RxJS", cycle: 2, cycleDone: false, retained: false, nextDueDate: "2026-11-22", weakOnly: true, firstNext: "Cold vs hot",
-    results: [{ conceptId: 1, title: "Cold vs hot", result: 2, label: "Recalled", relearned: true }, { conceptId: 2, title: "Subjects", result: 3, label: "Strong recall", relearned: false }] }],
+    results: [{ conceptId: 1, title: "Cold vs hot", result: 2, label: "Recalled", relearned: true }, { conceptId: 2, title: "Subjects", result: 3, label: "Strong recall", relearned: false }] },
+    { topicId: "fe.ts", name: "TypeScript", cycle: 3, cycleDone: true, retained: false, nextDueDate: "2026-12-02", weakOnly: false, firstNext: null,
+      results: [{ conceptId: 5, title: "Constraints", result: 2, label: "Recalled", relearned: false }], interval: { days: 12, fixed: 14, reason: "Constraints needed hints" } }],
 }));
 const home: RevisionHome = {
   today: "2026-11-20", budgetMinutes: 30,
@@ -69,10 +71,29 @@ vi.mock("../api/client", () => ({
   ApiError: class extends Error {},
 }));
 vi.mock("../state/AppData", () => ({ useAppData: () => ({ version: 0, reload: async () => {} }) }));
+// The recorder is replaced by a button that "hears" the next transcript; the microphone is tested on its own.
+let nextHeard = "";
+vi.mock("../components/voice/Recorder", () => ({
+  canRecord: () => true,
+  Recorder: ({ label, onTranscript }: { label: string; onTranscript: (t: string) => void }) => <button onClick={() => onTranscript(nextHeard)}>{label}</button>,
+}));
 
 import { RevisionHome as Home } from "../components/revision/RevisionHome";
 import { RevisionToday } from "../components/revision/RevisionToday";
 import { Highlighted, Workspace } from "../components/revision/Workspace";
+import { api } from "../api/client";
+
+/** A browser voice that finishes each text at once, and remembers what it read. */
+function fakeVoice() {
+  const said: { text: string; lang: string }[] = [];
+  class Utterance { text: string; lang = ""; rate = 1; onend: (() => void) | null = null; onerror: (() => void) | null = null; constructor(t: string) { this.text = t; } }
+  Object.assign(window, {
+    SpeechSynthesisUtterance: Utterance,
+    speechSynthesis: { speak: (u: Utterance) => { said.push({ text: u.text, lang: u.lang }); setTimeout(() => u.onend?.(), 0); }, cancel: () => {}, pause: () => {}, resume: () => {} },
+  });
+  Object.assign(globalThis, { SpeechSynthesisUtterance: Utterance });
+  return said;
+}
 
 describe("revision workspace", () => {
   beforeEach(() => {
@@ -104,6 +125,31 @@ describe("revision workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(sessionResult).toHaveBeenCalledWith(7, { responseId: 31, final: 1, modelShown: false }));
     expect(await screen.findByRole("heading", { name: "Why two requests?" })).toBeTruthy();
+  });
+
+  it("runs hands-free in conversation mode: reads the question, hears the letter, reads the feedback, hears okay", async () => {
+    const said = fakeVoice();
+    vi.mocked(api.aiStatus).mockResolvedValueOnce({ enabled: true, consented: true, maxRecordingSeconds: 90, maxAudioBytes: 3_000_000 } as never);
+    render(<Workspace start="PLANNED" onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Conversation" }));
+    expect(screen.getByRole("button", { name: "Conversation on" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByRole("button", { name: /Read the question aloud/ })).toBeNull();
+    await waitFor(() => expect(said[0]?.text).toBe("Two subscribers to one HTTP observable: how many requests? The options: Option A: One. Option B: Two. Option C: It depends. Say the letter of your answer."));
+    expect(said[0].lang).toBe("en-GB");
+    // An unclear reply asks for the letter again; "Bee" picks option B.
+    nextHeard = "hmm let me think";
+    fireEvent.click(await screen.findByRole("button", { name: "Say your choice" }));
+    expect(await screen.findByText(/Heard “hmm let me think”/)).toBeTruthy();
+    expect(sessionAnswer).not.toHaveBeenCalled();
+    nextHeard = "Bee";
+    fireEvent.click(await screen.findByRole("button", { name: "Say your choice" }));
+    await waitFor(() => expect(sessionAnswer).toHaveBeenCalledWith(7, expect.objectContaining({ mode: "CHOICE", choice: [1] })));
+    // The feedback is read back with the suggestion; "okay" takes it.
+    await waitFor(() => expect(said.some((x) => x.text.startsWith("Not quite.") && x.text.endsWith("Suggested: Forgot. Say okay to accept, or say forgot, struggled, recalled or strong."))).toBe(true));
+    nextHeard = "okay";
+    fireEvent.click(await screen.findByRole("button", { name: "Say how it went" }));
+    await waitFor(() => expect(sessionResult).toHaveBeenCalledWith(7, { responseId: 31, final: 0, modelShown: true }));
+    localStorage.removeItem("blueprint.conversation");
   });
 
   it("gives stored hints before answering", async () => {
@@ -158,6 +204,9 @@ describe("revision workspace", () => {
     expect(await screen.findByRole("heading", { name: "RxJS reviewed · cycle 2 of 6" })).toBeTruthy();
     expect(screen.getByText(/Relearned before you left: Cold vs hot/)).toBeTruthy();
     expect(screen.getByText(/only the shaky concepts/)).toBeTruthy();
+    // An adapted gap says so, and why.
+    expect(screen.getByRole("heading", { name: "TypeScript reviewed · cycle 3 of 6 done" })).toBeTruthy();
+    expect(screen.getByText("In 12 days rather than the usual 14: Constraints needed hints. The gap follows how each concept went.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Revise topics due tomorrow (1)" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Practise your weakest concepts" })).toBeTruthy();
   });

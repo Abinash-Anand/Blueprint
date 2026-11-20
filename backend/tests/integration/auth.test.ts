@@ -75,7 +75,7 @@ suite("authentication", () => {
     expect(u.passwordHash).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
     expect(u.passwordHash).not.toContain(PW);
     expect(u.emailVerifiedAt).toBeNull();
-    expect(u.consents.map((c) => [c.purpose, c.granted, c.policyVersion]).sort()).toEqual([["PRIVACY_NOTICE", true, "2026-11-18"], ["TERMS", true, "2026-11-18"]]);
+    expect(u.consents.map((c) => [c.purpose, c.granted, c.policyVersion]).sort()).toEqual([["PRIVACY_NOTICE", true, "2026-11-20"], ["TERMS", true, "2026-11-18"]]);
     // The e-mailed token is stored only as a hash.
     const token = linkToken(mailer.sent.at(-1)!.text);
     expect(await prisma.authToken.count({ where: { id: token } })).toBe(0);

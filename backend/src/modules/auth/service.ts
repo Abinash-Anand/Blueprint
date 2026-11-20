@@ -23,7 +23,8 @@ import { dummyVerify, hashPassword, newToken, normaliseEmail, tokenHash, verifyP
  * AI_PROCESSING 2026-11-20: revision also sends the text of the material the learner adds for a topic, to build that
  * topic's revision pack (Revision v2 plan §9), so consent given under the earlier notice is asked again.
  */
-export const POLICY_VERSIONS = { TERMS: "2026-11-18", PRIVACY_NOTICE: "2026-11-18", AI_PROCESSING: "2026-11-20", AI_CURRICULUM: "2026-11-19.2" } as const;
+/** AI_PROCESSING 2026-11-20.2 and the privacy notice of 2026-11-20 add photos of notes as revision material (read once by the AI, not kept). */
+export const POLICY_VERSIONS = { TERMS: "2026-11-18", PRIVACY_NOTICE: "2026-11-20", AI_PROCESSING: "2026-11-20.2", AI_CURRICULUM: "2026-11-19.2" } as const;
 export type ConsentPurpose = keyof typeof POLICY_VERSIONS;
 /** Optional purposes can be granted and withdrawn at any time; the others are required to have an account. */
 export const OPTIONAL_PURPOSES: ConsentPurpose[] = ["AI_PROCESSING", "AI_CURRICULUM"];

@@ -8,14 +8,10 @@ import { api } from "../api/client";
 import type { RevisionOverview, RevisionUnitRow } from "../api/types";
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SCORES, dayMonth, hm, monthName, pct, plural, scoreLabel, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { type RecallItem, RecallDialog } from "./RecallDialog";
+import { PackDialog } from "./revision/PackDialog";
 import { RevisionHome } from "./revision/RevisionHome";
 import { StatusBadge, StatusIndicator } from "./Status";
 import { Loading, Stat } from "./ui";
-
-const asItem = (u: { topicId: string; scope: RevisionUnitRow["scope"]; subtopicId: number | null }): RecallItem => ({
-  topicId: u.topicId, scope: u.scope, subtopicId: u.subtopicId, mode: "revision",
-});
 
 function UnitRow({ u, today, onRevise, onOpenTopic }: { u: RevisionUnitRow; today: string; onRevise: (u: RevisionUnitRow) => void; onOpenTopic: (id: string) => void }) {
   const { mutate } = useAppData();
@@ -50,10 +46,10 @@ function UnitRow({ u, today, onRevise, onOpenTopic }: { u: RevisionUnitRow; toda
 }
 
 export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => void }) {
-  const { version, progress } = useAppData();
+  const { version, progress, reload } = useAppData();
   const [o, setO] = useState<RevisionOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [recall, setRecall] = useState<RecallItem[] | null>(null);
+  const [pack, setPack] = useState<{ topicId: string; name: string } | null>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
 
   useEffect(() => {
@@ -73,7 +69,8 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
   const c = o.counts;
   const now = c.due + c.overdue;
   const isSunday = new Date(`${o.today}T12:00:00Z`).getUTCDay() === 0;
-  const revise = (u: RevisionUnitRow) => setRecall([asItem(u)]);
+  // Revision v2: an old unit is revised through its topic's pack (asked once: what did you study?).
+  const revise = (u: RevisionUnitRow) => setPack({ topicId: u.topicId, name: u.topicName });
   const history = [
     ...o.history.map((a) => ({ key: `a${a.id}`, date: a.attemptDate, at: a.attemptedAt, kind: "attempt" as const, a })),
     ...o.checkpoints.map((k) => ({ key: `c${k.id}`, date: k.date, at: k.date, kind: "check" as const, k })),
@@ -100,15 +97,10 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
             <h2>{now ? `${plural(now, "revision")} due now` : c.active ? "Nothing due right now" : "Revision hasn't started yet"}</h2>
             <div className="sub">
               Retrieve from memory, check, correct. Tracked separately from learning (floors) and demonstration (roofs): it never moves the car.
-              {" "}A topic with a revision pack moves to the sessions above after its first review; its history here stays.
+              {" "}<b>Revise</b> now prepares the topic's revision pack (what did you study?); once it is ready, the topic is revised in the sessions above and its units leave this list. Their history stays here.
               {isSunday && " Sunday: everything here is optional."}
             </div>
           </div>
-          {o.session.length > 0 && (
-            <div className="nav">
-              <button className="btn primary" onClick={() => setRecall(o.session.map(asItem))}>Start session ({o.session.length})</button>
-            </div>
-          )}
         </div>
 
         <div className="grid4">
@@ -165,7 +157,7 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
 
         {progress && <RevisionAnalytics r={progress.revision} weekly={o.weeklyOvertimeMinutes} />}
       </div>
-      {recall && <RecallDialog items={recall} onClose={() => setRecall(null)} />}
+      {pack && <PackDialog topicId={pack.topicId} topicName={pack.name} onClose={() => { setPack(null); void reload(); }} />}
     </div>
   );
 }

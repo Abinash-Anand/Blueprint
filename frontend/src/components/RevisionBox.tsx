@@ -5,6 +5,7 @@ import type { RetrievalMethod, RevisionUnit, TopicRevision } from "../api/types"
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SOURCE_LABEL, dayMonth, scoreLabel } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { type RecallItem, RecallDialog } from "./RecallDialog";
+import { PackDialog } from "./revision/PackDialog";
 import { StatusBadge, StatusIndicator } from "./Status";
 
 /** Status line of one unit: the shared revision status, plus the last attempt (date and score). */
@@ -20,8 +21,9 @@ function UnitStatus({ u }: { u: RevisionUnit }) {
   );
 }
 
-export function RevisionBox({ topicId }: { topicId: string }) {
-  const { version, mutate } = useAppData();
+export function RevisionBox({ topicId, topicName }: { topicId: string; topicName: string }) {
+  const { version, mutate, reload } = useAppData();
+  const [pack, setPack] = useState(false);
   const [rev, setRev] = useState<TopicRevision | null>(null);
   const [recall, setRecall] = useState<RecallItem[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -74,7 +76,7 @@ export function RevisionBox({ topicId }: { topicId: string }) {
                     Corrected
                   </button>
                 ) : u.eligible && s?.lastAttemptDate !== rev.today ? (
-                  <button className="btn primary" onClick={() => open(u, "revision")} aria-label={`Revise: ${u.label}`}>Revise</button>
+                  <button className="btn primary" onClick={() => setPack(true)} aria-label={`Revise: ${u.label}`}>Revise</button>
                 ) : null}
               </div>
             </li>
@@ -166,6 +168,7 @@ export function RevisionBox({ topicId }: { topicId: string }) {
       )}
 
       {recall && <RecallDialog items={recall} onClose={() => setRecall(null)} />}
+      {pack && <PackDialog topicId={topicId} topicName={topicName} onClose={() => { setPack(false); void reload(); }} />}
     </div>
   );
 }

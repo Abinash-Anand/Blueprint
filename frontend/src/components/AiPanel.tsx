@@ -23,7 +23,7 @@ export function AiConsent({ status, onAccept, busy }: { status: AiStatus; onAcce
           <p>
             When you use it, the question, its expected points and your answer (or your voice recording, for transcription) are sent to{" "}
             {[status.transcriptionProvider, status.evaluationProvider].filter((p, i, a) => a.indexOf(p) === i).map(providerName).join(" and ")}.
-            When you build a revision pack for a topic, the text of the material you add for it and the topic's outline are sent too.
+            When you build a revision pack for a topic, the text of the material you add for it and the topic's outline are sent too; a photo or screenshot of your notes is sent once so its text can be read, and the image is not kept.
             Nothing else is sent: no history, no other topics, nothing that identifies you. Recordings are never stored by Blueprint.
             {(status.evaluationProvider === "gwdg" || status.transcriptionProvider === "gwdg") &&
               " GWDG runs the models itself in Germany and states that it does not store what you send."}

@@ -1,10 +1,9 @@
 /** Daily Mission Control (SRS §3.4). */
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { Task, Today } from "../api/types";
+import type { Today } from "../api/types";
 import { addDays, dayMonth, hm, longDate, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { type RecallItem, RecallDialog } from "./RecallDialog";
 import { RevisionToday } from "./revision/RevisionToday";
 import { TaskRow } from "./TaskRow";
 import { Bar, Loading } from "./ui";
@@ -23,7 +22,6 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ title: "", minutes: 60, topicId: "" });
   const [logForm, setLogForm] = useState<number | null>(null);
-  const [session, setSession] = useState<RecallItem[] | null>(null);
   const [showBacklog, setShowBacklog] = useState(false);
 
   useEffect(() => {
@@ -51,9 +49,6 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
   const sessions = data.sessions;
   const allTopics = [...topicById.values()];
   const rv = data.revision;
-  const byId = new Map([...data.tasks, ...data.carriedOver, ...rv.optional].map((t) => [t.id, t]));
-  const asItem = (t: Task): RecallItem => ({ topicId: t.topic!.id, scope: t.revision!.scope, subtopicId: t.subtopic?.id ?? null, mode: "revision" });
-  const sessionItems = rv.sessionTaskIds.map((id) => byId.get(id)).filter((t): t is Task => !!t?.topic && !!t.revision).map(asItem);
   const revToday = live.filter((t) => t.revision);
 
   const addTask = async () => {
@@ -207,19 +202,14 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
           <div className="section">
             <h3>
               Revision{revToday.length > 0 && ` · ${plural(revToday.length, "unit")} · ${hm(rv.plannedMinutes)}`}
-              {isToday && sessionItems.length > 1 && (
-                <button className="btn primary" onClick={() => setSession(sessionItems)}>Start revision session ({sessionItems.length})</button>
-              )}
-              {onOpenRevision && (
-                <button className="btn" style={sessionItems.length > 1 && isToday ? { marginLeft: 0 } : undefined} onClick={onOpenRevision}>All revisions</button>
-              )}
+              {onOpenRevision && <button className="btn" onClick={onOpenRevision}>All revisions</button>}
             </h3>
             <div className="card soft rvcard">
               {revToday.length > 0 && (
                 <p>
                   Retrieve from memory first, then check. {rv.overdueCount > 0 && <b>{plural(rv.overdueCount, "unit")} overdue. </b>}
                   {rv.weakCount > 0 && `${plural(rv.weakCount, "weak unit")} get priority. `}
-                  {sessionItems.length > 1 && "The session mixes topics so you practise telling them apart."}
+                  Revision now works per topic: <b>Revise</b> asks once what you studied and builds the topic's revision pack; after that the topic is revised in sessions.
                 </p>
               )}
               {rv.competing && (
@@ -321,7 +311,6 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
           </div>
         </div>
 
-        {session && <RecallDialog items={session} onClose={() => setSession(null)} />}
 
         {progress && isToday && (
           <p className="sub" style={{ marginTop: 22 }}>

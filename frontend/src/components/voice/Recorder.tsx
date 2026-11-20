@@ -9,6 +9,8 @@ import { toWav } from "../../lib/wav";
 import { FeedbackMessage, LoadingState } from "../Status";
 
 const BARS = 14;
+/** Input level (0..1) that counts as speech for stopping after silence. */
+const SPEECH_LEVEL = 0.18;
 
 type State = "idle" | "recording" | "working";
 
@@ -23,6 +25,8 @@ export function Recorder({
   label = "Answer by voice",
   workingText = "Transcribing your answer…",
   onTranscript,
+  autoStart = false,
+  stopAfterSilenceMs,
 }: {
   /** The revision unit the answer belongs to (answers are transcribed for it)… */
   scheduleId?: number;
@@ -33,6 +37,10 @@ export function Recorder({
   label?: string;
   workingText?: string;
   onTranscript: (text: string) => void;
+  /** Conversation mode: start listening as soon as this appears (the learner switched the mode on themselves). */
+  autoStart?: boolean;
+  /** Conversation mode: stop by itself after this much quiet, once something was said. */
+  stopAfterSilenceMs?: number;
 }) {
   const [state, setState] = useState<State>("idle");
   const [elapsed, setElapsed] = useState(0);
@@ -83,6 +91,8 @@ export function Recorder({
       r.ctx.createMediaStreamSource(stream).connect(an);
       const data = new Uint8Array(an.fftSize);
       let last = 0;
+      let heard = false;
+      let loudAt = 0;
       const tick = (t = 0) => {
         // About 12 samples a second: enough to read as a waveform, cheap enough not to re-render every frame.
         if (t - last >= 80) {
@@ -92,6 +102,12 @@ export function Recorder({
           for (const x of data) peak = Math.max(peak, Math.abs(x - 128));
           const v = Math.min(1, (peak / 128) * 1.8);
           setLevels((l) => [...l.slice(1), v]);
+          if (stopAfterSilenceMs) {
+            if (v > SPEECH_LEVEL) {
+              heard = true;
+              loudAt = t;
+            } else if (heard && t - loudAt > stopAfterSilenceMs && mr.state === "recording") mr.stop();
+          }
         }
         r.raf = requestAnimationFrame(tick);
       };
@@ -128,6 +144,13 @@ export function Recorder({
   }
 
   const stop = () => rec.current?.mr.state === "recording" && rec.current.mr.stop();
+  const started = useRef(false);
+  useEffect(() => {
+    if (!autoStart || started.current) return;
+    started.current = true;
+    void start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when it appears
+  }, [autoStart]);
   const cancel = () => {
     if (!rec.current) return;
     rec.current.cancelled = true;

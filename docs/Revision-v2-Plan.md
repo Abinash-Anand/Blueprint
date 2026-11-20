@@ -1,6 +1,6 @@
 # Revision v2: plan
 
-*Approved 20 November 2026, with the recommended answer to each decision in §14. Phases 0 and 1 are deployed (§15); phases 2 and 3 are built and tested, not yet deployed (§16).
+*Approved 20 November 2026, with the recommended answer to each decision in §14. Phases 0–3 are deployed (§15, §16); the switch-over and phase 4 are built and tested, not yet deployed (§17).
 It replaces how revision questions are made, asked,
 checked and scheduled. Learning, the plan and the city are unchanged: revision never moves the car and never awards
 a floor or a roof.*
@@ -279,7 +279,7 @@ pause, stop, speed), and the completion and history views.
 | **1. Material and pack** | Material step with uploads (text, Markdown, PDF, HTML, Word; images after §12), concepts and items, generation, validation, concept review screen, edit and remove; migration (backup, approval) | Built (§15). A real RxJS and a German pack pass the checks; questions stay inside the material |
 | **2. Session and cycles** | Revision home, session planner, topic sets, the workspace, multiple choice in code, open answers via the AI check, confidence, relearn-before-you-leave, completion card, cycles 1–6 and their dates, keep going | Built (§16). A full session runs end to end; intervals follow §4.2 |
 | **3. Tutoring and history** | Hint ladder, misconceptions, model answer layers, code comparison, per-concept history table, report handling into the benchmark | Built (§16). Gaps are corrected without waiting on the AI for hints |
-| **4. Later** | FSRS-style scheduling from your data, maintenance checks, voice conversation mode (useful for German), code execution (needs a sandbox), diagram activities | Decided separately |
+| **4. Later** | FSRS-style scheduling from your data, maintenance checks, voice conversation mode (useful for German), code execution (needs a sandbox), diagram activities | Decided 20 Nov: built (§17) except diagram activities; maintenance checks came with phase 2 (§16) |
 
 ## 12. Testing and evaluation
 
@@ -349,10 +349,13 @@ rollback.
 |---|---|---|---|---|---|---|
 | German grammar sheet (.docx) | 860 characters | 162 s | 8 | 92 | 1 | none in any correct answer; "Genitiv" appears only in 4 wrong options, each explained as wrong |
 | RxJS notes (.md), first run | 1,321 characters | 236 s | 8 | 84 | 5 | 6 questions named `shareReplay`, `switchMap` or `ReplaySubject` |
-| RxJS notes, after the repairs and name check | 1,321 characters | 242 s | 8 | 92 | 2 | none; but every code snippet kept only its first line (fixed since with `codeLines`; to be re-run once GWDG is reachable again: it was down when phase 1 was deployed) |
+| RxJS notes, after the repairs and name check | 1,321 characters | 242 s | 8 | 92 | 2 | none; but every code snippet kept only its first line (fixed since with `codeLines`) |
+| RxJS notes, with `codeLines` (20 Nov, after the GWDG outage) | 1,321 characters | 431 s, 29 calls | 7 | 83 | 1 (map/filter: no open question at level 6) | none; all 26 code snippets keep their lines |
 
-All stored questions pass every check in code. Building takes about three minutes rather than the 30–90 seconds
-estimated in §3.2; it runs in the background and the dialog says it can be closed.
+All stored questions pass every check in code. Building takes three to seven minutes rather than the 30–90 seconds
+estimated in §3.2; it runs in the background and the dialog says it can be closed. Most of the extra calls in the
+last run were repairs: the model wrote levels it was not asked for (55 rejections) and named terms outside the
+material (36), all caught and repaired or dropped before storing.
 
 ## 16. Phases 2 and 3 as built (20 Nov 2026)
 
@@ -421,3 +424,61 @@ survives edits, rebuilds and deleted packs. Everything is city-scoped and in the
 
 **Decided against:** strong concepts sharing one level-5/6 question (§6). Each strong concept gets its own question a
 level up: a few minutes more, but every concept keeps its own evidence in every cycle.
+
+## 17. The switch-over and phase 4 as built (20 Nov 2026)
+
+**Why:** after phases 1–3 no topic had a pack yet, so every revision still opened the old template dialog
+(*Retrieve · Compare · Assess*). Decided 20 Nov: the old dialog stops being used for revision; each topic moves when
+its pack is ready, built from the learner's material or the outline as the learner chooses; phase 4 is built except
+diagram activities.
+
+**The switch-over:**
+- Every place that started a sub-topic revision (*Revise* on a Today or Week task, the topic panel, the Revision tab's
+  old lists) opens the topic's pack instead: *Before you revise …: what did you study?*, with *Build my revision* or
+  *Skip: use the topic outline*. The old interleaved *Start session* buttons are gone. The recall dialog stays for
+  *Check* while studying.
+- When a pack is ready the topic moves at once (`RevisionTrack.startedAt`, set in the same transaction that stores
+  the pack): its open sub-topic revision tasks are deleted and no new ones are planned. Their history stays in the
+  Revision tab. Before, a topic moved only at its first v2 session.
+- Nothing is built without the learner asking, and no data is migrated: topics without a pack keep their old tasks
+  until the learner prepares them.
+
+**Voice conversation mode:** *Conversation* in the workspace header (remembered on the device; shown when the
+browser can speak and record and the AI check is allowed). The question is read aloud (multiple choice with lettered
+options), the microphone starts by itself and stops after 1.5–2.5 s of quiet, the answer is transcribed and checked,
+and the feedback is read back with the suggested result; the learner says *okay* or a result (*forgot*, *struggled*,
+*recalled*, *strong*; German *vergessen*, *mit Mühe*, *gewusst*, *sicher*) or *repeat*. Choices are understood as
+letters, ordinals or the option's own words (`voice/conversation.ts`, unit-tested). A German pack is read with a
+German voice and its spoken answers are transcribed as German (questions now carry the pack's language). Code
+answers are typed. Every control stays clickable.
+
+**Adaptive intervals (FSRS-style in spirit):** the gap before the next cycle is the fixed gap (3, 7, 14, 30, 60 days)
+times the slowest concept's pace (`cycles.ts`: `reviewFactor`, `conceptPace`, `adaptiveGap`). Per review: Strong
+×1.3, Recalled ×1, Struggled ×0.7, Forgot ×0.5 (the first attempt counts, not the relearned one), minus 10 % per
+hint up to three, and another 10 % for a miss the learner was sure about. A concept's pace is the geometric mean of
+its last three reviews, kept within ±50 %, and moves only a third of the way per review it has (one review moves it a
+third). Weak-only retries keep their 1–2 days. The completion card says when and why the gap changed (*In 12 days
+rather than the usual 14: Constraints needed hints.*). Not full FSRS: that needs weights fitted to hundreds of reviews.
+This is bounded, explainable, and can be replaced by fitted weights once there is data.
+
+**Running code:** *Run* under a code answer, and *Run yours* / *Run it* in the side-by-side comparison. JavaScript and
+TypeScript (types stripped with the TypeScript compiler, loaded on the first run only: 1 MB compressed) run in
+`public/sandbox.html` inside `<iframe sandbox="allow-scripts">`: an opaque origin with no cookies or storage, a
+policy of its own (`nginx.conf`: `default-src 'none'`, its one script by hash, `blob:` workers), and a fresh Web
+Worker per run, ended after 5 s. Only printed text comes back (at most 200 lines). Verified in Chrome: output, timers
+and promises, errors, an endless loop stopped at 5 s with the next run still working; `fetch`, `importScripts` and
+IndexedDB are blocked. Imports (e.g. `rxjs`) are not available: bundling RxJS into the sandbox needs `npm install
+rxjs`, which was not done.
+
+**Images as material:** PNG, JPEG and WebP (checked by their bytes) when the generation provider reads images (GWDG:
+Qwen 3.5 397B and Mistral Large 4 do). At upload the image goes to the model once with a transcription prompt
+(`material-image-v1`: everything as written, Markdown structure, code in fenced blocks, `[Diagram: …]` for figures,
+nothing added or translated); only the text is kept, and *What was read* shows it under the file. It needs the AI
+consent first and counts as pack work. Real trial (a handwriting-style screenshot of RxJS notes with code and a
+diagram): read correctly in 4.8 s (`eval/image.ts`, result in `eval/results/image-*.json`). Still to do: your own
+photos of handwritten notes.
+
+**Consent:** sending a photo is new processing, so `AI_PROCESSING` is now version 2026-11-20.2 and the privacy notice
+2026-11-20, both naming photos (sent once to read their text, not kept). The AI consent is asked again.
+
+**Not built:** diagram activities.

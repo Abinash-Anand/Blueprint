@@ -214,7 +214,7 @@ suite("multi-user foundation", () => {
     it("records optional consent, lets it be withdrawn, and keeps required ones fixed", async () => {
       await asUser(app, B).post("/api/account/consents").send({ purpose: "AI_PROCESSING", granted: true }).expect(200);
       const w = await asUser(app, B).post("/api/account/consents").send({ purpose: "AI_PROCESSING", granted: false }).expect(200);
-      expect(w.body.current.find((c: { purpose: string }) => c.purpose === "AI_PROCESSING")).toMatchObject({ granted: false, optional: true, policyVersion: "2026-11-20" });
+      expect(w.body.current.find((c: { purpose: string }) => c.purpose === "AI_PROCESSING")).toMatchObject({ granted: false, optional: true, policyVersion: "2026-11-20.2" });
       expect(w.body.history.filter((h: { purpose: string }) => h.purpose === "AI_PROCESSING")).toHaveLength(2);
       await asUser(app, B).post("/api/account/consents").send({ purpose: "TERMS", granted: false }).expect(400);
     });
@@ -224,7 +224,7 @@ suite("multi-user foundation", () => {
       await prisma.consentRecord.create({ data: { userId: a.id, purpose: "AI_PROCESSING", policyVersion: "2026-11-19", granted: true } });
       expect((await asUser(app, A).get("/api/ai/status").expect(200)).body.consented).toBe(false);
       const c = (await asUser(app, A).get("/api/account/consents").expect(200)).body.current.find((x: { purpose: string }) => x.purpose === "AI_PROCESSING");
-      expect(c).toMatchObject({ granted: true, policyVersion: "2026-11-19", currentVersion: "2026-11-20" });
+      expect(c).toMatchObject({ granted: true, policyVersion: "2026-11-19", currentVersion: "2026-11-20.2" });
       await asUser(app, A).post("/api/ai/consent").send({}).expect(200);
       expect((await asUser(app, A).get("/api/ai/status").expect(200)).body.consented).toBe(true);
     });

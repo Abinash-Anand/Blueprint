@@ -64,7 +64,7 @@ export function vocabulary(texts: string[], limit = 40): string[] {
 
 export function transcriptionInstruction(language: string, terms: string[]) {
   return [
-    `Transcribe this recording verbatim (language: ${language}). The speaker is a learner answering a software-engineering revision question.`,
+    `Transcribe this recording verbatim (language: ${language}). The speaker is a learner answering a revision question.`,
     terms.length ? `Spell these technical terms exactly like this when they are spoken: ${terms.join(", ")}.` : "",
     "Return only the transcript text with normal punctuation. Do not summarise, correct or answer anything. If there is no speech, return an empty string.",
   ]

@@ -34,6 +34,7 @@ suite("revision sessions", () => {
   const H: Record<string, string> = {};
   const B: Record<string, string> = {};
   const T = "fe.ts";
+  let v1BeforePack = 0;
 
   async function packReady(topic = T) {
     for (let i = 0; i < 100; i++) {
@@ -72,6 +73,7 @@ suite("revision sessions", () => {
     await asUser(app, H).patch(`/api/subtopics/${sub.id}`).send({ completed: true }).expect(200);
     clock.date = "2026-11-20";
     await asUser(app, H).post("/api/account/consents").send({ purpose: "AI_PROCESSING", granted: true }).expect(200);
+    v1BeforePack = await prisma.task.count({ where: { topicId: T, source: "REVISION", status: "TODO" } });
     await asUser(app, H).post(`/api/topics/${T}/revision/material?name=notes.md`).set("Content-Type", "text/markdown").send(Buffer.from(NOTES)).expect(201);
     await asUser(app, H).post(`/api/topics/${T}/revision/pack`).send({}).expect(202);
     await packReady();
@@ -97,13 +99,16 @@ suite("revision sessions", () => {
   });
 
   it("runs a session: questions without answers, choice checked in code, open answers by the AI, hints, relearning", async () => {
-    const v1Before = await prisma.task.count({ where: { topicId: T, source: "REVISION", status: "TODO" } });
-    expect(v1Before).toBeGreaterThan(0);
+    // The topic moved to v2 when its pack was ready: its old sub-topic revision task is gone and no new one is planned.
+    expect(v1BeforePack).toBeGreaterThan(0);
+    expect(await prisma.task.count({ where: { topicId: T, source: "REVISION", status: "TODO" } })).toBe(0);
+    expect((await prisma.revisionTrack.findUniqueOrThrow({ where: { topicId: T } })).startedAt).not.toBeNull();
+    const second = await prisma.subtopic.findFirstOrThrow({ where: { topicId: T, position: 1 } });
+    await asUser(app, H).patch(`/api/subtopics/${second.id}`).send({ completed: true }).expect(200); // plans revisions again
+    expect(await prisma.task.count({ where: { topicId: T, source: "REVISION", status: "TODO" } })).toBe(0);
     let s = (await asUser(app, H).post("/api/revision/sessions").send({ kind: "PLANNED" }).expect(201)).body as S;
     // Starting again returns the same open session.
     expect((await asUser(app, H).post("/api/revision/sessions").send({}).expect(201)).body.id).toBe(s.id);
-    // The topic moved to v2: its old sub-topic revision task is gone and no new one is planned.
-    expect(await prisma.task.count({ where: { topicId: T, source: "REVISION", status: "TODO" } })).toBe(0);
     expect(JSON.stringify(s.current!.question)).not.toMatch(/modelAnswer|explanation|"correct"|expected/);
     expect(s.current!.question).toMatchObject({ format: "CHOICE", hintsAvailable: 3 });
 

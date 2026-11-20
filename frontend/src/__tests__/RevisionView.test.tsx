@@ -33,6 +33,7 @@ vi.mock("../api/client", () => ({
     revisionOverview: vi.fn(async () => overview),
     revisionHome: vi.fn(() => new Promise(() => {})), // the v2 home is tested on its own
     topicRevision: vi.fn(() => new Promise(() => {})),
+    pack: vi.fn(() => new Promise(() => {})),
     correctAttempt: (id: number) => correctAttempt(id),
   },
   ApiError: class extends Error {},
@@ -72,11 +73,13 @@ describe("RevisionView (Revision section)", () => {
     expect(screen.getByText(/check: Partly/)).toBeInTheDocument();
   });
 
-  it("starts an interleaved session with every unit that can be attempted now", async () => {
+  it("revises an old unit through its topic's revision pack, not the template dialog", async () => {
     render(<RevisionView onOpenTopic={() => {}} />);
-    const start = await screen.findByRole("button", { name: "Start session (2)" });
-    fireEvent.click(start);
+    const revise = (await screen.findAllByRole("button", { name: /^Revise: / }))[0];
+    expect(screen.queryByRole("button", { name: /Start session/ })).not.toBeInTheDocument();
+    fireEvent.click(revise);
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/Revision · 1 of 2/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Revision pack · /)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Retrieve/)).not.toBeInTheDocument();
   });
 });

@@ -3,9 +3,9 @@
  * read at a time; starting another stops this one. Hidden where the browser cannot speak.
  */
 import { useEffect, useId, useState } from "react";
-import { RATES, canSpeak, onSpeech, pauseSpeaking, resumeSpeaking, setSpeechRate, speak, speechRate, speechState, stopSpeaking } from "./speak";
+import { RATES, canSpeak, onSpeech, pauseSpeaking, resumeSpeaking, setSpeechRate, speak, speechRate, speechState, stopSpeaking, voiceLang } from "./speak";
 
-export function ReadAloud({ text, label = "Read aloud", what = "this" }: { text: string; label?: string; what?: string }) {
+export function ReadAloud({ text, label = "Read aloud", what = "this", lang }: { text: string; label?: string; what?: string; lang?: string }) {
   const id = useId();
   const [s, setS] = useState(speechState());
   const [rate, setRate] = useState(speechRate());
@@ -19,12 +19,12 @@ export function ReadAloud({ text, label = "Read aloud", what = "this" }: { text:
   const changeRate = (r: number) => {
     setRate(r);
     setSpeechRate(r);
-    if (mine) speak(text, undefined, id); // the new speed applies from the start of this text
+    if (mine) speak(text, voiceLang(lang), id); // the new speed applies from the start of this text
   };
   return (
     <span className={`ra${mine ? " on" : ""}`} role="group" aria-label={`Read ${what} aloud`}>
       {!mine ? (
-        <button type="button" className="link ra-play" onClick={() => speak(text, undefined, id)} aria-label={`Read ${what} aloud`}>▶ {label}</button>
+        <button type="button" className="link ra-play" onClick={() => speak(text, voiceLang(lang), id)} aria-label={`Read ${what} aloud`}>▶ {label}</button>
       ) : (
         <>
           <span className="ra-live" aria-live="polite">{s.paused ? "Paused" : "Reading…"}</span>

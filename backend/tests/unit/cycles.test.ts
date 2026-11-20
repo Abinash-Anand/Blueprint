@@ -1,8 +1,8 @@
 /** Revision v2, phase 2: the learning model in code (plan §4.2, §4.3, §6). */
 import { describe, expect, it } from "vitest";
 import {
-  type PlanConcept, type PlanItem, GAP_AFTER, RESULT, TOPIC_CAP, advanceTrack, conceptLevels, firstDue, itemMinutes, pickItem, planSession, planTopic,
-  rollUp, storyLine, suggestResult,
+  type PlanConcept, type PlanItem, GAP_AFTER, RESULT, TOPIC_CAP, adaptiveGap, advanceTrack, conceptLevels, conceptPace, firstDue, itemMinutes, pickItem, planSession,
+  planTopic, reviewFactor, rollUp, storyLine, suggestResult,
 } from "../../src/modules/revision/cycles.js";
 
 /** A concept with an open and a multiple-choice question at every level 1–6; ids are conceptId * 100 + level * 2 (+1 for MC). */
@@ -163,5 +163,43 @@ describe("cycles and dates", () => {
     expect(storyLine("Cold vs hot", [{ cycle: 1, result: 1 }, { cycle: 2, result: 1 }, { cycle: 3, result: 2 }])).toBe("Cold vs hot: struggled in cycles 1–2, recalled in 3.");
     expect(storyLine("Subjects", [{ cycle: 1, result: 3 }])).toBe("Subjects: strong in cycle 1.");
     expect(storyLine("x", [])).toBe("x: not revised yet.");
+  });
+});
+
+describe("adaptive intervals (phase 4)", () => {
+  const ev = (result: number, over: Partial<{ firstResult: number; hints: number; confidence: number | null }> = {}) => ({ result, firstResult: result, hints: 0, confidence: null, ...over });
+
+  it("scores one review: the first attempt counts, hints and confident misses shrink the gap", () => {
+    expect(reviewFactor(ev(3))).toBe(1.3);
+    expect(reviewFactor(ev(2))).toBe(1);
+    expect(reviewFactor(ev(2, { firstResult: 0 }))).toBe(0.5); // relearned today: the interval still follows the miss
+    expect(reviewFactor(ev(2, { hints: 2 }))).toBeCloseTo(0.8);
+    expect(reviewFactor(ev(2, { hints: 9 }))).toBeCloseTo(0.7); // at most three hints count
+    expect(reviewFactor(ev(1, { confidence: 3 }))).toBeCloseTo(0.63);
+  });
+
+  it("moves a concept's pace only as far as its evidence goes, within ±50 %", () => {
+    expect(conceptPace([])).toBe(1);
+    expect(conceptPace([ev(3)])).toBeCloseTo(1.1); // one review: a third of the way to 1.3
+    expect(conceptPace([ev(3), ev(3), ev(3)])).toBeCloseTo(1.3);
+    expect(conceptPace([ev(0), ev(0), ev(0), ev(0)])).toBe(0.5); // only the last three, and never below half
+    expect(conceptPace([ev(0), ev(3), ev(3), ev(3)])).toBeCloseTo(1.3);
+  });
+
+  it("lets the weakest concept decide the topic's gap, and says why", () => {
+    expect(adaptiveGap(14, [{ title: "Generics", history: [ev(2), ev(2), ev(2)] }])).toEqual({ days: 14, fixed: 14, reason: null });
+    expect(adaptiveGap(14, [{ title: "Generics", history: [ev(3), ev(3), ev(3)] }, { title: "Inference", history: [ev(3), ev(3), ev(3)] }]))
+      .toEqual({ days: 18, fixed: 14, reason: "every concept recalled well" });
+    expect(adaptiveGap(14, [{ title: "Generics", history: [ev(3), ev(3), ev(3)] }, { title: "Constraints", history: [ev(2), ev(1), ev(2, { hints: 2 })] }]))
+      .toEqual({ days: 12, fixed: 14, reason: "Constraints needed hints" }); // 14 × (1 · 0.7 · 0.8)^(1/3)
+    expect(adaptiveGap(3, [{ title: "x", history: [ev(1), ev(2, { firstResult: 0 })] }])).toEqual({ days: 2, fixed: 3, reason: "x was shaky" });
+    expect(adaptiveGap(7, [])).toEqual({ days: 7, fixed: 7, reason: null });
+  });
+
+  it("uses the adapted gap when a cycle finishes, still less by the days a review was early", () => {
+    const t = { cycle: 2, state: "ACTIVE" as const, nextDueDate: "2026-11-20", weakOnly: false };
+    expect(advanceTrack(t, [2, 3], "2026-11-20", "2026-11-20", () => 10).nextDueDate).toBe("2026-11-30");
+    expect(advanceTrack(t, [2, 3], "2026-11-20", "2026-11-22", () => 10).nextDueDate).toBe("2026-11-28");
+    expect(advanceTrack(t, [2, 1], "2026-11-20", "2026-11-20", () => 10)).toMatchObject({ nextDueDate: "2026-11-22", weakOnly: true }); // a retry ignores it
   });
 });
