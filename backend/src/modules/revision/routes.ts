@@ -46,6 +46,10 @@ const reportBody = z.object({
   scheduleId: z.number().int().positive().optional(),
   promptId: z.number().int().positive().optional(),
   evaluationId: z.number().int().positive().optional(),
+  responseId: z.number().int().positive().optional(),
+  itemId: z.number().int().positive().optional(),
+  /** Out of syllabus on a stored question: leave out its whole concept instead of only the question. */
+  removeConcept: z.boolean().optional(),
 }).strict();
 
 const checkpointBody = z

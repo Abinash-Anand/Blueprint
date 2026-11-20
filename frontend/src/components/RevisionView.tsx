@@ -9,6 +9,7 @@ import type { RevisionOverview, RevisionUnitRow } from "../api/types";
 import { CHECKPOINT_RESULTS, METHOD_LABEL, SCORES, dayMonth, hm, monthName, pct, plural, scoreLabel, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { type RecallItem, RecallDialog } from "./RecallDialog";
+import { RevisionHome } from "./revision/RevisionHome";
 import { StatusBadge, StatusIndicator } from "./Status";
 import { Loading, Stat } from "./ui";
 
@@ -92,12 +93,14 @@ export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => voi
   return (
     <div className="view">
       <div className="wrap">
-        <div className="vhead">
+        <RevisionHome />
+        <div className="vhead rv-v1">
           <div>
-            <div className="kick">Revision · as of {shortDate(o.today)}</div>
+            <div className="kick">Sub-topic revision · as of {shortDate(o.today)}</div>
             <h2>{now ? `${plural(now, "revision")} due now` : c.active ? "Nothing due right now" : "Revision hasn't started yet"}</h2>
             <div className="sub">
               Retrieve from memory, check, correct. Tracked separately from learning (floors) and demonstration (roofs): it never moves the car.
+              {" "}A topic with a revision pack moves to the sessions above after its first review; its history here stays.
               {isSunday && " Sunday: everything here is optional."}
             </div>
           </div>

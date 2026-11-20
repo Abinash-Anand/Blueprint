@@ -78,7 +78,8 @@ export async function syncTopic(db: Db, topicId: string, now: Date) {
  */
 export async function planOpenRevisions(db: Db, today: ISODate) {
   const schedules = await db.revisionSchedule.findMany({
-    where: { suspendedAt: null, nextDueDate: { not: null }, tasks: { none: { status: "TODO" } } },
+    // Topics that moved to revision v2 (their first v2 review) no longer get sub-topic revision tasks (plan §8).
+    where: { suspendedAt: null, nextDueDate: { not: null }, tasks: { none: { status: "TODO" } }, NOT: { topic: { revisionTrack: { is: { startedAt: { not: null } } } } } },
     include: { topic: { select: { name: true } }, subtopic: { select: { name: true } } },
   });
   if (schedules.length === 0) return [];
@@ -273,6 +274,9 @@ export interface ReportInput {
   scheduleId?: number;
   promptId?: number;
   evaluationId?: number;
+  responseId?: number;
+  itemId?: number;
+  removeConcept?: boolean;
 }
 
 export function revisionService(prisma: PrismaClient, clock: Clock) {
@@ -282,22 +286,34 @@ export function revisionService(prisma: PrismaClient, clock: Clock) {
      * Every reference must belong to this city (the scoped client finds nothing in another city).
      */
     async report(b: ReportInput) {
-      const [topic, schedule, prompt, evaluation] = await Promise.all([
+      const [topic, schedule, prompt, evaluation, response, item] = await Promise.all([
         b.topicId ? prisma.topic.findFirst({ where: { id: b.topicId }, select: { id: true } }) : true,
         b.scheduleId ? prisma.revisionSchedule.findFirst({ where: { id: b.scheduleId }, select: { id: true } }) : true,
         b.promptId ? prisma.revisionPrompt.findFirst({ where: { id: b.promptId }, select: { id: true } }) : true,
         b.evaluationId ? prisma.revisionEvaluation.findFirst({ where: { id: b.evaluationId }, select: { id: true } }) : true,
+        b.responseId ? prisma.revisionResponse.findFirst({ where: { id: b.responseId }, select: { id: true } }) : true,
+        b.itemId ? prisma.revisionItem.findFirst({ where: { id: b.itemId }, select: { id: true, conceptId: true } }) : true,
       ]);
       if (!topic) throw notFound("Topic");
       if (!schedule) throw notFound("Revision unit");
       if (!prompt) throw notFound("Prompt");
       if (!evaluation) throw notFound("Evaluation");
+      if (!response) throw notFound("Answer");
+      if (!item) throw notFound("Question");
+      if (b.removeConcept && !b.itemId) throw new HttpError(400, "VALIDATION_ERROR", "Name the question whose concept to leave out.");
       const r = await prisma.revisionReport.create({
         data: {
           reason: b.reason, promptText: b.promptText.slice(0, 2000), note: (b.note ?? "").trim(),
           topicId: b.topicId ?? null, scheduleId: b.scheduleId ?? null, promptId: b.promptId ?? null, evaluationId: b.evaluationId ?? null,
+          responseId: b.responseId ?? null, itemId: b.itemId ?? null,
         } as never,
       });
+      // Revision v2 (plan §3.4): out of syllabus removes the stored question, or its concept, from future sessions.
+      // Both stay in the pack, marked removed, and can be brought back; past answers are untouched.
+      if (b.reason === "OUT_OF_SYLLABUS" && item !== true && item) {
+        if (b.removeConcept) await prisma.revisionConcept.updateMany({ where: { id: item.conceptId, removedAt: null }, data: { removedAt: clock.now() } });
+        else await prisma.revisionItem.updateMany({ where: { id: item.id, removedAt: null }, data: { removedAt: clock.now() } });
+      }
       return { id: r.id, reason: r.reason, createdAt: r.createdAt.toISOString() };
     },
 

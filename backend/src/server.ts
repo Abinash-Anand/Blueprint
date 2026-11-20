@@ -7,6 +7,7 @@ import { createProviders } from "./modules/ai/providers/factory.js";
 import { aiService } from "./modules/ai/service.js";
 import { createMailer } from "./modules/auth/mailer.js";
 import { recoverGenerations } from "./modules/ai/curriculum/service.js";
+import { recoverPacks } from "./modules/revision/packService.js";
 import { authService } from "./modules/auth/service.js";
 
 const config = loadConfig();
@@ -27,6 +28,7 @@ console.log(JSON.stringify({
 }));
 // Curriculum generations interrupted by the restart are marked failed, so the learner can start them again.
 void recoverGenerations(prisma).then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Interrupted curriculum generations marked failed", count: n })));
+void recoverPacks(prisma).then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Interrupted revision pack builds marked failed", count: n })));
 
 // Check the mail server once at start-up, so a wrong password shows in the log before anyone registers.
 const startupMailer = createMailer(config.auth.mail);

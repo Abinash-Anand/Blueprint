@@ -19,7 +19,8 @@ export function revisionOverview(prisma: PrismaClient, clock: Clock) {
     const [policy, schedules, suspended, attempts, checkpoints] = await Promise.all([
       revisionPolicy(prisma),
       prisma.revisionSchedule.findMany({
-        where: { suspendedAt: null },
+        // Topics that moved to revision v2 are listed there; their sub-topic history stays below.
+        where: { suspendedAt: null, NOT: { topic: { revisionTrack: { is: { startedAt: { not: null } } } } } },
         include: {
           topic: { select: { name: true, districtId: true } },
           subtopic: { select: { name: true } },

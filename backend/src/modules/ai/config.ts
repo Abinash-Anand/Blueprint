@@ -28,6 +28,8 @@ export interface AiConfig {
   /** Per call: a district's detail can take minutes on a large model. */
   generationTimeoutMs: number;
   maxGenerationsPerHour: number;
+  /** Revision packs built per hour on this server (Revision v2 plan §7), apart from curriculum generation. */
+  maxPacksPerHour: number;
   /** Daily cap on calls to the generation provider (GWDG allows far more than Gemini's free tier). 0 = none. */
   generationDailyLimit: number;
   geminiApiKey?: string;
@@ -118,6 +120,7 @@ export function loadAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
     generationTimeoutMs: num(env.AI_GENERATION_TIMEOUT_MS, 300_000, 10_000, 900_000),
     generationConcurrency: num(env.AI_GENERATION_CONCURRENCY, 6, 1, 8),
     maxGenerationsPerHour: num(env.AI_MAX_GENERATIONS_PER_HOUR, 3, 1, 100),
+    maxPacksPerHour: num(env.AI_MAX_PACKS_PER_HOUR, 20, 1, 500),
     generationDailyLimit: num(env.AI_GENERATION_DAILY_LIMIT, 300, 0, 100_000),
     evaluationFallbackModel: fallback(env.AI_EVALUATION_FALLBACK_MODEL, env.AI_FALLBACK_MODEL, evaluationProvider, "evaluation", evaluationModel),
     transcriptionFallbackModel: fallback(env.AI_TRANSCRIPTION_FALLBACK_MODEL, env.AI_FALLBACK_MODEL, transcriptionProvider, "transcription", transcriptionModel),

@@ -7,6 +7,7 @@ import { LAYERS } from "../lib/layers";
 import type { Building } from "../map/geometry";
 import { useAppData } from "../state/AppData";
 import { RevisionBox } from "./RevisionBox";
+import { PackEntry } from "./revision/PackDialog";
 import { Bar } from "./ui";
 import { StatusIndicator } from "./Status";
 
@@ -112,6 +113,7 @@ export function TopicPanel({ ref, building, route, today, onOpenTopic, onClose }
         </div>
 
         <RevisionBox topicId={t.id} />
+        <PackEntry topicId={t.id} topicName={t.name} />
 
         {t.dependsOn.length > 0 && (
           <div className="pbox">

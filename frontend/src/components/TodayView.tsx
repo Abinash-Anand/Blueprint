@@ -5,6 +5,7 @@ import type { Task, Today } from "../api/types";
 import { addDays, dayMonth, hm, longDate, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { type RecallItem, RecallDialog } from "./RecallDialog";
+import { RevisionToday } from "./revision/RevisionToday";
 import { TaskRow } from "./TaskRow";
 import { Bar, Loading } from "./ui";
 
@@ -94,6 +95,8 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
             <button className="btn" aria-label="Next day" onClick={() => onDate(addDays(data.date, 1))}>→</button>
           </div>
         </div>
+
+        {isToday && <RevisionToday onOpen={onOpenRevision} />}
 
         <div className="grid3">
           <div className="card focus">

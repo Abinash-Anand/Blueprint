@@ -160,6 +160,35 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
     return vocabulary([s.topic.name, s.subtopic?.name ?? "", ...[...own, ...topic].flatMap((p) => [p.content, p.expectedAnswer])]);
   }
 
+  /** A WAV recording to text, with the given terms as spelling hints; the audio is never stored (I-5). */
+  async function transcribeTerms(audio: Buffer, contentType: string | undefined, termsOf: () => Promise<string[]>) {
+    await requireReady();
+    if (!/^audio\/(wav|x-wav|wave)\b/i.test(contentType ?? "")) throw new HttpError(415, "AUDIO_UNSUPPORTED", "Send the recording as 16-bit PCM WAV.");
+    if (audio.length > config.maxAudioBytes) throw new HttpError(413, "AUDIO_TOO_LARGE", "The recording is too large.");
+    let seconds: number;
+    try {
+      seconds = parseWav(audio).seconds;
+    } catch (e) {
+      if (e instanceof WavError) throw new HttpError(415, "AUDIO_UNSUPPORTED", "Send the recording as 16-bit PCM WAV.");
+      throw e;
+    }
+    if (seconds < 0.5) throw new HttpError(400, "AUDIO_TOO_SHORT", "The recording is too short. Hold the button while you speak.");
+    if (seconds > config.maxRecordingSeconds + 1) throw new HttpError(413, "AUDIO_TOO_LARGE", `Recordings can be at most ${config.maxRecordingSeconds} seconds.`);
+    const terms = await termsOf();
+    await usage.check("TRANSCRIBE", providers.transcription.name);
+    const p = providers.transcription;
+    try {
+      const r = await withFallback("TRANSCRIBE", p.name, config.transcriptionModel, config.transcriptionFallbackModel, (model, signal) =>
+        p.transcribe({ audio, mimeType: "audio/wav", audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms), language: config.language, vocabulary: terms, model, signal }),
+      );
+      return { text: r.text.slice(0, 5000), audioSeconds: Math.round(seconds * 10) / 10 };
+    } catch (e) {
+      if (e instanceof ProviderError) throw providerHttpError(e, "TRANSCRIBE");
+      throw e;
+    }
+    // The audio buffer goes out of scope here; it is never written anywhere (I-5).
+  }
+
   async function ancestors(e: EvalRow) {
     const chain: EvalRow[] = [];
     let cur: EvalRow | null = e;
@@ -199,33 +228,54 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
     },
 
     async transcribe(scheduleId: number, audio: Buffer, contentType: string | undefined) {
+      return transcribeTerms(audio, contentType, async () => {
+        const schedule = await prisma.revisionSchedule.findUnique({ where: { id: scheduleId }, select: { id: true } });
+        if (!schedule) throw notFound("Revision unit");
+        return unitTerms(scheduleId);
+      });
+    },
+
+    transcribeTerms,
+
+    /**
+     * Revision v2 (plan §3.4): one answer checked against a stored question's expected points, with the same prompt,
+     * quote verification and score rule as the AI check. Nothing is stored here; the session keeps the result with the
+     * answer. The question and points are the learner's own pack, so they are data like the answer.
+     */
+    async checkAnswer(input: { question: string; kind: string; criteria: string[]; answer: string }) {
       await requireReady();
-      if (!/^audio\/(wav|x-wav|wave)\b/i.test(contentType ?? "")) throw new HttpError(415, "AUDIO_UNSUPPORTED", "Send the recording as 16-bit PCM WAV.");
-      if (audio.length > config.maxAudioBytes) throw new HttpError(413, "AUDIO_TOO_LARGE", "The recording is too large.");
-      let seconds: number;
+      const answer = input.answer.trim();
+      if (!answer) throw new HttpError(400, "VALIDATION_ERROR", "There is no answer to check yet.");
+      const criteria = input.criteria.map((c) => c.trim()).filter(Boolean).slice(0, 20);
+      if (!criteria.length) throw new HttpError(409, "AI_NO_CRITERIA", "This question has no expected points to check against.");
+      await usage.check("EVALUATE", providers.evaluation.name);
+      const p = providers.evaluation;
+      let r: Awaited<ReturnType<typeof withFallback<{ output: unknown }>>>;
       try {
-        seconds = parseWav(audio).seconds;
-      } catch (e) {
-        if (e instanceof WavError) throw new HttpError(415, "AUDIO_UNSUPPORTED", "Send the recording as 16-bit PCM WAV.");
-        throw e;
-      }
-      if (seconds < 0.5) throw new HttpError(400, "AUDIO_TOO_SHORT", "The recording is too short. Hold the button while you speak.");
-      if (seconds > config.maxRecordingSeconds + 1) throw new HttpError(413, "AUDIO_TOO_LARGE", `Recordings can be at most ${config.maxRecordingSeconds} seconds.`);
-      const schedule = await prisma.revisionSchedule.findUnique({ where: { id: scheduleId }, select: { id: true } });
-      if (!schedule) throw notFound("Revision unit");
-      await usage.check("TRANSCRIBE", providers.transcription.name);
-      const terms = await unitTerms(scheduleId);
-      const p = providers.transcription;
-      try {
-        const r = await withFallback("TRANSCRIBE", p.name, config.transcriptionModel, config.transcriptionFallbackModel, (model, signal) =>
-          p.transcribe({ audio, mimeType: "audio/wav", audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms), language: config.language, vocabulary: terms, model, signal }),
+        r = await withFallback("EVALUATE", p.name, config.evaluationModel, config.evaluationFallbackModel, (model, signal) =>
+          p.evaluate({ system: SYSTEM_PROMPT, user: buildUserPrompt({ promptText: input.question, retrievalMethod: input.kind, criteria, answer }), jsonSchema: evaluationJsonSchema(), model, signal }),
         );
-        return { text: r.text.slice(0, 5000), audioSeconds: Math.round(seconds * 10) / 10 };
       } catch (e) {
-        if (e instanceof ProviderError) throw providerHttpError(e, "TRANSCRIBE");
+        if (e instanceof ProviderError) throw providerHttpError(e);
         throw e;
       }
-      // The audio buffer goes out of scope here; it is never written anywhere (I-5).
+      const parsed = EvaluationResult.safeParse(r.output);
+      let verified: VerifiedResult;
+      try {
+        if (!parsed.success) throw new VerificationError("Output does not match the schema");
+        verified = verifyResult(parsed.data, criteria, answer);
+      } catch (e) {
+        if (!(e instanceof VerificationError)) throw e;
+        throw providerHttpError(new ProviderError("INVALID_OUTPUT", e.message));
+      }
+      return {
+        relevant: verified.relevant,
+        criteria: verified.criteria.map((c) => ({ index: c.index, text: c.text, verdict: c.verdict, evidence: c.evidence })),
+        misconceptions: verified.misconceptions.map((m) => ({ claim: m.claim, correction: m.correction })),
+        feedback: verified.feedback,
+        suggestedScore: suggestScore({ relevant: verified.relevant, verdicts: verified.criteria.map((c) => c.verdict), misconceptions: verified.misconceptions.length }),
+        provider: p.name, model: r.model, promptVersion: config.promptVersion, latencyMs: r.latencyMs,
+      };
     },
 
     async evaluate(input: EvaluateInput) {

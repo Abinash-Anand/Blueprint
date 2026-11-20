@@ -1,6 +1,7 @@
 # Revision v2: plan
 
-*Approved 20 November 2026, with the recommended answer to each decision in §14. Nothing is built yet. It replaces how revision questions are made, asked,
+*Approved 20 November 2026, with the recommended answer to each decision in §14. Phases 0 and 1 are deployed (§15); phases 2 and 3 are built and tested, not yet deployed (§16).
+It replaces how revision questions are made, asked,
 checked and scheduled. Learning, the plan and the city are unchanged: revision never moves the car and never awards
 a floor or a roof.*
 
@@ -275,9 +276,9 @@ pause, stop, speed), and the completion and history views.
 | Phase | Work | Done when |
 |---|---|---|
 | **0. Quick fixes** (in today's dialog) | Read-aloud player; the Method dropdown removed; "Mastered" → "Strong recall"; "Draw" asks for a text description; Report button | Shipped, tests pass |
-| **1. Material and pack** | Material step with uploads (text, Markdown, PDF, HTML, Word; images after §12), concepts and items, generation, validation, concept review screen, edit and remove; migration (backup, approval) | A real RxJS and a German pack pass the checks; questions stay inside the material |
-| **2. Session and cycles** | Revision home, session planner, topic sets, the workspace, multiple choice in code, open answers via the AI check, confidence, relearn-before-you-leave, completion card, cycles 1–6 and their dates, keep going | A full session runs end to end; intervals follow §4.2 |
-| **3. Tutoring and history** | Hint ladder, misconceptions, model answer layers, code comparison, per-concept history table, report handling into the benchmark | Gaps are corrected without waiting on the AI for hints |
+| **1. Material and pack** | Material step with uploads (text, Markdown, PDF, HTML, Word; images after §12), concepts and items, generation, validation, concept review screen, edit and remove; migration (backup, approval) | Built (§15). A real RxJS and a German pack pass the checks; questions stay inside the material |
+| **2. Session and cycles** | Revision home, session planner, topic sets, the workspace, multiple choice in code, open answers via the AI check, confidence, relearn-before-you-leave, completion card, cycles 1–6 and their dates, keep going | Built (§16). A full session runs end to end; intervals follow §4.2 |
+| **3. Tutoring and history** | Hint ladder, misconceptions, model answer layers, code comparison, per-concept history table, report handling into the benchmark | Built (§16). Gaps are corrected without waiting on the AI for hints |
 | **4. Later** | FSRS-style scheduling from your data, maintenance checks, voice conversation mode (useful for German), code execution (needs a sandbox), diagram activities | Decided separately |
 
 ## 12. Testing and evaluation
@@ -308,3 +309,115 @@ you score the same way.
 4. **After cycle 6:** retained with optional maintenance checks off by default (recommended), or on by default?
 5. **Your material:** keep the extracted text so the pack can be refreshed (recommended), or keep only the pack?
 6. **Consent:** a new `AI_PROCESSING` version that names revision material (needed if material is sent to GWDG).
+
+## 15. Phase 1 as built (20 Nov 2026; deployed the same day)
+
+**Where:** the topic panel shows *Revision pack* under *Recall and revision*. *Prepare* opens "Before you revise …: what
+did you study?": paste notes or add files, accept the AI notice, *Build my revision* or *Skip: use the topic outline*.
+The build runs in the background; then the concepts, each with *Not in what I studied* and *Show questions* (with a
+warning that they include the answers), *Edit* (question and expected points) and *Remove*, *Add a concept*,
+*Rebuild* when the material changed, and *Delete pack*. Revision sessions do not use packs yet (phase 2); the dialog
+says so.
+
+**Backend:** `revision/material.ts` (text from PDF, Word, Markdown, HTML, text), `revision/pack.ts` (prompts, checks,
+pipeline), `revision/packService.ts` and `packRoutes.ts`, `ai/jobCaller.ts` (retry and fallback shared with curriculum
+generation). Migration `20261121090000_revision_packs`: four tables, four enums and the usage operation
+`REVISION_PACK` (its own hourly limit, `AI_MAX_PACKS_PER_HOUR`, default 20); rehearsed on a restored backup with its
+rollback.
+
+**Decisions taken while building:**
+- *Word files* are read with Node's own zlib (no new dependency): only `word/document.xml`, size-capped against zip
+  bombs, no macros or embedded objects. Old `.doc` files are refused with "save as .docx or PDF".
+- *Images* stay off until the GWDG check in §12.
+- *Two calls per concept* (levels 1–3 and 4–6, or 1–2 and 3–4 from the outline), with exactly one open and one
+  multiple-choice question per level: the first real trial wrote all six levels in one reply, which was cut off and
+  failed the pack.
+- *Repairs ask only for the missing levels* (up to two rounds) and keep every valid question. A reply that is cut off
+  counts as a problem, so one concept can never fail the pack; an overloaded provider still does.
+- *Grounding check in code:* programming names (camelCase, PascalCase) in a question, its code, answer, hints or
+  options must appear in the material or be defined by the snippet itself; otherwise the question is refused. The
+  prompt says the same.
+- Open questions may have 2 expected points (the prompt still asks for 3–5).
+- *Rebuilding* after adding material makes a new pack version; the previous one is kept (SUPERSEDED) and stays in use
+  until the new one is ready. Merging new concepts into an existing pack's history comes with phase 2, when there is
+  history to keep.
+- Consent: `AI_PROCESSING` is now version 2026-11-20 and names revision material, so it is asked again.
+
+**Real trials** (`eval/pack.ts`, GWDG Qwen 3.5 397B; results in `eval/results/pack-*.json`):
+
+| Sample | Material | Time | Concepts | Questions | Incomplete concepts | Outside the material |
+|---|---|---|---|---|---|---|
+| German grammar sheet (.docx) | 860 characters | 162 s | 8 | 92 | 1 | none in any correct answer; "Genitiv" appears only in 4 wrong options, each explained as wrong |
+| RxJS notes (.md), first run | 1,321 characters | 236 s | 8 | 84 | 5 | 6 questions named `shareReplay`, `switchMap` or `ReplaySubject` |
+| RxJS notes, after the repairs and name check | 1,321 characters | 242 s | 8 | 92 | 2 | none; but every code snippet kept only its first line (fixed since with `codeLines`; to be re-run once GWDG is reachable again: it was down when phase 1 was deployed) |
+
+All stored questions pass every check in code. Building takes about three minutes rather than the 30–90 seconds
+estimated in §3.2; it runs in the background and the dialog says it can be closed.
+
+## 16. Phases 2 and 3 as built (20 Nov 2026)
+
+**Where:** the Revision tab opens with the revision home: *Today · 1 topic · 4 questions · about 10 min* with
+*Start* (or *Continue* for an open session), every topic's cycle and next date with a one-line state, topics that still
+need material (*Prepare* opens the pack), and *Pack* and *History* per topic. The old sub-topic revision follows below
+it for topics that have not moved yet. *Start* opens the full-screen workspace: the session's topics and progress on the
+left from laptop width (one column on phones), one question at a time on the right.
+
+**A question:** kind and time, situation, code, the question, the answer size, read-aloud; hints from the stored
+ladder before answering (no AI, no wait; each hint lowers the suggested result); the answer in words, by voice
+(transcribed with the session's terms, never stored) or in a code box; for open questions "How sure are you?" before
+the check. Multiple choice is checked in code and every chosen and correct option explains itself. Open answers go to
+the AI check against the question's own expected points (same prompt, quote verification and score rule as before);
+the points come back as cards, the learner's words that matched are highlighted, wrong statements are corrected, and
+when the AI is off or busy the learner compares with the expected points instead. Then a common mix-up from the
+concept's misconceptions when the answer missed, the model answer in two layers (gist, then all of it), for code a
+side-by-side of the learner's answer and the model answer, and the result: Forgot · Struggled · Recalled · Strong
+recall, the suggestion preselected and always the learner's choice. *Report* is on every question.
+
+**The model in code (`revision/cycles.ts`, unit-tested):**
+- *Today's set per topic:* the concepts not yet reviewed in the cycle in progress, weak ones first (on a weak retry only
+  the concepts still weak). Cycle 1 and struggling concepts get a multiple-choice question and an open one a level up;
+  the others one open question; strong concepts one open question a level higher. At most 5 questions per topic per
+  session and a concept's questions are never split; a cycle with more concepts continues in the next session.
+- *The session:* overdue topics first, then weak, then due today; whole topics until about 85 % of the daily revision
+  minutes (at least one topic); questions interleaved across topics. Unused questions at the wanted level first, then
+  the nearest level, then the least-asked one.
+- *Relearn before you leave:* a concept marked Forgot or Struggled gets one easier multiple-choice question at the end.
+- *A concept's result:* any miss decides; otherwise the open answers decide (a right multiple choice is Recalled by
+  definition and does not hide a Strong answer in the learner's words; multiple choice alone gives at most Recalled);
+  a relearned concept counts as Recalled, with its first result kept for the history.
+- *Cycles:* all concepts at Recalled or better finishes the cycle; the next is due 3, 7, 14, 30 and 60 days later (less
+  by the days a review was early); after cycle 6 the topic is retained. Still weak: a weak-only retry after 1 day
+  (Forgot) or 2 (Struggled), not counted as a cycle. A topic's first cycle is due the day after its first learned
+  sub-topic, never in the past.
+- *Keep going:* topics due tomorrow, early; or practice on the weakest concepts (those that were Forgot or Struggled,
+  even if relearned), which never changes a cycle or a date. *Stop for today* keeps what was answered.
+
+**Moving from sub-topic schedules:** a topic moves on its first v2 session (`RevisionTrack.startedAt`): its open
+sub-topic revision tasks are removed and no new ones are planned; its sub-topic history stays in the Revision tab.
+
+**History (phase 3):** a concepts × cycles table (Strong, Recalled, Struggled, Forgot, ↑ when relearned), one line per
+concept ("Cold vs hot: struggled in cycles 1–2, recalled in 3."), and every answer behind a cell: question, the
+learner's answer with the matched words, the AI's feedback and the model answer.
+
+**Reports (phase 3):** *Not in what I studied* removes the question (or, if chosen, its whole concept) from future
+sessions; both stay in the pack and can be brought back, past answers stay. *The AI check was unfair* is kept with the
+answer; `eval/reported.ts` turns those reports into benchmark cases (question, expected points, answer; the learner's
+own result as the expected score) for `eval/run.ts --cases …`. The cases contain answers, so they go to the
+git-ignored `eval/results`.
+
+**Data:** migration `20261122090000_revision_sessions` (additive: `RevisionTrack`, `RevisionSession`,
+`RevisionResponse`, `ConceptResult`, three enums, two nullable report columns; rehearsed with its rollback on a copy of
+the live data, counts unchanged). Questions, expected points and model answers are copied into each answer, so history
+survives edits, rebuilds and deleted packs. Everything is city-scoped and in the data export.
+
+**Also built:**
+- *More questions when a level runs out (§5.2):* when every question near the wanted level has been asked, the session
+  asks one again and, in the background, the pack writes a few more for that concept (at most three concepts per
+  session; silent when AI is off, not allowed or at its limit; never more than 48 questions per concept).
+- *Maintenance after cycle 6 (§4.2):* off by default; *Check every 4 months* on a retained topic asks every concept
+  once more (one open question each, no relearning), every 120 days; the topic stays retained.
+- *Confidence* is shown with each answer in the history ("you felt: shaky").
+- *Today* shows today's revision set with *Revise now* when something is due.
+
+**Decided against:** strong concepts sharing one level-5/6 question (§6). Each strong concept gets its own question a
+level up: a few minutes more, but every concept keeps its own evidence in every cycle.
