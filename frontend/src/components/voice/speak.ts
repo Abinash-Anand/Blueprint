@@ -38,15 +38,28 @@ export function setSpeechRate(r: number) {
   }
 }
 
-/** Reads `text`, stopping anything else that is being read. `id` names the player that started it. */
-export function speak(text: string, lang = "en-GB", id = "default") {
-  if (!canSpeak() || !text.trim()) return;
+/** A pack's language ("en", "de") as a voice locale; a full locale passes through. */
+export const voiceLang = (language: string | undefined) => (language === "de" ? "de-DE" : !language || language === "en" ? "en-GB" : language);
+
+/**
+ * Reads `text`, stopping anything else that is being read. `id` names the player that started it. `onEnd` runs once
+ * when this text has been read to the end (not when it is stopped or replaced): conversation mode listens then.
+ */
+export function speak(text: string, lang = "en-GB", id = "default", onEnd?: () => void) {
+  if (!canSpeak() || !text.trim()) {
+    onEnd?.();
+    return;
+  }
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = lang;
   u.rate = speechRate();
   const mine = () => state.id === id;
-  u.onend = () => mine() && set({ id: null, paused: false });
+  u.onend = () => {
+    if (!mine()) return;
+    set({ id: null, paused: false });
+    onEnd?.();
+  };
   u.onerror = () => mine() && set({ id: null, paused: false });
   set({ id, paused: false });
   window.speechSynthesis.speak(u);

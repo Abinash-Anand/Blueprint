@@ -189,14 +189,14 @@ export interface TrackState { cycle: number; state: "ACTIVE" | "RETAINED"; nextD
  * when the review was early); after cycle 6 the topic is retained. Some still weak: a weak-only retry in 1–2 days,
  * which does not count as a cycle. Some not reviewed yet: the cycle continues tomorrow.
  */
-export function advanceTrack(t: TrackState, latest: (number | null)[], today: ISODate, dueDate: ISODate | null): TrackState {
+export function advanceTrack(t: TrackState, latest: (number | null)[], today: ISODate, dueDate: ISODate | null, gap?: (cycle: number) => number): TrackState {
   const k = Math.min(t.cycle + 1, CYCLES);
   if (latest.some((r) => r === null)) return { ...t, nextDueDate: addDays(today, 1), weakOnly: false };
   const results = latest as number[];
   if (results.every((r) => r >= RESULT.RECALLED)) {
     if (k >= CYCLES) return { cycle: CYCLES, state: "RETAINED", nextDueDate: null, weakOnly: false };
     const early = dueDate && dueDate > today ? diffDays(today, dueDate) : 0;
-    return { cycle: k, state: "ACTIVE", nextDueDate: addDays(today, Math.max(1, GAP_AFTER[k] - early)), weakOnly: false };
+    return { cycle: k, state: "ACTIVE", nextDueDate: addDays(today, Math.max(1, (gap ? gap(k) : GAP_AFTER[k]) - early)), weakOnly: false };
   }
   const forgot = results.some((r) => r === RESULT.FORGOT);
   return { ...t, nextDueDate: addDays(today, forgot ? RETRY_DAYS.forgot : RETRY_DAYS.struggled), weakOnly: true };
@@ -223,4 +223,54 @@ export function storyLine(title: string, byCycle: { cycle: number; result: numbe
   const part = (r: (typeof runs)[number], i: number) =>
     `${r.word} in ${i === 0 ? (r.from === r.to ? "cycle " : "cycles ") : ""}${r.from === r.to ? r.from : `${r.from}–${r.to}`}`;
   return `${title}: ${runs.map(part).join(", ")}.`;
+}
+
+/* ---------------- adaptive intervals (plan §11, phase 4) ---------------- */
+
+/** One reviewed concept in one session: its result, its first result (before relearning), hints used, how sure the learner was. */
+export type ConceptEvidence = { result: number; firstResult: number; hints: number; confidence: number | null };
+
+/** Bounds of the adjustment, and how many reviews of a concept count as full evidence. */
+export const ADAPT = { min: 0.5, max: 1.5, reviews: 3 } as const;
+
+/**
+ * How one review stretches or shrinks the next gap: the first attempt counts (relearning helps today, not the interval),
+ * Strong recall grows it, Recalled keeps it, Struggled and Forgot shrink it; each hint (up to three) takes 10 % off, and
+ * being sure about a miss takes another 10 % (the learner thinks they know it).
+ */
+export function reviewFactor(e: ConceptEvidence): number {
+  const r = Math.min(e.result, e.firstResult);
+  let f = [0.5, 0.7, 1, 1.3][r] ?? 1;
+  f *= 1 - 0.1 * Math.min(e.hints, 3);
+  if (e.confidence === 3 && r <= RESULT.STRUGGLED) f *= 0.9;
+  return f;
+}
+
+/**
+ * A concept's own pace from its last three reviews (oldest first): the geometric mean of their factors, kept within
+ * ±50 %, and weighted by how much evidence there is, so a concept with one review moves the gap only a third of the way.
+ */
+export function conceptPace(history: ConceptEvidence[]): number {
+  const last = history.slice(-ADAPT.reviews);
+  if (!last.length) return 1;
+  const mean = Math.exp(last.reduce((a, e) => a + Math.log(reviewFactor(e)), 0) / last.length);
+  const factor = Math.min(ADAPT.max, Math.max(ADAPT.min, mean));
+  return 1 + (last.length / ADAPT.reviews) * (factor - 1);
+}
+
+/**
+ * The gap before the next cycle, adapted to the topic's concepts (FSRS-style in spirit: each concept's own record sets
+ * its pace, without fitted weights): the fixed gap times the slowest concept's pace, so the weakest concept decides
+ * when the topic comes back. With the reason, for the completion card.
+ */
+export function adaptiveGap(fixed: number, concepts: { title: string; history: ConceptEvidence[] }[]): { days: number; fixed: number; reason: string | null } {
+  if (!concepts.length) return { days: fixed, fixed, reason: null };
+  const paced = concepts.map((c) => ({ ...c, pace: conceptPace(c.history) }));
+  const slowest = paced.reduce((a, b) => (b.pace < a.pace ? b : a));
+  const days = Math.max(1, Math.round(fixed * slowest.pace));
+  if (days === fixed) return { days, fixed, reason: null };
+  if (days > fixed) return { days, fixed, reason: "every concept recalled well" };
+  const last = slowest.history[slowest.history.length - 1];
+  const why = !last ? "" : Math.min(last.result, last.firstResult) <= RESULT.STRUGGLED ? "was shaky" : last.hints > 0 ? "needed hints" : "was shaky earlier";
+  return { days, fixed, reason: `${slowest.title} ${why}`.trim() };
 }

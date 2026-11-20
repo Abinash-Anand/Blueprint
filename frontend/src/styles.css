@@ -908,3 +908,22 @@ div.rp-slot{display:block;margin:6px 0 0}
 .hist-detail h3{margin:0;font-size:15px}
 .rh-banner{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .rh-banner .m{color:var(--muted);font-size:13px}
+
+/* Revision v2, phase 4: voice conversation mode */
+.ws-head .ws-talk { margin-left: auto; margin-right: 8px; }
+.ws-talking { margin: 12px 0 4px; padding: 10px 12px; border-radius: 10px; background: var(--soft, rgba(0, 0, 0, 0.04)); }
+.ws-talking .m { margin: 4px 0 0; }
+
+/* Revision v2, phase 4: running code in the sandbox */
+.ws-run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.ws-run .m { font-size: 12px; }
+.ws-out { flex-basis: 100%; }
+.ws-out pre { margin: 0; padding: 8px 10px; max-height: 220px; overflow: auto; background: #2e3133; color: #f6f4ef; border-radius: 8px; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+.ws-out-warn { color: #f0d58c; }
+.ws-out-error { color: #b4442c; }
+.ws-out pre .ws-out-error { color: #f3a08c; }
+
+/* Revision v2, phase 4: text read from a photo */
+.pk-read { margin-top: 2px; font-size: 12.5px; }
+.pk-read summary { cursor: pointer; color: var(--muted); }
+.pk-read p { margin: 4px 0 0; white-space: pre-wrap; }

@@ -9,8 +9,11 @@ import { ApiError, api } from "../../api/client";
 import type { AiStatus, CompletionCard, RevisionSessionView, SessionFeedback, SessionKind, SessionQuestion } from "../../api/types";
 import { dayMonth, plural } from "../../lib/format";
 import { ReportIssue } from "../ReportIssue";
+import { feedbackSpeech, langOf, parseChoice, parseResult, questionSpeech, say } from "../voice/conversation";
 import { ReadAloud } from "../voice/ReadAloud";
 import { Recorder, canRecord } from "../voice/Recorder";
+import { canSpeak, speak, stopSpeaking, voiceLang } from "../voice/speak";
+import { CodeRun } from "./CodeRun";
 import { KIND_LABEL } from "./PackDialog";
 
 export const RESULTS = [
@@ -22,6 +25,25 @@ export const RESULTS = [
 const CONFIDENCE = ["Not at all", "Shaky", "Fairly", "Sure"] as const;
 const CODE_KINDS = new Set(["DEBUG", "APPLY", "SPOT_ERROR"]);
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
+
+/** Conversation mode is remembered on this device. */
+const TALK_KEY = "blueprint.conversation";
+const talkSaved = () => {
+  try {
+    return localStorage.getItem(TALK_KEY) === "on";
+  } catch {
+    return false;
+  }
+};
+const saveTalk = (on: boolean) => {
+  try {
+    localStorage.setItem(TALK_KEY, on ? "on" : "off");
+  } catch {
+    /* storage unavailable: the choice lasts for this session */
+  }
+};
+/** One speaker id for the whole conversation, so a new question or the feedback replaces what was being read. */
+const TALK_ID = "conversation";
 
 /** The learner's answer with the AI check's quotes highlighted (plan §3.4, point cards). */
 export function Highlighted({ text, quotes }: { text: string; quotes: string[] }) {
@@ -58,6 +80,7 @@ export function Workspace({ start, sessionId, onClose }: { start?: SessionKind; 
   const [ai, setAi] = useState<AiStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [talkOn, setTalkOn] = useState(talkSaved);
   const box = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -112,6 +135,15 @@ export function Workspace({ start, sessionId, onClose }: { start?: SessionKind; 
   const done = s?.entries.filter((e) => e.state === "DONE").length ?? 0;
   const q = s?.current?.question ?? null;
   const topicOf = q ? s!.topics.find((t) => t.topicId === q.topicId) : null;
+  // Hands-free needs a voice, a microphone, and the AI (transcription and the check) allowed.
+  const canTalk = !!ai?.enabled && ai.consented && canSpeak() && canRecord();
+  const talk = canTalk && talkOn;
+  const toggleTalk = () => {
+    const on = !talkOn;
+    setTalkOn(on);
+    saveTalk(on);
+    if (!on) stopSpeaking();
+  };
 
   return createPortal(
     <div className="ws" role="dialog" aria-modal="true" aria-labelledby="ws-title" tabIndex={-1} ref={box}>
@@ -123,7 +155,13 @@ export function Workspace({ start, sessionId, onClose }: { start?: SessionKind; 
           </h2>
           {s && !cards && <div className="sub">Question {Math.min(done + 1, total)} of {total} · about {s.plannedMinutes} min planned</div>}
         </div>
-        <button className="btn" onClick={() => (s && s.status === "ACTIVE" && done > 0 && !cards ? void finish() : closeRef.current())}>
+        {canTalk && !cards && (
+          <button className={`kit-pill ws-talk${talk ? " on" : ""}`} aria-pressed={talk} onClick={toggleTalk}
+            title="Hands-free: questions are read aloud, you answer by voice, and the feedback is read back">
+            {talk ? "Conversation on" : "Conversation"}
+          </button>
+        )}
+        <button className="btn" onClick={() => { stopSpeaking(); if (s && s.status === "ACTIVE" && done > 0 && !cards) void finish(); else closeRef.current(); }}>
           {s && s.status === "ACTIVE" && done > 0 && !cards ? "Stop for today" : "Close"}
         </button>
       </header>
@@ -151,7 +189,7 @@ export function Workspace({ start, sessionId, onClose }: { start?: SessionKind; 
           {cards ? (
             <Completion cards={cards} keepGoing={keepGoing} busy={busy} onAgain={again} onClose={onClose} />
           ) : q && s ? (
-            <QuestionFlow key={`${s.id}-${q.index}-${q.itemId}`} s={s} q={q} feedback={s.current!.feedback} ai={ai} busy={busy} run={run} onSession={setS} />
+            <QuestionFlow key={`${s.id}-${q.index}-${q.itemId}`} s={s} q={q} feedback={s.current!.feedback} ai={ai} busy={busy} run={run} onSession={setS} talk={talk} />
           ) : s ? (
             <div className="ws-card">
               <p>Every question is answered.</p>
@@ -167,8 +205,8 @@ export function Workspace({ start, sessionId, onClose }: { start?: SessionKind; 
 
 type Run = <T>(f: () => Promise<T>) => Promise<T | null>;
 
-function QuestionFlow({ s, q, feedback, ai, busy, run, onSession }: {
-  s: RevisionSessionView; q: SessionQuestion; feedback: SessionFeedback | null; ai: AiStatus | null; busy: boolean; run: Run; onSession: (x: RevisionSessionView) => void;
+function QuestionFlow({ s, q, feedback, ai, busy, run, onSession, talk }: {
+  s: RevisionSessionView; q: SessionQuestion; feedback: SessionFeedback | null; ai: AiStatus | null; busy: boolean; run: Run; onSession: (x: RevisionSessionView) => void; talk: boolean;
 }) {
   const [hints, setHints] = useState<string[]>(q.hints);
   const [answer, setAnswer] = useState("");
@@ -179,24 +217,54 @@ function QuestionFlow({ s, q, feedback, ai, busy, run, onSession }: {
   const t0 = useRef(Date.now());
   const open = q.format === "OPEN";
   const canSpeak = !!ai?.enabled && ai.consented && canRecord();
+  const lang = langOf(q.language);
+  const needsCode = open && mode === "CODE";
+  // Conversation mode: read the question, then listen (a code answer is typed). `listen` remounts the recorder.
+  const [listen, setListen] = useState(0);
+  const [unclear, setUnclear] = useState<string | null>(null);
+  useEffect(() => {
+    if (!talk || fb) return;
+    speak(questionSpeech(q, lang), voiceLang(q.language), TALK_ID, () => !needsCode && setListen((x) => x + 1));
+    return () => stopSpeaking();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per question, when the mode is on
+  }, [talk]);
 
   const hint = async () => {
     const r = await run(() => api.sessionHint(s.id, q.index));
     if (r) setHints(r.hints);
   };
-  const check = async () => {
+  const check = async (said?: { answer?: string; choice?: number[] }) => {
+    const spoken = said?.answer !== undefined;
     const r = await run(() => api.sessionAnswer(s.id, {
-      index: q.index, mode: open ? mode : "CHOICE", answer: open ? answer : undefined, choice: open ? undefined : choice,
+      index: q.index, mode: open ? (spoken ? "SPOKEN" : mode) : "CHOICE", answer: open ? (said?.answer ?? answer) : undefined, choice: open ? undefined : (said?.choice ?? choice),
       confidence: open ? (confidence ?? undefined) : undefined, seconds: Math.round((Date.now() - t0.current) / 1000),
     }));
     if (r) setFb(r);
+  };
+  /** A spoken reply in conversation mode: an open answer is checked at once; a choice must name an option. */
+  const heard = (t: string) => {
+    if (open) {
+      setAnswer(t);
+      setMode("SPOKEN");
+      void check({ answer: t });
+      return;
+    }
+    const picked = parseChoice(t, q.options, q.format === "MULTI");
+    if (picked) {
+      setChoice(picked);
+      setUnclear(null);
+      void check({ choice: picked });
+    } else {
+      setUnclear(t);
+      speak(q.format === "MULTI" ? say(lang).sayAll : say(lang).sayLetter, voiceLang(q.language), TALK_ID, () => setListen((x) => x + 1));
+    }
   };
   const skip = async () => {
     const r = await run(() => api.sessionSkip(s.id, q.index));
     if (r) onSession(r);
   };
 
-  if (fb) return <Feedback s={s} q={q} fb={fb} busy={busy} run={run} onSession={onSession} />;
+  if (fb) return <Feedback s={s} q={q} fb={fb} busy={busy} run={run} onSession={onSession} talk={talk} ai={ai} />;
 
   const ready = open ? answer.trim().length > 0 && confidence !== null : choice.length > 0;
   return (
@@ -209,7 +277,7 @@ function QuestionFlow({ s, q, feedback, ai, busy, run, onSession }: {
       <h3 className="ws-q">{q.question}</h3>
       <div className="ws-meta">
         {q.answerSize && <span className="m">{q.answerSize}</span>}
-        <ReadAloud text={[q.situation, q.question, ...q.options].filter(Boolean).join(". ")} what="the question" />
+        {!talk && <ReadAloud text={[q.situation, q.question, ...q.options].filter(Boolean).join(". ")} what="the question" lang={q.language} />}
       </div>
       {hints.length > 0 && (
         <ol className="ws-hints" aria-label="Hints">
@@ -227,7 +295,8 @@ function QuestionFlow({ s, q, feedback, ai, busy, run, onSession }: {
           </div>
           <textarea className={`inp ws-answer${mode === "CODE" ? " code" : ""}`} rows={mode === "CODE" ? 8 : 5} maxLength={5000} aria-label="Your answer"
             spellCheck={mode !== "CODE"} placeholder={mode === "CODE" ? "Write the code…" : "Answer from memory, in your own words…"} value={answer} onChange={(e) => setAnswer(e.target.value)} />
-          {canSpeak && (
+          {mode === "CODE" && <CodeRun code={answer} />}
+          {canSpeak && !talk && (
             <Recorder maxSeconds={ai!.maxRecordingSeconds} maxBytes={ai!.maxAudioBytes} label="Speak your answer"
               transcribe={(wav) => api.sessionTranscribe(s.id, q.index, wav)}
               onTranscript={(t) => { setAnswer((a) => (a.trim() ? `${a.trim()} ${t}` : t)); setMode("SPOKEN"); }} />
@@ -256,6 +325,20 @@ function QuestionFlow({ s, q, feedback, ai, busy, run, onSession }: {
           })}
         </ul>
       )}
+      {talk && (
+        <div className="ws-talking" role="status">
+          {needsCode ? <p className="m">{say(lang).codeAnswer}</p> : (
+            <>
+              {listen > 0 && !busy && (
+                <Recorder key={listen} autoStart stopAfterSilenceMs={open ? 2500 : 1500} maxSeconds={ai!.maxRecordingSeconds} maxBytes={ai!.maxAudioBytes}
+                  label={open ? "Answer by voice" : "Say your choice"} transcribe={(wav) => api.sessionTranscribe(s.id, q.index, wav)} onTranscript={heard} />
+              )}
+              {listen === 0 && <p className="m">Reading the question…</p>}
+              {unclear && <p className="m">Heard “{unclear}”: say the letter, or tap an option.</p>}
+            </>
+          )}
+        </div>
+      )}
       <div className="rd-acts">
         <button className="btn primary" disabled={busy || !ready} aria-busy={busy} onClick={() => void check()}>{open ? "Check my answer" : "Check"}</button>
         {hints.length < q.hintsAvailable && <button className="btn" disabled={busy} onClick={() => void hint()}>Hint ({hints.length + 1} of {q.hintsAvailable})</button>}
@@ -266,17 +349,38 @@ function QuestionFlow({ s, q, feedback, ai, busy, run, onSession }: {
   );
 }
 
-function Feedback({ s, q, fb, busy, run, onSession }: { s: RevisionSessionView; q: SessionQuestion; fb: SessionFeedback; busy: boolean; run: Run; onSession: (x: RevisionSessionView) => void }) {
+function Feedback({ s, q, fb, busy, run, onSession, talk, ai }: {
+  s: RevisionSessionView; q: SessionQuestion; fb: SessionFeedback; busy: boolean; run: Run; onSession: (x: RevisionSessionView) => void; talk: boolean; ai: AiStatus | null;
+}) {
   const [final, setFinal] = useState<number | null>(fb.suggested);
   const [full, setFull] = useState(false);
   const [seen, setSeen] = useState(false);
   const ev = fb.evaluation;
   const weak = (fb.suggested ?? 3) <= 1 || fb.correct === false;
   const coding = fb.mode === "CODE" || (!!fb.code && fb.format === "OPEN");
-  const save = async () => {
-    if (final === null) return;
-    const r = await run(() => api.sessionResult(s.id, { responseId: fb.responseId, final, modelShown: seen || full }));
+  const save = async (value = final) => {
+    if (value === null) return;
+    const r = await run(() => api.sessionResult(s.id, { responseId: fb.responseId, final: value, modelShown: seen || full || talk }));
     if (r) onSession(r);
+  };
+  // Conversation mode: read the feedback back, then listen for how it went ("okay" takes the suggestion).
+  const lang = langOf(q.language);
+  const [listen, setListen] = useState(0);
+  const readBack = () => speak(feedbackSpeech(fb, lang), voiceLang(q.language), TALK_ID, () => setListen((x) => x + 1));
+  useEffect(() => {
+    if (!talk || fb.final !== null) return;
+    readBack();
+    return () => stopSpeaking();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per answer, when the mode is on
+  }, [talk]);
+  const heard = (t: string) => {
+    const r = parseResult(t, fb.suggested);
+    if (r === "repeat") readBack();
+    else if (r === null) speak(fb.suggested !== null ? say(lang).askResult : say(lang).askOwn, voiceLang(q.language), TALK_ID, () => setListen((x) => x + 1));
+    else {
+      setFinal(r);
+      void save(r);
+    }
   };
   return (
     <section className="ws-card" aria-label="Feedback">
@@ -328,8 +432,8 @@ function Feedback({ s, q, fb, busy, run, onSession }: { s: RevisionSessionView; 
         <b>Model answer</b>
         {coding && fb.answer ? (
           <div className="ws-compare">
-            <div><span className="m">Your answer</span><pre className="ws-code"><code>{fb.answer}</code></pre></div>
-            <div><span className="m">Model answer</span><pre className="ws-code"><code>{fb.modelAnswer.full}</code></pre></div>
+            <div><span className="m">Your answer</span><pre className="ws-code"><code>{fb.answer}</code></pre><CodeRun code={fb.answer} label="Run yours" what="your answer" /></div>
+            <div><span className="m">Model answer</span><pre className="ws-code"><code>{fb.modelAnswer.full}</code></pre><CodeRun code={fb.modelAnswer.full} label="Run it" what="the model answer" /></div>
           </div>
         ) : (
           <>
@@ -337,7 +441,7 @@ function Feedback({ s, q, fb, busy, run, onSession }: { s: RevisionSessionView; 
             {fb.modelAnswer.full !== fb.modelAnswer.gist && <button className="link" aria-expanded={full} onClick={() => { setFull((x) => !x); setSeen(true); }}>{full ? "Show less" : "Show the full answer"}</button>}
           </>
         )}
-        <ReadAloud text={fb.modelAnswer.full} what="the model answer" />
+        {!talk && <ReadAloud text={fb.modelAnswer.full} what="the model answer" lang={q.language} />}
       </div>
       <div className="ws-result" role="radiogroup" aria-label="How did it go?">
         <span>How did it go?{fb.suggestedLabel && <span className="m"> Suggested: {fb.suggestedLabel}{fb.hintsUsed ? `, after ${plural(fb.hintsUsed, "hint")}` : ""}</span>}</span>
@@ -347,6 +451,12 @@ function Feedback({ s, q, fb, busy, run, onSession }: { s: RevisionSessionView; 
           ))}
         </div>
       </div>
+      {talk && listen > 0 && !busy && ai && (
+        <div className="ws-talking">
+          <Recorder key={listen} autoStart stopAfterSilenceMs={1500} maxSeconds={ai.maxRecordingSeconds} maxBytes={ai.maxAudioBytes}
+            label="Say how it went" transcribe={(wav) => api.sessionTranscribe(s.id, q.index, wav)} onTranscript={heard} />
+        </div>
+      )}
       <div className="rd-acts">
         <button className="btn primary" disabled={busy || final === null} aria-busy={busy} onClick={() => void save()}>Continue</button>
         <ReportIssue reasons={fb.format === "OPEN" && ev ? ["UNFAIR_CHECK", "OUT_OF_SYLLABUS", "UNCLEAR", "OTHER"] : ["OUT_OF_SYLLABUS", "UNCLEAR", "OTHER"]}
@@ -374,6 +484,11 @@ function Completion({ cards, keepGoing, busy, onAgain, onClose }: {
           <p>
             {c.retained ? "All six cycles done: this topic is retained." : c.nextDueDate ? <>Next review: <b>{dayMonth(c.nextDueDate)}</b>{c.weakOnly ? " (only the shaky concepts)" : ""}{c.firstNext ? ` · ${c.firstNext} comes first.` : "."}</> : null}
           </p>
+          {c.interval && (
+            <p className="m">
+              In {plural(c.interval.days, "day")} rather than the usual {c.interval.fixed}{c.interval.reason ? `: ${c.interval.reason}` : ""}. The gap follows how each concept went.
+            </p>
+          )}
         </div>
       ))}
       <div className="ws-keep">

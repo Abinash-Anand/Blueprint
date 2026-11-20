@@ -23,6 +23,7 @@ const LEVEL_LABEL = ["", "Recall", "Explain", "Scenario", "Spot and compare", "J
 const BY_EXT: Record<string, string> = {
   pdf: "application/pdf", txt: "text/plain", text: "text/plain", md: "text/markdown", markdown: "text/markdown",
   html: "text/html", htm: "text/html", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp",
 };
 export function materialType(f: { name: string; type: string }, accepted: string[]): string | null {
   const t = f.type.toLowerCase();
@@ -31,6 +32,8 @@ export function materialType(f: { name: string; type: string }, accepted: string
   return byExt && accepted.includes(byExt) ? byExt : null;
 }
 const ACCEPT = ".pdf,.docx,.md,.markdown,.txt,.html,.htm";
+const ACCEPT_IMAGES = ".png,.jpg,.jpeg,.webp";
+const isImage = (type: string) => type.startsWith("image/");
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 const materialLine = (m: RevisionMaterial) => {
@@ -122,22 +125,28 @@ type Act = (f: () => Promise<unknown>) => Promise<boolean>;
 function Materials({ o, topicId, busy, act }: { o: PackOverview; topicId: string; busy: boolean; act: Act }) {
   const [notes, setNotes] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
+  const [reading, setReading] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const full = o.materials.length >= o.limits.maxFiles;
+  // Photos and screenshots, when the server's AI can read images (phase 4).
+  const photos = o.limits.types.some(isImage);
 
   const addFiles = async (files: FileList | null) => {
     setFileError(null);
     for (const f of [...(files ?? [])]) {
       const type = materialType(f, o.limits.types);
       if (!type) {
-        setFileError(`"${f.name}" isn't a PDF, Word (.docx), Markdown, HTML or text file. Images come later.`);
+        setFileError(`"${f.name}" isn't a PDF, Word (.docx), Markdown, HTML or text file${photos ? ", or a photo (PNG, JPEG, WebP)" : ""}.`);
         continue;
       }
       if (f.size > o.limits.maxBytes) {
         setFileError(`"${f.name}" is larger than 5 MB.`);
         continue;
       }
-      if (!(await act(() => api.addMaterial(topicId, f, f.name, type)))) break;
+      if (isImage(type)) setReading(f.name);
+      const ok = await act(() => api.addMaterial(topicId, f, f.name, type));
+      setReading(null);
+      if (!ok) break;
     }
     if (input.current) input.current.value = "";
   };
@@ -152,7 +161,12 @@ function Materials({ o, topicId, busy, act }: { o: PackOverview; topicId: string
         <ul className="pk-files" aria-label="Your material">
           {o.materials.map((m) => (
             <li key={m.id}>
-              <span><b>{m.name}</b> <span className="m">{materialLine(m)}</span></span>
+              <span>
+                <b>{m.name}</b> <span className="m">{materialLine(m)}{isImage(m.mimeType) && " · read from a photo by the AI"}</span>
+                {isImage(m.mimeType) && (
+                  <details className="pk-read"><summary>What was read</summary><p>{m.preview}{m.chars > m.preview.length && "…"}</p></details>
+                )}
+              </span>
               <button className="link" disabled={busy} aria-label={`Remove ${m.name}`} onClick={() => void act(() => api.removeMaterial(topicId, m.id))}>Remove</button>
             </li>
           ))}
@@ -165,10 +179,12 @@ function Materials({ o, topicId, busy, act }: { o: PackOverview; topicId: string
           <div className="pk-row">
             <button className="btn" disabled={busy || notes.trim().length < 40} onClick={() => void saveNotes()}>Add these notes</button>
             <button className="btn" disabled={busy} onClick={() => input.current?.click()}>Add files</button>
-            <span className="m">PDF, Word, Markdown, HTML or text · up to {o.limits.maxFiles} · only the text is kept</span>
-            <input ref={input} type="file" className="sr" tabIndex={-1} aria-hidden="true" multiple accept={ACCEPT} onChange={(e) => void addFiles(e.target.files)} />
+            <span className="m">PDF, Word, Markdown, HTML, text{photos ? " or photos of your notes" : ""} · up to {o.limits.maxFiles} · only the text is kept</span>
+            <input ref={input} type="file" className="sr" tabIndex={-1} aria-hidden="true" multiple accept={photos ? `${ACCEPT},${ACCEPT_IMAGES}` : ACCEPT} onChange={(e) => void addFiles(e.target.files)} />
           </div>
           {notes.trim().length > 0 && notes.trim().length < 40 && <p className="m">A little more, please: at least a few lines.</p>}
+          {photos && <p className="m">A photo or screenshot is read by the AI ({o.ai.provider === "gwdg" ? "GWDG Academic Cloud" : o.ai.provider}) once: its text is kept, the image is not. Check the text it read below.</p>}
+          {reading && <p className="m" role="status">Reading “{reading}”… this can take up to a minute.</p>}
         </>
       )}
       {fileError && <p className="af-err">{fileError}</p>}

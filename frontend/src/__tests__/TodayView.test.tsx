@@ -82,10 +82,11 @@ describe("TodayView (Mission Control)", () => {
     expect(screen.getByRole("checkbox", { name: /Utility types.*as done/ })).not.toBeChecked();
   });
 
-  it("shows revision tasks without a tick box, flags weak and overdue units, and offers an interleaved session", async () => {
+  it("shows revision tasks without a tick box, flags weak and overdue units, and revises them through the topic's pack", async () => {
     current = withRevision;
     render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
-    await waitFor(() => expect(screen.getByText(/Start revision session \(2\)/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/asks once what you studied/)).toBeInTheDocument());
+    expect(screen.queryByText(/Start revision session/)).not.toBeInTheDocument();
     // Completed only by an attempt: a "Revise" action instead of a checkbox.
     expect(screen.getByRole("button", { name: "Start revision: Generics" })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /Generics.*as done/ })).not.toBeInTheDocument();

@@ -19,6 +19,7 @@ import { ProviderError, asProviderError, type AiProviders } from "../ai/provider
 import type { UsageService } from "../ai/usage.js";
 import type { AuthService } from "../auth/service.js";
 import type { RateLimiter } from "../auth/security.js";
+import { IMAGE_PROMPT_VERSION, IMAGE_SCHEMA, IMAGE_TYPES, imagePrompt, imageReply, imageType } from "./imageText.js";
 import { MATERIAL, MATERIAL_TYPES, extractMaterial, materialText } from "./material.js";
 import {
   type BuiltConcept, type CheckedItem, ITEM_KINDS, type ItemKind, PACK_LIMITS, PACK_PROMPT_VERSION, PackError, type PackProgress,
@@ -132,6 +133,26 @@ export function packService(d: PackDeps) {
     if (a.reason === "CONSENT_REQUIRED") throw new HttpError(403, "AI_CONSENT_REQUIRED", "Allow sending your revision material to the AI provider first.");
   }
 
+  /** The generation provider reads images (GWDG's Qwen and Mistral do): photos and screenshots can be material. */
+  const readsImages = () => !!config.enabled && !!providers.generation?.images;
+
+  /**
+   * One image to text with the generation model (plan §5.1, phase 4): the image goes to the provider once and is then
+   * dropped; the text comes back like a PDF's. Counted as pack work, with the same retry and fallback.
+   */
+  async function readImage(topicName: string, fileName: string, mimeType: string, data: Buffer) {
+    await d.usage.check("REVISION_PACK", providers.generation!.name, config.generationDailyLimit, 1);
+    const caller = jobCaller({ config, provider: providers.generation!, usage: d.usage, op: "REVISION_PACK", notice: async () => {} });
+    try {
+      const out = await caller.call({ name: "material_image", label: `read image (${IMAGE_PROMPT_VERSION})` }, imagePrompt(topicName, fileName), IMAGE_SCHEMA, 6000, [{ mimeType, data }]);
+      return imageReply(out);
+    } catch (e) {
+      const err = asProviderError(e);
+      if (err.kind === "INVALID_OUTPUT") return null;
+      throw new HttpError(err.kind === "RATE_LIMITED" ? 429 : 503, "AI_UNAVAILABLE", "The AI couldn't read this image right now. Try again in a moment, or paste the text.");
+    }
+  }
+
   async function topicOf(db: PrismaClient, topicId: string) {
     const t = await db.topic.findUnique({ where: { id: topicId }, include: { district: { select: { name: true } }, subtopics: { orderBy: { position: "asc" } } } });
     if (!t) throw notFound("Topic");
@@ -179,6 +200,16 @@ export function packService(d: PackDeps) {
         where: { id: pack.id, cityId },
         data: { status: "READY", progress: undefined, completedAt: d.clock.now(), model: models.join(" + ") || pack.model },
       });
+      // The topic moves to revision v2 as soon as its pack is ready: its open sub-topic revision tasks go and no new ones
+      // are planned (`startedAt`). The track's first date is set from the learned sub-topics by the revision home.
+      const now = d.clock.now();
+      await tx.revisionTrack.upsert({
+        where: { topicId: pack.topicId },
+        create: { cityId, topicId: pack.topicId, startedAt: now },
+        update: {},
+      });
+      await tx.revisionTrack.updateMany({ where: { topicId: pack.topicId, startedAt: null }, data: { startedAt: now } });
+      await tx.task.deleteMany({ where: { cityId, topicId: pack.topicId, status: "TODO", source: "REVISION", revisionScheduleId: { not: null } } });
     }, { timeout: 30_000 });
   }
 
@@ -245,7 +276,7 @@ export function packService(d: PackDeps) {
       return {
         topicId,
         ai,
-        limits: { maxFiles: MATERIAL.maxFiles, maxBytes: MATERIAL.maxBytes, maxChars: MATERIAL.maxChars, types: Object.keys(MATERIAL_TYPES) },
+        limits: { maxFiles: MATERIAL.maxFiles, maxBytes: MATERIAL.maxBytes, maxChars: MATERIAL.maxChars, types: [...Object.keys(MATERIAL_TYPES), ...(readsImages() ? IMAGE_TYPES : [])] },
         materials: materials.map(materialDTO),
         pack: inUse ? packDTO(inUse, concepts, ids) : null,
         building: building ? packDTO(building, null, ids) : null,
@@ -255,15 +286,26 @@ export function packService(d: PackDeps) {
 
     /** Reads a file (or pasted notes, sent as text/plain) and keeps only its text. */
     async addMaterial(db: PrismaClient, userId: string, topicId: string, name: string, mimeType: string, body: Buffer) {
-      await topicOf(db, topicId);
-      if (!MATERIAL_TYPES[mimeType]) throw new HttpError(415, "FILE_UNSUPPORTED", "Add a PDF, Word (.docx), Markdown, HTML or text file.");
+      const topic = await topicOf(db, topicId);
+      const image = (IMAGE_TYPES as readonly string[]).includes(mimeType);
+      if (!MATERIAL_TYPES[mimeType] && !(image && readsImages()))
+        throw new HttpError(415, "FILE_UNSUPPORTED", `Add a PDF, Word (.docx), Markdown, HTML or text file${readsImages() ? ", or a photo (PNG, JPEG, WebP)" : ""}.`);
       if (body.length === 0) throw new HttpError(400, "FILE_EMPTY", "The file is empty.");
       if (body.length > MATERIAL.maxBytes) throw new HttpError(413, "FILE_TOO_LARGE", "Files can be at most 5 MB.");
       if ((await db.revisionMaterial.count({ where: { topicId } })) >= MATERIAL.maxFiles)
         throw new HttpError(409, "TOO_MANY_FILES", `A topic can have at most ${MATERIAL.maxFiles} files or notes. Remove one first.`);
+      if (image) {
+        // Read before counting the upload: no consent or AI means nothing was sent and nothing is stored.
+        await requireAi(userId);
+        if (imageType(body) !== mimeType) throw new HttpError(415, "FILE_UNREADABLE", "This image couldn't be read. Save it again as PNG or JPEG.");
+      }
       d.limiter.take(`material:${userId}`, PACK_RATE.uploadsPerHour, HOUR);
       let extracted: { text: string; pages: number | null };
-      try {
+      if (image) {
+        const text = await readImage(topic.name, name, mimeType, body);
+        if (!text) throw new HttpError(422, "FILE_NO_TEXT", "No study notes could be read in this image. Try a sharper photo in good light, or paste the text.");
+        extracted = { text, pages: null };
+      } else try {
         extracted = await extractMaterial(body, mimeType);
       } catch (e) {
         if (e instanceof AttachmentError) {

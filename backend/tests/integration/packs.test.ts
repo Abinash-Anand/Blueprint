@@ -34,6 +34,8 @@ suite("revision packs", () => {
   const B: Record<string, string> = {};
   const T = "fe.ts";
 
+  /** A real 1×1 PNG. */
+  const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
   const upload = (name: string, type: string, body: Buffer | string, headers = H, topic = T) =>
     asUser(app, headers).post(`/api/topics/${topic}/revision/material?name=${encodeURIComponent(name)}`).set("Content-Type", type).send(Buffer.isBuffer(body) ? body : Buffer.from(body));
   async function ready(topic = T, headers = H) {
@@ -66,7 +68,7 @@ suite("revision packs", () => {
     const o = (await asUser(app, H).get(`/api/topics/${T}/revision/pack`).expect(200)).body;
     expect(o).toMatchObject({ topicId: T, materials: [], pack: null, building: null, failed: null, ai: { available: false, reason: "CONSENT_REQUIRED" } });
     expect(o.limits.types).toEqual(expect.arrayContaining(["application/pdf", "text/markdown", "text/html", DOCX]));
-    expect((await asUser(app, H).get("/api/legal/versions").expect(200)).body.AI_PROCESSING).toBe("2026-11-20");
+    expect((await asUser(app, H).get("/api/legal/versions").expect(200)).body.AI_PROCESSING).toBe("2026-11-20.2");
   });
 
   it("keeps only the text of pasted notes, Word and HTML files, and refuses what it cannot read", async () => {
@@ -80,7 +82,9 @@ suite("revision packs", () => {
     expect(row).toMatchObject({ cityId: "engineering", topicId: T });
     expect(row.text).not.toContain("script");
 
-    expect((await upload("x.png", "image/png", "abc").expect(415)).body.error.code).toBe("FILE_UNSUPPORTED");
+    // A photo is read by the AI, so without consent nothing is sent and nothing is stored.
+    expect((await upload("x.png", "image/png", PNG).expect(403)).body.error.code).toBe("AI_CONSENT_REQUIRED");
+    expect((await upload("x.gif", "image/gif", "GIF89a").expect(415)).body.error.code).toBe("FILE_UNSUPPORTED");
     expect((await upload("bad.docx", DOCX, "this is not a word document at all").expect(415)).body.error.code).toBe("FILE_UNREADABLE");
     expect((await upload("tiny.txt", "text/plain", "too short").expect(422)).body.error.code).toBe("FILE_NO_TEXT");
     await upload("empty.txt", "text/plain", "").expect(400);
@@ -201,5 +205,20 @@ suite("revision packs", () => {
     expect(o).toMatchObject({ pack: null, failed: null });
     expect(o.materials.length).toBeGreaterThan(0);
     expect(await prisma.revisionItem.count({ where: { concept: { pack: { topicId: T } } } })).toBe(0);
+  });
+
+  it("reads a photo of notes into text with the AI once, and keeps only the text (phase 4)", async () => {
+    const o = (await asUser(app, H).get("/api/topics/fe.react/revision/pack").expect(200)).body;
+    expect(o.limits.types).toEqual(expect.arrayContaining(["image/png", "image/jpeg", "image/webp"]));
+    const calls = await prisma.aiUsage.count({ where: { operation: "REVISION_PACK" } });
+    const photo = (await upload("notes.png", "image/png", PNG, H, "fe.react").expect(201)).body;
+    expect(photo).toMatchObject({ name: "notes.png", mimeType: "image/png", hasText: true, pages: null });
+    const row = await prisma.revisionMaterial.findUniqueOrThrow({ where: { id: photo.id } });
+    expect(row.text).toBe(`# Notes from a photo\nAn image of ${PNG.length} bytes (image/png).\n- Generics let one function work for many types.\n- extends limits what a type parameter accepts.`);
+    expect(JSON.stringify(row)).not.toContain(PNG.toString("base64").slice(0, 20)); // the image itself is not stored
+    expect(await prisma.aiUsage.count({ where: { operation: "REVISION_PACK" } })).toBe(calls + 1);
+    // The declared type must match the bytes.
+    expect((await upload("fake.png", "image/png", "not an image at all", H, "fe.react").expect(415)).body.error.code).toBe("FILE_UNREADABLE");
+    expect((await upload("png-as.webp", "image/webp", PNG, H, "fe.react").expect(415)).body.error.code).toBe("FILE_UNREADABLE");
   });
 });

@@ -66,8 +66,12 @@ export function gwdgProvider(o: GwdgOptions): TranscriptionProvider & Evaluation
    * Schema-constrained JSON. Strongest form first; servers that reject a parameter (400) get the next, simpler form,
    * the last one putting the schema into the prompt. Every form is validated the same way afterwards.
    */
-  async function structured(i: EvaluateInput, name: string, maxTokens: number, temperature: number) {
-    const messages = [{ role: "system", content: i.system }, { role: "user", content: i.user }];
+  async function structured(i: EvaluateInput & { images?: GenerateInput["images"] }, name: string, maxTokens: number, temperature: number) {
+    // Images go with the user message as data URIs (OpenAI-compatible vision input); they are not stored by GWDG.
+    const user = i.images?.length
+      ? [{ type: "text", text: i.user }, ...i.images.map((x) => ({ type: "image_url", image_url: { url: `data:${x.mimeType};base64,${x.data.toString("base64")}` } }))]
+      : i.user;
+    const messages = [{ role: "system", content: i.system }, { role: "user", content: user }];
     const base: Record<string, unknown> = { model: i.model, messages, temperature, max_tokens: maxTokens };
     const noThink = o.disableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {};
     const format = { type: "json_schema", json_schema: { name, strict: true, schema: i.jsonSchema } };
@@ -98,6 +102,8 @@ export function gwdgProvider(o: GwdgOptions): TranscriptionProvider & Evaluation
 
   return {
     name: "gwdg",
+    /** Qwen 3.5 397B and Mistral Large 4 (main and fallback) both read images. */
+    images: true,
 
     evaluate: (i: EvaluateInput) => structured(i, "evaluation", 4096, 0),
 

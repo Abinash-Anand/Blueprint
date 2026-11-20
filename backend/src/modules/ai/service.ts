@@ -161,7 +161,8 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
   }
 
   /** A WAV recording to text, with the given terms as spelling hints; the audio is never stored (I-5). */
-  async function transcribeTerms(audio: Buffer, contentType: string | undefined, termsOf: () => Promise<string[]>) {
+  /** `termsOf` gives the words to expect, and optionally the language spoken (a German pack's answers are German). */
+  async function transcribeTerms(audio: Buffer, contentType: string | undefined, termsOf: () => Promise<string[] | { terms: string[]; language: string }>) {
     await requireReady();
     if (!/^audio\/(wav|x-wav|wave)\b/i.test(contentType ?? "")) throw new HttpError(415, "AUDIO_UNSUPPORTED", "Send the recording as 16-bit PCM WAV.");
     if (audio.length > config.maxAudioBytes) throw new HttpError(413, "AUDIO_TOO_LARGE", "The recording is too large.");
@@ -174,12 +175,14 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
     }
     if (seconds < 0.5) throw new HttpError(400, "AUDIO_TOO_SHORT", "The recording is too short. Hold the button while you speak.");
     if (seconds > config.maxRecordingSeconds + 1) throw new HttpError(413, "AUDIO_TOO_LARGE", `Recordings can be at most ${config.maxRecordingSeconds} seconds.`);
-    const terms = await termsOf();
+    const got = await termsOf();
+    const terms = Array.isArray(got) ? got : got.terms;
+    const language = (Array.isArray(got) ? null : got.language) || config.language;
     await usage.check("TRANSCRIBE", providers.transcription.name);
     const p = providers.transcription;
     try {
       const r = await withFallback("TRANSCRIBE", p.name, config.transcriptionModel, config.transcriptionFallbackModel, (model, signal) =>
-        p.transcribe({ audio, mimeType: "audio/wav", audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(config.language, terms), language: config.language, vocabulary: terms, model, signal }),
+        p.transcribe({ audio, mimeType: "audio/wav", audioSeconds: Math.round(seconds), instruction: transcriptionInstruction(language, terms), language, vocabulary: terms, model, signal }),
       );
       return { text: r.text.slice(0, 5000), audioSeconds: Math.round(seconds * 10) / 10 };
     } catch (e) {

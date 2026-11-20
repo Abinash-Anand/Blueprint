@@ -83,6 +83,9 @@ function fakeGenerate(i: GenerateInput): { output: unknown; usage: { inputTokens
   const stage = tag(i.user, "stage");
   if (stage === "pack-concepts") return { usage, output: fakeConcepts(i.user) };
   if (stage === "pack-items") return { usage, output: fakeItems(i.user) };
+  // Reading a material image: the fake cannot see it, so it describes what it was given.
+  if (stage === "image-text")
+    return { usage, output: i.images?.length ? { readable: true, lines: ["# Notes from a photo", `An image of ${i.images[0].data.length} bytes (${i.images[0].mimeType}).`, "- Generics let one function work for many types.", "- extends limits what a type parameter accepts."] } : { readable: false, lines: [] } };
   if (tag(i.user, "stage") === "outline") {
     let a: { goal?: string; subjects?: string[] } = {};
     try {
@@ -147,6 +150,7 @@ function fakeUnderstand(i: EvaluateInput) {
 export function fakeProvider(transcript = process.env.AI_FAKE_TRANSCRIPT || undefined): TranscriptionProvider & EvaluationProvider & GenerationProvider {
   return {
     name: "fake",
+    images: true,
     async generate(i: GenerateInput) {
       if (i.signal.aborted) throw new ProviderError("TIMEOUT", "aborted");
       return fakeGenerate(i);

@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Task } from "../api/types";
 import { KIND_LABEL, dayMonth, hm, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { RecallDialog } from "./RecallDialog";
+import { PackDialog } from "./revision/PackDialog";
 import { StatusBadge, StatusIndicator } from "./Status";
 
 interface Props {
@@ -16,7 +16,7 @@ interface Props {
 type Mode = null | "log" | "edit" | "move";
 
 export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
-  const { mutate, toggleSubtopic } = useAppData();
+  const { mutate, toggleSubtopic, reload } = useAppData();
   const [mode, setMode] = useState<Mode>(null);
   const [minutes, setMinutes] = useState(0);
   const [date, setDate] = useState(t.scheduledDate);
@@ -157,8 +157,9 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
         </div>
         <div className="est">{hm(t.estimatedMinutes)}</div>
       </div>
+      {/* Revision v2: a topic is revised from its pack; the first time, it asks what you studied. */}
       {recall && rv && t.topic && (
-        <RecallDialog items={[{ topicId: t.topic.id, scope: rv.scope, subtopicId: t.subtopic?.id ?? null, mode: "revision" }]} onClose={() => setRecall(false)} />
+        <PackDialog topicId={t.topic.id} topicName={t.topic.name} onClose={() => { setRecall(false); void reload(); }} />
       )}
     </li>
   );

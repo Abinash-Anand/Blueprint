@@ -130,6 +130,21 @@ describe("revision pack", () => {
     expect(materialType({ name: "notes.docx", type: "" }, types)).toBe(DOCX);
     expect(materialType({ name: "page.HTM", type: "" }, types)).toBe("text/html");
     expect(materialType({ name: "a.md", type: "" }, types)).toBe("text/markdown");
-    expect(materialType({ name: "photo.png", type: "image/png" }, types)).toBeNull();
+    expect(materialType({ name: "photo.png", type: "image/png" }, types)).toBeNull(); // the server reads no images here
+    // Where the server's AI reads images, photos are accepted, also by extension.
+    const withImages = [...types, "image/png", "image/jpeg", "image/webp"];
+    expect(materialType({ name: "photo.PNG", type: "" }, withImages)).toBe("image/png");
+    expect(materialType({ name: "board.jpg", type: "" }, withImages)).toBe("image/jpeg");
+    expect(materialType({ name: "anim.gif", type: "image/gif" }, withImages)).toBeNull();
+  });
+
+  it("offers photos when the server reads images, says the AI reads them, and shows what was read", async () => {
+    overview = { ...base(), limits: { ...base().limits, types: [...base().limits.types, "image/png", "image/jpeg", "image/webp"] },
+      materials: [{ id: 9, name: "board.jpg", mimeType: "image/jpeg", size: 2000, pages: null, chars: 300, hasText: true, preview: "# Subjects\n- next() pushes a value", createdAt: "2026-11-20T10:00:00Z" }] };
+    render(<PackDialog topicId="fe.rxjs" topicName="RxJS" onClose={() => {}} />);
+    expect(await screen.findByText(/or photos of your notes/)).toBeTruthy();
+    expect(screen.getByText(/A photo or screenshot is read by the AI/)).toBeTruthy();
+    expect(screen.getByText(/read from a photo by the AI/)).toBeTruthy();
+    expect(screen.getByText("What was read")).toBeTruthy();
   });
 });

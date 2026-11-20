@@ -6,7 +6,7 @@
  */
 import type { AiOperation } from "@prisma/client";
 import type { AiConfig } from "./config.js";
-import { ProviderError, asProviderError, isProviderOutage, type GenerationProvider } from "./providers/types.js";
+import { type GenerateInput, ProviderError, asProviderError, isProviderOutage, type GenerationProvider } from "./providers/types.js";
 import type { UsageService } from "./usage.js";
 
 export interface JobCallerInput {
@@ -24,10 +24,10 @@ export function jobCaller({ config, provider, usage, notice, op }: JobCallerInpu
   const used = new Set<string>();
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  const once = async (m: string, stage: { name: string; label: string }, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number) => {
+  const once = async (m: string, stage: { name: string; label: string }, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number, images?: GenerateInput["images"]) => {
     const t0 = performance.now();
     try {
-      const r = await provider.generate({ ...prompt, jsonSchema, model: m, name: stage.name, maxTokens, signal: AbortSignal.timeout(config.generationTimeoutMs) });
+      const r = await provider.generate({ ...prompt, jsonSchema, model: m, name: stage.name, maxTokens, images, signal: AbortSignal.timeout(config.generationTimeoutMs) });
       await usage.record(op, provider.name, m, r.usage, performance.now() - t0, "OK");
       return r.output;
     } catch (err) {
@@ -38,11 +38,11 @@ export function jobCaller({ config, provider, usage, notice, op }: JobCallerInpu
     }
   };
 
-  async function call(stage: { name: string; label: string }, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number) {
+  async function call(stage: { name: string; label: string }, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number, images?: GenerateInput["images"]) {
     for (let attempt = 0; ; attempt++) {
       const m = model;
       try {
-        const out = await once(m, stage, prompt, jsonSchema, maxTokens);
+        const out = await once(m, stage, prompt, jsonSchema, maxTokens, images);
         used.add(m);
         return out;
       } catch (e) {

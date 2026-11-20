@@ -112,7 +112,7 @@ export function TopicPanel({ ref, building, route, today, onOpenTopic, onClose }
           <p style={{ fontSize: 12.5 }}>Finishing the sub-topics is learning. Doing this exercise on your own is the demonstration.</p>
         </div>
 
-        <RevisionBox topicId={t.id} />
+        <RevisionBox topicId={t.id} topicName={t.name} />
         <PackEntry topicId={t.id} topicName={t.name} />
 
         {t.dependsOn.length > 0 && (

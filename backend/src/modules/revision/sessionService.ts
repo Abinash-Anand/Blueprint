@@ -8,7 +8,8 @@
  * - Questions reach the client without their answers; expected points, model answer, hints and option explanations are
  *   sent only after the learner has answered (or asked for a hint).
  * - Nothing here changes learning, demonstration or the plan. A topic's sub-topic schedules stop creating revision tasks
- *   once the topic has its first v2 review (RevisionTrack.startedAt); their history stays.
+ *   once the topic's pack is ready (RevisionTrack.startedAt, set by the pack service; older tracks at their first v2
+ *   review); their history stays.
  */
 import type { Prisma, PrismaClient, RevisionItem, RevisionResponse, RevisionTrack } from "@prisma/client";
 import { d2i, i2d } from "../../db.js";
@@ -18,8 +19,8 @@ import { HttpError, notFound } from "../../lib/http.js";
 import type { AiService } from "../ai/service.js";
 import { maxLevel } from "./pack.js";
 import {
-  CYCLES, MAINTENANCE_DAYS, type PlanConcept, type QueueEntry, RESULT, RESULT_LABEL, advanceTrack, firstDue, itemMinutes, pickItem, planSession, planTopic,
-  rollUp, storyLine, suggestResult,
+  CYCLES, type ConceptEvidence, GAP_AFTER, MAINTENANCE_DAYS, type PlanConcept, type QueueEntry, RESULT, RESULT_LABEL, adaptiveGap, advanceTrack, firstDue, itemMinutes,
+  pickItem, planSession, planTopic, rollUp, storyLine, suggestResult,
 } from "./cycles.js";
 import { revisionPolicy } from "./service.js";
 
@@ -122,8 +123,10 @@ export function sessionService(db: PrismaClient, clock: Clock, ai: AiService, ai
 
   /* ---------------- questions and feedback ---------------- */
 
-  const questionDTO = (e: QueueEntry, index: number, item: RevisionItem | null, topicName: string, conceptTitle: string) => ({
+  const questionDTO = (e: QueueEntry, index: number, item: RevisionItem | null, topicName: string, conceptTitle: string, language: string) => ({
     index, topicId: e.topicId, topicName, conceptId: e.conceptId, conceptTitle, cycle: e.cycle, relearn: e.relearn, minutes: e.minutes,
+    /** The pack's language ("en" or "de"): read-aloud and conversation mode use a matching voice. */
+    language,
     itemId: e.itemId, level: item?.level ?? null, kind: item?.kind ?? null, format: item?.format ?? null,
     situation: item?.situation ?? "", code: item?.code ?? null, question: item?.question ?? "This question was removed from the pack.",
     answerSize: item?.answerSize ?? "", options: item ? optionsOf(item.options).map((o) => o.text) : [],
@@ -161,11 +164,12 @@ export function sessionService(db: PrismaClient, clock: Clock, ai: AiService, ai
       db.revisionResponse.findMany({ where: { sessionId: s.id }, orderBy: { position: "asc" } }),
       db.revisionItem.findMany({ where: { id: { in: queue.map((q) => q.itemId) } } }),
       db.topic.findMany({ where: { id: { in: [...new Set(queue.map((q) => q.topicId))] } }, select: { id: true, name: true } }),
-      db.revisionConcept.findMany({ where: { id: { in: [...new Set(queue.map((q) => q.conceptId))] } }, select: { id: true, title: true } }),
+      db.revisionConcept.findMany({ where: { id: { in: [...new Set(queue.map((q) => q.conceptId))] } }, select: { id: true, title: true, pack: { select: { language: true } } } }),
     ]);
     const byPos = new Map(responses.map((r) => [r.position, r]));
     const name = new Map(topics.map((t) => [t.id, t.name]));
     const title = new Map(concepts.map((c) => [c.id, c.title]));
+    const language = new Map(concepts.map((c) => [c.id, c.pack.language]));
     const item = new Map(items.map((i) => [i.id, i]));
     const entries = queue.map((e, index) => {
       const r = byPos.get(index);
@@ -182,7 +186,7 @@ export function sessionService(db: PrismaClient, clock: Clock, ai: AiService, ai
       id: s.id, kind: s.kind, status: s.status, date: d2i(s.date), budgetMinutes: s.budgetMinutes, plannedMinutes: s.plannedMinutes,
       topics: topicsIn.map((t) => ({ topicId: t, name: name.get(t) ?? "", questions: queue.filter((q) => q.topicId === t).length, done: entries.filter((x) => x.topicId === t && x.state === "DONE").length })),
       entries,
-      current: e ? { question: questionDTO(e, at, item.get(e.itemId) ?? null, name.get(e.topicId) ?? "", title.get(e.conceptId) ?? ""), feedback: r ? await feedbackDTO(r) : null } : null,
+      current: e ? { question: questionDTO(e, at, item.get(e.itemId) ?? null, name.get(e.topicId) ?? "", title.get(e.conceptId) ?? "", language.get(e.conceptId) ?? "en"), feedback: r ? await feedbackDTO(r) : null } : null,
     };
   }
 
@@ -203,11 +207,29 @@ export function sessionService(db: PrismaClient, clock: Clock, ai: AiService, ai
     }
   }
 
+  /** Every review of these concepts, oldest first, with the hints used and how sure the learner was (adaptive intervals). */
+  async function evidenceOf(topicId: string, concepts: { id: number; title: string }[]) {
+    const ids = concepts.map((c) => c.id);
+    const rows = await db.conceptResult.findMany({ where: { topicId, conceptId: { in: ids } }, orderBy: [{ date: "asc" }, { id: "asc" }] });
+    const answers = await db.revisionResponse.findMany({
+      where: { topicId, conceptId: { in: ids }, sessionId: { in: [...new Set(rows.map((r) => r.sessionId))] } },
+      select: { sessionId: true, conceptId: true, hintsUsed: true, confidence: true },
+    });
+    return concepts.map((c) => ({
+      title: c.title,
+      history: rows.filter((r) => r.conceptId === c.id).map((r): ConceptEvidence => {
+        const mine = answers.filter((a) => a.sessionId === r.sessionId && a.conceptId === c.id);
+        const sure = mine.map((a) => a.confidence).filter((x): x is number => x !== null);
+        return { result: r.result, firstResult: r.firstResult, hints: mine.reduce((a, x) => a + x.hintsUsed, 0), confidence: sure.length ? Math.max(...sure) : null };
+      }),
+    }));
+  }
+
   async function finishSession(id: number) {
     const s = await db.revisionSession.findUniqueOrThrow({ where: { id } });
     const t = today();
     const responses = await db.revisionResponse.findMany({ where: { sessionId: s.id, final: { not: null } } });
-    const cards: { topicId: string; name: string; cycle: number; cycleDone: boolean; retained: boolean; nextDueDate: string | null; weakOnly: boolean; results: { conceptId: number | null; title: string; result: number; label: string; relearned: boolean }[]; firstNext: string | null }[] = [];
+    const cards: { topicId: string; name: string; cycle: number; cycleDone: boolean; retained: boolean; nextDueDate: string | null; weakOnly: boolean; results: { conceptId: number | null; title: string; result: number; label: string; relearned: boolean }[]; firstNext: string | null; interval: { days: number; fixed: number; reason: string | null } | null }[] = [];
     if (s.kind !== "PRACTICE") {
       const topicIds = [...new Set(responses.map((r) => r.topicId))];
       for (const topicId of topicIds) {
@@ -230,13 +252,16 @@ export function sessionService(db: PrismaClient, clock: Clock, ai: AiService, ai
           cards.push({
             topicId, name: track.topic.name, cycle: CYCLES, cycleDone: false, retained: true, nextDueDate: due, weakOnly: false,
             results: [...rolled].map(([conceptId, v]) => ({ conceptId, title: title.get(conceptId) ?? "", result: v.result, label: RESULT_LABEL[v.result], relearned: v.result > v.firstResult })),
-            firstNext: null,
+            firstNext: null, interval: null,
           });
           continue;
         }
+        // The gap before the next cycle adapts to the concepts' own record (plan §11, phase 4).
+        const adapted = k < CYCLES ? adaptiveGap(GAP_AFTER[k], await evidenceOf(topicId, live.map((c) => ({ id: c.id, title: inputs?.titles.get(c.id) ?? "" })))) : null;
         const next = advanceTrack(
           { cycle: track.cycle, state: track.state, nextDueDate: track.nextDueDate ? d2i(track.nextDueDate) : null, weakOnly: track.weakOnly },
           live.map((c) => c.current), t, track.nextDueDate ? d2i(track.nextDueDate) : null,
+          adapted ? () => adapted.days : undefined,
         );
         await db.revisionTrack.update({
           where: { id: track.id },
@@ -248,6 +273,7 @@ export function sessionService(db: PrismaClient, clock: Clock, ai: AiService, ai
           nextDueDate: next.nextDueDate, weakOnly: next.weakOnly,
           results: [...rolled].map(([conceptId, v]) => ({ conceptId, title: title.get(conceptId) ?? "", result: v.result, label: RESULT_LABEL[v.result], relearned: v.result > v.firstResult })),
           firstNext: weakest && weakest.current! <= RESULT.RECALLED ? (inputs?.titles.get(weakest.id) ?? null) : null,
+          interval: next.cycle > track.cycle && adapted && adapted.days !== adapted.fixed ? adapted : null,
         });
       }
     }
@@ -475,10 +501,11 @@ export function sessionService(db: PrismaClient, clock: Clock, ai: AiService, ai
       if (!e) throw notFound("Question");
       const [item, concept, topic] = await Promise.all([
         db.revisionItem.findUnique({ where: { id: e.itemId }, select: { question: true, expected: true } }),
-        db.revisionConcept.findUnique({ where: { id: e.conceptId }, select: { title: true, keyPoints: true } }),
+        db.revisionConcept.findUnique({ where: { id: e.conceptId }, select: { title: true, keyPoints: true, pack: { select: { language: true } } } }),
         db.topic.findUnique({ where: { id: e.topicId }, select: { name: true } }),
       ]);
-      return [topic?.name ?? "", concept?.title ?? "", ...strings(concept?.keyPoints), item?.question ?? "", ...strings(item?.expected)].filter(Boolean);
+      const terms = [topic?.name ?? "", concept?.title ?? "", ...strings(concept?.keyPoints), item?.question ?? "", ...strings(item?.expected)].filter(Boolean);
+      return { terms, language: concept?.pack.language ?? "en" };
     },
 
     /** Concepts × cycles with every answer behind each cell, and one line per concept (plan §3.6). */
