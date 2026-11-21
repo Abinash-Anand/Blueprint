@@ -149,7 +149,7 @@ suite("recall", () => {
     r = (await asUser(app, H).delete(`/api/recall/reviews/${reviewId}/parts/1`).expect(200)).body;
     expect(r.spokenParts).toHaveLength(1);
     await asUser(app, H).post(`/api/recall/reviews/${reviewId}/parts`).set("Content-Type", "text/plain").send("not audio").expect(415);
-    r = (await asUser(app, H).patch(`/api/recall/reviews/${reviewId}`).send({ typed: "The mechanism is the core. Wrong: it runs on a web worker." }).expect(200)).body;
+    r = (await asUser(app, H).patch(`/api/recall/reviews/${reviewId}`).send({ typed: "The mechanism is the core. Wrong: it runs on a web worker. Wrong: this one is actually true." }).expect(200)).body;
     expect(r.typed).toMatch(/mechanism/);
     expect(JSON.stringify(await prisma.recallReview.findUniqueOrThrow({ where: { id: reviewId } }))).not.toMatch(/RIFF|WAVE/);
   });
@@ -178,7 +178,8 @@ suite("recall", () => {
     const progress = (await asUser(app, H).get("/api/progress").expect(200)).body;
     expect(progress.recall).toMatchObject({ reviews: 1, depth: { FOUNDATIONAL: 1 }, outcomes: { LAPSE: 1 } });
     const used = await prisma.aiUsage.findMany({ where: { operation: "RECALL" }, select: { model: true, outcome: true } });
-    expect(used.length).toBe(2); // checklist + grade
+    // checklist + grade + the check of the two flagged misconceptions, which drops the one that is true
+    expect(used.length).toBe(3);
   });
 
   it("works the result out again when a point is left out, while the results are open", async () => {
