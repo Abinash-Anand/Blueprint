@@ -833,3 +833,60 @@ div.rp-slot{display:block;margin:6px 0 0}
 .pg-score b{font-size:16px;font-variant-numeric:tabular-nums}
 .pg-link{border:0;background:none;padding:0;color:var(--accent);cursor:pointer;font:inherit;font-size:12.5px;text-decoration:underline;text-underline-offset:2px;text-decoration-color:#a9b9c0}
 @media (max-width:640px){.pg-coach li{flex-direction:column}.pg-score{flex-direction:row;align-items:baseline;gap:8px}}
+
+/* =====================================================================
+   Responsive pass (21 Nov 2026): measured on every screen from 320 to 1440 px
+   ===================================================================== */
+/* The top bar: when it is narrow (a phone, or a laptop with the districts open) the view tabs get a row of their own,
+   so every view stays in sight instead of scrolling away inside the pill. */
+.main{container:main / inline-size}
+.vbar{flex-wrap:wrap;row-gap:8px}
+@container main (max-width:900px){.vdate{display:none}}
+@container main (max-width:640px){
+  .vbar .tabs{order:3;flex:1 1 100%}
+  .vbar .tabs button{flex:1 1 auto;padding:6px 8px}
+}
+@container main (max-width:360px){.vbar .tabs button{padding:6px 4px;font-size:12.5px}}
+@container main (max-width:900px){.vdate+.topctl{margin-left:auto}}
+
+/* Small type: nothing under 11 px. */
+.tag,.task .meta .tag.kind{font-size:11px}
+
+/* Touch: tap targets of at least 24 px on phones and tablets (WCAG 2.2, 2.5.8), without changing the layout. */
+@media (max-width:820px){
+  .task input[type=checkbox]{width:24px;height:24px;margin-top:-2px}
+  .task .meta .link{padding:4px 0;margin:-4px 0}
+  .task .subchk{min-height:24px}
+  .task .subchk input{width:18px;height:18px}
+  .af-check{min-height:24px}
+  .af-check input{width:18px;height:18px;margin-top:1px;flex:none}
+  .af-check a{display:inline-block;padding:3px 0;margin:-3px 0}
+}
+
+/* Account, privacy choices: the date line wraps so the Allow / Withdraw button stays on screen. */
+.acc-consents li>span{min-width:0}
+.acc-consents .m{white-space:normal}
+.acc-consents .btn{flex:none}
+
+/* Long words (code names, links) wrap instead of pushing a box wider than the screen. */
+body{overflow-wrap:break-word}
+
+/* Progress, districts: when the main column is narrow (a phone, or a laptop with the districts open) each district becomes a small labelled card instead of a five-column table
+   (the roles keep it a table for screen readers). */
+.dtable{position:relative}
+@container main (max-width:620px){
+  .dtable,.dtable tbody{display:block}
+  .dtable thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .dtable tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;padding:12px 0;border-top:1px solid var(--soft)}
+  .dtable tbody tr:first-child{border-top:0;padding-top:0}
+  .dtable td{display:block;border:0;padding:0;min-width:0}
+  .dtable td:first-child{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .dtable td[data-label]::before{content:attr(data-label);display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+  .dtable td.st{align-self:end;justify-self:start}
+}
+
+/* Recall coaching (Progress) and the recall-over-time sheet: rows shrink with the screen, and long lists of
+   points wrap inside their pill. */
+.pg-coach li>div,.pg-coach li>span:first-child{min-width:0;align-self:stretch}
+.pg-note,.g-note,.rc-note{overflow-wrap:anywhere}
+.g-pills .g-sb{white-space:normal;max-width:100%}

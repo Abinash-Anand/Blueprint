@@ -49,38 +49,38 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
         <div className="section">
           <h3>Districts · learned vs demonstrated</h3>
           <div className="card" style={{ overflowX: "auto" }}>
-            <table className="dtable">
-              <thead>
-                <tr>
-                  <th>District</th>
-                  <th>Floors learned</th>
-                  <th>Core demonstrated</th>
-                  <th>Hours</th>
-                  <th />
+            <table className="dtable" role="table">
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th role="columnheader">District</th>
+                  <th role="columnheader">Floors learned</th>
+                  <th role="columnheader">Core demonstrated</th>
+                  <th role="columnheader">Hours</th>
+                  <th role="columnheader"><span className="sr">Status</span></th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {p.districts.map((d, i) => {
                   const dist = districtById.get(d.id)!;
                   const c = mix(dist.color, INK, 0.15);
                   return (
-                    <tr key={d.id}>
-                      <td>
+                    <tr key={d.id} role="row">
+                      <td role="cell">
                         <button className="btn" style={{ padding: "3px 9px", fontSize: 13 }} onClick={() => onOpenDistrict(i)}>
                           <span className="swatch" style={{ background: dist.color }} />
                           {dist.name}
                         </button>
                       </td>
-                      <td>
+                      <td role="cell" data-label="Floors learned">
                         <div className="mini"><i style={{ width: `${d.subtopicsTotal ? (d.subtopicsLearned / d.subtopicsTotal) * 100 : 0}%`, background: c }} /></div>
                         <span className="pr" style={{ fontSize: 12, color: "var(--muted)" }}>{d.subtopicsLearned}/{d.subtopicsTotal} · {d.topicsLearned}/{d.topicsTotal} topics</span>
                       </td>
-                      <td>
+                      <td role="cell" data-label="Core demonstrated">
                         <div className="mini"><i style={{ width: `${d.coreTotal ? (d.coreDemonstrated / d.coreTotal) * 100 : 0}%` }} /></div>
                         <span style={{ fontSize: 12, color: "var(--muted)" }}>{d.coreDemonstrated}/{d.coreTotal}</span>
                       </td>
-                      <td className="n">{hours1(d.actualMinutes)} <span style={{ color: "var(--muted)" }}>/ {hours1(d.plannedMinutes)}</span></td>
-                      <td className="n"><StatusBadge p={d.presentation} fallback={d.passed ? "Passed" : i === p.road.currentDistrictIndex ? "Current" : undefined} /></td>
+                      <td role="cell" data-label="Hours" className="n">{hours1(d.actualMinutes)} <span style={{ color: "var(--muted)" }}>/ {hours1(d.plannedMinutes)}</span></td>
+                      <td role="cell" className="n st"><StatusBadge p={d.presentation} fallback={d.passed ? "Passed" : i === p.road.currentDistrictIndex ? "Current" : undefined} /></td>
                     </tr>
                   );
                 })}
