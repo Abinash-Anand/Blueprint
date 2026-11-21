@@ -23,8 +23,14 @@ import { dummyVerify, hashPassword, newToken, normaliseEmail, tokenHash, verifyP
  * AI_PROCESSING 2026-11-20: revision also sends the text of the material the learner adds for a topic, to build that
  * topic's revision pack (Revision v2 plan §9), so consent given under the earlier notice is asked again.
  */
-/** AI_PROCESSING 2026-11-20.2 and the privacy notice of 2026-11-20 add photos of notes as revision material (read once by the AI, not kept). */
-export const POLICY_VERSIONS = { TERMS: "2026-11-18", PRIVACY_NOTICE: "2026-11-20", AI_PROCESSING: "2026-11-20.2", AI_CURRICULUM: "2026-11-19.2" } as const;
+/** AI_PROCESSING 2026-11-20.2 and the privacy notice of 2026-11-20 added photos of notes as revision material (read once by the AI, not kept). */
+/**
+ * AI_PROCESSING 2026-11-20.3 and the privacy notice of 2026-11-20.2: revision is now active recall (docs/Recall-Plan.md):
+ * the learner's recording (transcribed, never stored), what they said or typed, and the sub-topic's names are sent to
+ * check it against the sub-topic's checklist; no material or photos any more.
+ */
+/** AI_PROCESSING and the privacy notice of 2026-11-21: recall also sends photos of sketches (described once, never kept) and a follow-up answer. */
+export const POLICY_VERSIONS = { TERMS: "2026-11-18", PRIVACY_NOTICE: "2026-11-21", AI_PROCESSING: "2026-11-21", AI_CURRICULUM: "2026-11-19.2" } as const;
 export type ConsentPurpose = keyof typeof POLICY_VERSIONS;
 /** Optional purposes can be granted and withdrawn at any time; the others are required to have an account. */
 export const OPTIONAL_PURPOSES: ConsentPurpose[] = ["AI_PROCESSING", "AI_CURRICULUM"];
@@ -243,6 +249,7 @@ export function authService(prisma: PrismaClient, cfg: AuthConfig, mailer: Maile
           include: {
             settings: true, weeklyTargets: true, versions: true, stages: true, attachments: true, revisionReports: true, revisionMaterials: true, revisionTracks: true, revisionSessions: true, revisionResponses: true, conceptResults: true,
             revisionPacks: { include: { concepts: { include: { items: true } } } },
+            recallChecklists: { include: { points: true } }, recallStates: true, recallReviews: { include: { results: true } }, recallAnalyses: true,
             districts: { include: { topics: { include: { subtopics: true } } } },
             tasks: true, sessions: true, prompts: { where: { source: "LEARNER" } }, schedules: true, attempts: true, checkpoints: true, evaluations: true,
           },

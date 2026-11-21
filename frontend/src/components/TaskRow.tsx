@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Task } from "../api/types";
 import { KIND_LABEL, dayMonth, hm, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { PackDialog } from "./revision/PackDialog";
+import { RecallPage } from "./recall/RecallPage";
 import { StatusBadge, StatusIndicator } from "./Status";
 
 interface Props {
@@ -23,7 +23,6 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
   const [title, setTitle] = useState(t.title);
   const [est, setEst] = useState(t.estimatedMinutes);
   const [notes, setNotes] = useState(t.notes);
-  const [recall, setRecall] = useState(false);
 
   const open = (m: Mode) => {
     setMode(m === mode ? null : m);
@@ -41,7 +40,9 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
   const done = t.status === "DONE";
   const skipped = t.status === "SKIPPED";
   const label = `${t.title}${t.topic ? ` (${t.topic.name})` : ""}`;
-  const rv = t.revision;
+  // Earlier revision tasks and recall tasks (docs/Recall-Plan.md) look alike: done by their recall, never by a tick.
+  const rv = t.revision ?? t.recall ?? null;
+  const [recallOpen, setRecallOpen] = useState(false);
   // The default "to do" state needs no badge; every other task state is shown as the backend presents it.
   const taskState = t.presentation && t.presentation.state !== "task.todo" ? t.presentation : null;
 
@@ -49,8 +50,8 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
     <li className={`task${done ? " done" : ""}${skipped ? " skipped" : ""}`}>
       <div className="top">
         {rv ? (
-          // Completed only by an assessed recall attempt (Revision spec 9.3), so no tick box.
-          <span className={`rvmark${done ? " on" : ""}`} role="img" aria-label={done ? "Revision recorded" : "Revision: complete it by recording an attempt"}>
+          // Completed only by its recall being checked, so no tick box.
+          <span className={`rvmark${done ? " on" : ""}`} role="img" aria-label={done ? "Revision done" : "Revision: done when you recall it (Revise)"}>
             {done ? "✓" : "↻"}
           </span>
         ) : (
@@ -91,8 +92,8 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
           </div>
           {t.notes && !compact && <div className="notes">{t.notes}</div>}
           <div className="acts">
-            {rv && !done && t.topic && (
-              <button className="btn primary" onClick={() => setRecall(true)} aria-label={`Start revision: ${t.title}`}>Revise</button>
+            {t.recall && !done && t.subtopic && (
+              <button className="btn primary" onClick={() => setRecallOpen(true)} aria-label={`Revise: ${t.subtopic.name}`}>Revise</button>
             )}
             {!rv && <button className="btn" onClick={() => open("log")} aria-expanded={mode === "log"}>Log time</button>}
             <button className="btn" onClick={() => open("move")} aria-expanded={mode === "move"}>Reschedule</button>
@@ -157,10 +158,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
         </div>
         <div className="est">{hm(t.estimatedMinutes)}</div>
       </div>
-      {/* Revision v2: a topic is revised from its pack; the first time, it asks what you studied. */}
-      {recall && rv && t.topic && (
-        <PackDialog topicId={t.topic.id} topicName={t.topic.name} onClose={() => { setRecall(false); void reload(); }} />
-      )}
+      {recallOpen && t.subtopic && <RecallPage subtopicId={t.subtopic.id} onClose={() => { setRecallOpen(false); void reload(); }} />}
     </li>
   );
 }

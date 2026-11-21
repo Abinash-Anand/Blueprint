@@ -12,81 +12,49 @@ const STOP = new Set(["with", "that", "this", "from", "into", "only", "when", "w
 
 const unq = (x: string) => x.replace(/‹/g, "<");
 
-/**
- * Revision pack concepts (Revision v2 plan §5.1): the material's "## " headings, otherwise the topic's sub-topics, so
- * tests can see where the concepts came from. Always at least three.
- */
-function fakeConcepts(user: string) {
-  const material = unq(tag(user, "material"));
-  let subs: { name: string }[] = [];
-  try {
-    subs = JSON.parse(unq(tag(user, "subtopics")));
-  } catch {
-    /* none */
-  }
-  const heads = [...material.matchAll(/^#{1,3}\s+(.+)$/gm)].map((m) => m[1].trim());
-  const titles = (heads.length ? heads : subs.map((x) => x.name)).slice(0, 8);
-  while (titles.length < 3) titles.push(`Concept ${titles.length + 1}`);
-  return {
-    concepts: titles.map((t) => ({
-      title: t.slice(0, 100), summary: `What the learner studied about ${t}.`, subtopic: subs.find((x) => x.name === t)?.name ?? subs[0]?.name ?? null,
-      keyPoints: [`${t} has a clear purpose`, `${t} is used in practice`], misconceptions: [`Thinking ${t} works by magic`],
-    })),
-  };
+/** Recall checklist (docs/Recall-Plan.md §4.1): six points named after the sub-topic, tiers 1, 1, 2, 2, 2, 3. */
+function fakeChecklist(user: string) {
+  const sub = tag(user, "subtopic");
+  const aspects: [number, string][] = [[1, "definition"], [1, "purpose"], [2, "mechanism"], [2, "usage"], [2, "syntax"], [3, "pitfalls"]];
+  return { points: aspects.map(([tier, a]) => ({ label: `${sub} ${a}`, description: `Explains the ${a} of ${sub}.`, tier })) };
 }
 
-const FAKE_OPEN = ["RECALL", "EXPLAIN", "PREDICT", "DEBUG", "APPLY", "TRANSFER"];
-const FAKE_CHOICE = ["QUICK_CHOICE", "TRICKY_CHOICE", "WHAT_HAPPENS", "BEST_FIX", "TWO_PART", "SELECT_ALL"];
-
 /**
- * Questions for one concept: for every level asked, one open and one multiple-choice question that pass the pack
- * checks. A concept titled "Broken …" first gets a multiple-choice question with two correct options, so the repair
- * round can be tested; the repair (a request listing problems) is valid.
+ * Recall grading (§5.3): a point is ACCURATE when its aspect word (the last word of its label) is in the explanation,
+ * quoting that word as it was written; a sentence starting "Wrong:" is a misconception.
  */
-function fakeItems(user: string) {
-  const concept = JSON.parse(unq(tag(user, "concept"))) as { title: string };
-  const levels = tag(user, "levels").split(",").map((x) => Number(x.trim())).filter((n) => n >= 1 && n <= 6);
-  const repair = user.includes("<problems>");
-  const t = concept.title;
-  const items = levels.flatMap((level) => {
-    const multi = FAKE_CHOICE[level - 1] === "SELECT_ALL";
-    const broken = /^broken/i.test(t) && !repair && level === 1;
-    return [
-      {
-        level, kind: FAKE_OPEN[level - 1], situation: "", codeLines: null,
-        question: `Level ${level}: what does ${t} do, and why does it matter?`, answerSize: "2-3 sentences",
-        expected: [`${t} purpose`, `${t} example`, `${t} limits`], modelAnswer: `${t} solves a specific problem; for example it is used when the situation needs it.`,
-        hints: ["Think about the purpose.", "Recall an example.", "Start with: it is used to …"], options: null,
-      },
-      {
-        level, kind: FAKE_CHOICE[level - 1], situation: "", codeLines: null,
-        question: `Level ${level}: which statement about ${t} is ${multi ? "true (select all)" : "true"}?`, answerSize: multi ? "pick all that apply" : "pick one",
-        expected: [`The right statement names the purpose of ${t}`], modelAnswer: `The statement that names its purpose.`,
-        hints: ["Rule out the extreme claims.", "Which one names a purpose?", "It starts with: it is used …"],
-        options: [
-          { text: `It is used to solve a specific problem`, correct: true, explanation: "Right: that is its purpose." },
-          { text: `It works without any setup`, correct: multi || broken, explanation: "A common belief; it needs setup." },
-          { text: `It replaces everything else`, correct: false, explanation: "Too strong: it is one tool among others." },
-        ],
-      },
-    ];
+function fakeGrade(user: string) {
+  const explanation = tag(user, "explanation");
+  const points = tag(user, "checklist").split("\n").filter(Boolean).map((line) => {
+    const [code, rest] = [line.slice(0, line.indexOf(":")), line.slice(line.indexOf(":") + 1)];
+    const aspect = rest.split(".")[0].trim().split(/\s+/).pop() ?? "";
+    const hit = aspect ? explanation.match(new RegExp(`\\b${aspect}\\b`, "i"))?.[0] : undefined;
+    return { code, status: hit ? "ACCURATE" : "MISSED", evidence: hit ?? "" };
   });
-  return { items };
+  const misconceptions = [...explanation.matchAll(/Wrong:[^.]*\./g)].map((m) => ({ claim: m[0], correction: "That is not right." }));
+  return { points, misconceptions };
 }
 
-/**
- * Deterministic curriculum pieces (AI design §10.3), shaped by the request: an outline with three districts of three
- * topics named after the learner's subjects, and the details for whatever topics a district request lists.
- */
 function fakeGenerate(i: GenerateInput): { output: unknown; usage: { inputTokens: number; outputTokens: number } } {
   const usage = { inputTokens: Math.ceil(i.user.length / 4), outputTokens: 900 };
   const stage = tag(i.user, "stage");
-  if (stage === "pack-concepts") return { usage, output: fakeConcepts(i.user) };
-  if (stage === "pack-items") return { usage, output: fakeItems(i.user) };
-  // Reading a material image: the fake cannot see it, so it describes what it was given.
-  if (stage === "image-text")
-    return { usage, output: i.images?.length ? { readable: true, lines: ["# Notes from a photo", `An image of ${i.images[0].data.length} bytes (${i.images[0].mimeType}).`, "- Generics let one function work for many types.", "- extends limits what a type parameter accepts."] } : { readable: false, lines: [] } };
-  if (tag(i.user, "stage") === "outline") {
+  if (stage === "recall-checklist") return { usage, output: fakeChecklist(i.user) };
+  if (stage === "recall-grade") return { usage, output: fakeGrade(i.user) };
+  // Recall phase 2: a probe naming the first gap's aspect, a verdict from the lists it was given, a progress note.
+  if (stage === "recall-probe") {
+    const first = tag(i.user, "gaps").split("\n")[0] ?? "";
+    return { usage, output: { questions: [`In a real project, how would you handle the ${first.split(":")[1]?.split(".")[0]?.trim().split(/\s+/).pop() ?? "gap"}?`] } };
+  }
+  if (stage === "recall-verdict") {
+    const u = tag(i.user, "unprompted");
+    const line = (k: string) => (u.match(new RegExp(`^${k}: (.*)$`, "m"))?.[1] ?? "(none)");
+    return { usage, output: { foundationsSummary: `Solid: ${line("recalled")}.`, architectureAndEdgeCasesSummary: `Needs work: ${line("missed")}.`, focusNext: `Revise ${line("missed").split(";")[0]}.` } };
+  }
+  if (stage === "recall-narrative") return { usage, output: { sentences: ["Your recall of this sub-topic changed since last time.", `Facts: ${tag(i.user, "diff").slice(0, 80)}`] } };
+  // Recall phase 3: the fake cannot see the photo; it describes what it was given.
+  if (stage === "recall-sketch")
+    return { usage, output: i.images?.length ? { readable: true, lines: [`Box: mechanism (sketch of ${i.images[0].data.length} bytes)`, "Arrow: mechanism → usage"] } : { readable: false, lines: [] } };
+  if (stage === "outline") {
     let a: { goal?: string; subjects?: string[] } = {};
     try {
       a = JSON.parse(tag(i.user, "answers").replace(/‹/g, "<"));

@@ -56,7 +56,7 @@ suite("authentication", () => {
   });
 
   it("requires a signed-in user for every learning route", async () => {
-    for (const path of ["/api/today", "/api/curriculum", "/api/revision/overview", "/api/cities", "/api/account/export"]) {
+    for (const path of ["/api/today", "/api/curriculum", "/api/revision/archive", "/api/cities", "/api/account/export"]) {
       expect((await request(app).get(path).expect(401)).body.error.code, path).toBe("AUTH_REQUIRED");
     }
     expect((await request(app).get("/api/health").expect(200)).body.status).toBe("ok");
@@ -75,7 +75,7 @@ suite("authentication", () => {
     expect(u.passwordHash).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
     expect(u.passwordHash).not.toContain(PW);
     expect(u.emailVerifiedAt).toBeNull();
-    expect(u.consents.map((c) => [c.purpose, c.granted, c.policyVersion]).sort()).toEqual([["PRIVACY_NOTICE", true, "2026-11-20"], ["TERMS", true, "2026-11-18"]]);
+    expect(u.consents.map((c) => [c.purpose, c.granted, c.policyVersion]).sort()).toEqual([["PRIVACY_NOTICE", true, "2026-11-21"], ["TERMS", true, "2026-11-18"]]);
     // The e-mailed token is stored only as a hash.
     const token = linkToken(mailer.sent.at(-1)!.text);
     expect(await prisma.authToken.count({ where: { id: token } })).toBe(0);

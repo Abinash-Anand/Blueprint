@@ -31,6 +31,8 @@ export interface Subtopic {
   name: string;
   completedAt: string | null;
   presentation?: Presentation;
+  /** Recall (docs/Recall-Plan.md): when it is next due, and how the last check went. */
+  recall?: { nextDueDate: ISODate | null; stage: number; last: { date: ISODate; score: number; depth: RecallDepth } | null } | null;
 }
 
 export interface Resource {
@@ -119,6 +121,8 @@ export interface Task {
     overdueDays: number;
     presentation?: Presentation;
   } | null;
+  /** Set for recall tasks: done by checking the recall (Revise); originalDate is the due date. */
+  recall?: { stateId: number; stage: number; lastReviewDate: ISODate | null; dueDate: ISODate; overdueDays: number; presentation?: Presentation } | null;
 }
 
 export interface PromptOption {
@@ -264,23 +268,8 @@ export interface Today {
   current: { districtId: string | null; topicId: string | null };
   next: { topicId: string; subtopic: string | null } | null;
   reviewTopics: { id: string; name: string; districtId: string }[];
-  revision: {
-    plannedMinutes: number;
-    learningMinutes: number;
-    dailyAllowanceMinutes: number;
-    weeklyOvertimeMinutes: number;
-    overTargetMinutes: number;
-    weekOverTargetMinutes: number;
-    competing: boolean;
-    dueCount: number;
-    overdueCount: number;
-    weakCount: number;
-    awaitingCorrection: number;
-    attention?: Presentation;
-    backlog: { count: number; oldestDue: ISODate | null };
-    optional: Task[];
-    sessionTaskIds: number[];
-  };
+  /** Recall as of the real today: due (incl. carried over), overdue, due tomorrow; minutes planned on this day. */
+  recall: { dueCount: number; overdueCount: number; tomorrowCount: number; plannedMinutes: number };
 }
 
 export interface WeekDay {
@@ -294,6 +283,8 @@ export interface WeekDay {
   tasksTotal: number;
   tasksDone: number;
   revisionTasks: number;
+  /** Sub-topics due for recall that day (overdue ones on today). */
+  recall: string[];
   revisionPlannedMinutes: number;
   revisionDoneMinutes: number;
   overTargetMinutes: number;
@@ -311,10 +302,6 @@ export interface Week {
     tasksDone: number;
     tasksRemaining: number;
     remainingMinutes: number;
-  };
-  revision: {
-    plannedMinutes: number; doneMinutes: number; upcomingMinutes: number; dueThisWeek: number; overdue: number; attention?: Presentation;
-    overTargetMinutes: number; dailyAllowanceMinutes: number; weeklyOvertimeMinutes: number;
   };
   milestones: { date: ISODate; type: "PRACTICE" | "STAGE_END"; title: string; topicId: string | null; stageId: string | null; done: boolean; presentation?: Presentation }[];
   tasks: Task[];
@@ -366,23 +353,22 @@ export interface Progress {
     overdueTasks: number;
     bufferDays: number;
   })[];
-  revision: {
-    attempts: number;
-    successful: number;
-    distribution: number[];
-    checkpoints: number;
-    activeUnits: number;
-    dueToday: number;
-    overdue: number;
-    awaitingCorrection: number;
-    dailyAllowanceMinutes: number;
-    monthly: { month: string; attempts: number; successful: number; averageScore: number | null }[];
-    ai?: AiAnalytics;
-    weakUnits: {
-      scheduleId: number; topicId: string; subtopicId: number | null; scope: RevisionScope; label: string;
-      lastScore: number | null; consecutiveFailures: number; nextDueDate: ISODate | null;
-    }[];
+  recall: {
+    inRecall: number; dueNow: number; reviews: number; averageScore: number | null;
+    depth: Record<RecallDepth, number>; outcomes: Record<"PASS" | "HOLD" | "LAPSE", number>;
+    monthly: { month: string; reviews: number; averageScore: number | null }[];
+    /** Per sub-topic progress and blind spots across sub-topics, computed in code (Recall-Plan §3.5, §7). */
+    coaching?: RecallCoaching;
   };
+}
+
+export interface RecallCoaching {
+  subtopics: {
+    subtopicId: number; subtopic: string; topic: string; reviews: number; lastDate: ISODate; lastScore: number; scoreDelta: number | null;
+    narrative: string; newlyMastered: string[]; slipped: string[]; blindSpots: { label: string; missedInARow: number }[];
+    recurringMisconceptions: { claim: string; correction: string }[];
+  }[];
+  blindSpots: { subtopicId: number; subtopic: string; label: string; missedInARow: number }[];
 }
 
 export interface RevisionUnitRow {
@@ -704,4 +690,65 @@ export interface RevisionHistory {
   track: { cycle: number; state: string; nextDueDate: string | null; weakOnly: boolean } | null;
   cycles: number[];
   concepts: { conceptId: number | null; title: string; removed: boolean; story: string; cells: { cycle: number; result: number | null; label: string | null; firstResult: number | null; date: string | null; reviews: number; answers: HistoryAnswer[] }[] }[];
+}
+
+/** The retired revision systems' history (docs/Recall-Plan.md §9): attempts and study-time checks, read-only. */
+export interface RevisionArchive {
+  attempts: { id: number; date: ISODate; label: string; topicName: string; score: number; method: string; withHelp: boolean; gap: string }[];
+  checkpoints: { id: number; date: ISODate; label: string; topicName: string; result: CheckpointResult; gaps: string }[];
+}
+
+/* ---------------- Recall (docs/Recall-Plan.md) ---------------- */
+
+export type RecallDepth = "FOUNDATIONAL" | "INTERMEDIATE" | "MASTERY";
+export interface RecallItem {
+  subtopicId: number; subtopic: string; topicId: string; topic: string; district: string; stage: number; nextDueDate: ISODate | null; lastReviewDate: ISODate | null;
+  taskId: number; scheduledDate: ISODate; overdueDays: number;
+}
+export interface RecallHistoryRow {
+  reviewId: number; date: ISODate; attempt: number; score: number; depth: RecallDepth; outcome: "PASS" | "HOLD" | "LAPSE"; nextDueDate: ISODate | null;
+  subtopicId: number; subtopic: string; topic: string;
+}
+export interface RecallHome {
+  today: ISODate; limit: number; doneToday: number;
+  due: RecallItem[]; later: RecallItem[]; upcoming: RecallItem[];
+  open: { reviewId: number; subtopicId: number; status: RecallStatus }[];
+  ai: { available: boolean; reason: "AI_DISABLED" | "NO_PROVIDER" | "CONSENT_REQUIRED" | null; consented: boolean; provider: string; model: string };
+}
+export type RecallStatus = "DRAFT" | "WAITING" | "CHECKED" | "COMPLETE";
+export type RecallPointStatus = "ACCURATE" | "PARTIAL" | "MISSED";
+export interface RecallPointView { id: number; code: string; label: string; description: string; tier: number; leftOut: boolean; status: RecallPointStatus | null; evidence: string | null; recalledWhenAsked: boolean }
+export interface RecallReview {
+  id: number; subtopicId: number; subtopic: string; topicId: string; topic: string; attempt: number; status: RecallStatus; date: ISODate;
+  spokenParts: string[]; typed: string; sketches: string[]; waitReason: string | null; language: string; submittedAt: string | null;
+  /** Phase 2: the senior engineer's follow-up and verdict (after checking). */
+  followupQuestion: string | null; followupAnswer: string | null; seniorVerdict: SeniorVerdict | null;
+  result: null | {
+    score: number; depth: "FOUNDATIONAL" | "INTERMEDIATE" | "MASTERY"; outcome: "PASS" | "HOLD" | "LAPSE";
+    misconceptions: { claim: string; correction: string }[];
+    stageBefore: number; stageAfter: number; nextDueDate: ISODate | null; tierShares: (number | null)[]; gradingModel: string | null;
+    points: RecallPointView[];
+  };
+}
+
+export interface SeniorVerdict {
+  foundationsSummary: string; architectureAndEdgeCasesSummary: string; focusNext: string;
+  /** Worked out in code from the follow-up; null when it was skipped or nothing was missed. */
+  cuedReasoningRating: "Strong" | "Developing" | "Needs Work" | null;
+  recalledWhenAsked: string[]; promptVersion: string; model: string;
+}
+export interface RecallDiff {
+  attempt: number; previousAttempt: number | null; scoreDelta: number | null;
+  newlyMastered: { pointId: number; label: string }[]; retained: { pointId: number; label: string }[];
+  regressed: { pointId: number; label: string; from: RecallPointStatus; to: RecallPointStatus }[];
+  persistentBlindSpots: { pointId: number; label: string; missedInARow: number }[];
+  /** Mistakes that came back after an earlier review corrected them (absent in notes written before 21 Nov 2026). */
+  recurringMisconceptions?: { claim: string; correction: string; seenBefore: number }[];
+  scoreTrajectory: { attempt: number; date: ISODate; score: number; depth: RecallDepth }[];
+}
+export interface RecallMatrix {
+  subtopicId: number; subtopic: string; topic: string; version: number | null;
+  points: { id: number; code: string; label: string; tier: number; leftOut: boolean }[];
+  attempts: { reviewId: number; attempt: number; date: ISODate; score: number | null; depth: RecallDepth | null; outcome: "PASS" | "HOLD" | "LAPSE" | null; cells: Record<number, { status: RecallPointStatus; recalledWhenAsked: boolean }> }[];
+  analyses: { attempt: number; narrative: string; diff: RecallDiff }[];
 }

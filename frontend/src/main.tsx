@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Root } from "./Root";
 import { SessionProvider } from "./state/Session";
 import "./styles.css";
+import "./glass.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

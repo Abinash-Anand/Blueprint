@@ -1,48 +1,20 @@
 /**
- * AI service (AI design §4–§7): transcription, answer checking with one optional follow-up, status and consent.
+ * AI service (AI design §4–§7): status, consent and transcription with the expected terms. The earlier revision
+ * answer checks were retired with the old revision systems (docs/Recall-Plan.md §9); their stored history is kept.
  *
- * Invariants (§2.3): this module writes only RevisionEvaluation, AiUsage and Settings.aiConsentAt. It never touches
+ * Invariants (§2.3): this module writes only AiUsage. It never touches
  * learning, demonstration, tasks or schedules, and a provider call never runs inside a database transaction.
  */
-import { createHash } from "node:crypto";
-import { Prisma, type PrismaClient } from "@prisma/client";
-import { evaluationPresentation, suggestionPresentation, verdictPresentation } from "../../domain/presentation.js";
+import type { PrismaClient } from "@prisma/client";
 import type { Clock } from "../../lib/clock.js";
-import { HttpError, notFound } from "../../lib/http.js";
-import { resolvePrompt } from "../revision/service.js";
+import { HttpError } from "../../lib/http.js";
 import type { AiConfig } from "./config.js";
-import { splitCriteria } from "./evaluation/criteria.js";
-import { SYSTEM_PROMPT, buildUserPrompt, transcriptionInstruction, vocabulary } from "./evaluation/prompt.js";
-import { EvaluationResult, evaluationJsonSchema } from "./evaluation/schema.js";
-import { suggestScore, suggestedMistakes } from "./evaluation/score.js";
-import { VerificationError, type VerifiedCriterion, type VerifiedResult, verifyResult } from "./evaluation/verify.js";
+import { transcriptionInstruction } from "./evaluation/prompt.js";
 import { type AiProviders, ProviderError, type ProviderUsage, asProviderError, isProviderOutage } from "./providers/types.js";
 import { usageService } from "./usage.js";
 import { WavError, parseWav } from "./voice/wav.js";
 
-const UNLINKED_RETENTION_DAYS = 30;
 const USAGE_RETENTION_DAYS = 400;
-
-export interface EvaluateInput {
-  scheduleId: number;
-  promptId?: number;
-  templateKey?: string;
-  transcript: string;
-  parentId?: number;
-}
-
-/** Stored in RevisionEvaluation.result for a SUCCEEDED evaluation. */
-interface StoredResult {
-  relevant: boolean;
-  criteria: VerifiedCriterion[];
-  misconceptions: VerifiedResult["misconceptions"];
-  feedback: string;
-  followUpQuestion: string | null;
-  suggestedMistakes: string;
-  assisted: boolean;
-  rootId: number;
-  downgraded: number;
-}
 
 const providerHttpError = (e: ProviderError, op: "TRANSCRIBE" | "EVALUATE" = "EVALUATE") => {
   // The provider is overloaded or down (after the fallback model was tried too): say so, it is not the learner's fault.
@@ -61,33 +33,6 @@ const providerHttpError = (e: ProviderError, op: "TRANSCRIBE" | "EVALUATE" = "EV
       return new HttpError(502, "AI_PROVIDER_ERROR", "The AI service is not available right now. Try again, or carry on without it.", { retryable: true });
   }
 };
-
-type EvalRow = Prisma.RevisionEvaluationGetPayload<object>;
-
-export function evaluationDTO(e: EvalRow, maxFollowUps: number, depth: number) {
-  const r = e.result as unknown as StoredResult | null;
-  return {
-    id: e.id,
-    parentId: e.parentId,
-    rootId: r?.rootId ?? e.id,
-    status: e.status,
-    presentation: evaluationPresentation(e.status),
-    errorCode: e.errorCode,
-    transcript: e.transcript,
-    suggestedScore: e.suggestedScore,
-    suggestion: suggestionPresentation(e.suggestedScore),
-    relevant: r?.relevant ?? null,
-    criteria: (r?.criteria ?? []).map((c) => ({
-      index: c.index, text: c.text, verdict: c.verdict, presentation: verdictPresentation(c.verdict), evidence: c.evidence, recoveredInFollowUp: c.recoveredInFollowUp,
-    })),
-    misconceptions: r?.misconceptions ?? [],
-    feedback: r?.feedback ?? "",
-    followUpQuestion: depth < maxFollowUps ? (r?.followUpQuestion ?? null) : null,
-    suggestedMistakes: r?.suggestedMistakes ?? "",
-    assisted: r?.assisted ?? false,
-    createdAt: e.createdAt.toISOString(),
-  };
-}
 
 /** The signed-in user's consent to AI processing (a ConsentRecord, GDPR Art. 7): read and grant. */
 export interface AiConsent { get(): Promise<Date | null>; grant(): Promise<Date> }
@@ -141,26 +86,6 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
     }
   }
 
-  /**
-   * The unit's names and question texts, for transcription spelling hints. A sub-topic unit also gets its topic's
-   * curriculum question, which holds most of the topic's technical terms (its own prompts are mostly templates).
-   */
-  async function unitTerms(scheduleId: number) {
-    const s = await prisma.revisionSchedule.findUnique({
-      where: { id: scheduleId },
-      include: { topic: { select: { name: true } }, subtopic: { select: { name: true } } },
-    });
-    if (!s) return [];
-    const select = { content: true, expectedAnswer: true } as const;
-    const own = await prisma.revisionPrompt.findMany({ where: { topicId: s.topicId, subtopicId: s.subtopicId, isActive: true }, select, orderBy: { id: "asc" }, take: 5 });
-    const topic =
-      s.subtopicId === null
-        ? []
-        : await prisma.revisionPrompt.findMany({ where: { topicId: s.topicId, subtopicId: null, source: "CURRICULUM", isActive: true }, select, orderBy: { id: "asc" }, take: 2 });
-    return vocabulary([s.topic.name, s.subtopic?.name ?? "", ...[...own, ...topic].flatMap((p) => [p.content, p.expectedAnswer])]);
-  }
-
-  /** A WAV recording to text, with the given terms as spelling hints; the audio is never stored (I-5). */
   /** `termsOf` gives the words to expect, and optionally the language spoken (a German pack's answers are German). */
   async function transcribeTerms(audio: Buffer, contentType: string | undefined, termsOf: () => Promise<string[] | { terms: string[]; language: string }>) {
     await requireReady();
@@ -192,16 +117,6 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
     // The audio buffer goes out of scope here; it is never written anywhere (I-5).
   }
 
-  async function ancestors(e: EvalRow) {
-    const chain: EvalRow[] = [];
-    let cur: EvalRow | null = e;
-    while (cur?.parentId) {
-      cur = await prisma.revisionEvaluation.findUnique({ where: { id: cur.parentId } });
-      if (cur) chain.unshift(cur);
-    }
-    return chain;
-  }
-
   return {
     async status() {
       const consentedAt = await consentOf.get();
@@ -230,227 +145,17 @@ export function aiService(prisma: PrismaClient, clock: Clock, config: AiConfig, 
       return { consentedAt: (await consentOf.grant()).toISOString() };
     },
 
-    async transcribe(scheduleId: number, audio: Buffer, contentType: string | undefined) {
-      return transcribeTerms(audio, contentType, async () => {
-        const schedule = await prisma.revisionSchedule.findUnique({ where: { id: scheduleId }, select: { id: true } });
-        if (!schedule) throw notFound("Revision unit");
-        return unitTerms(scheduleId);
-      });
-    },
-
     transcribeTerms,
 
     /**
-     * Revision v2 (plan §3.4): one answer checked against a stored question's expected points, with the same prompt,
-     * quote verification and score rule as the AI check. Nothing is stored here; the session keeps the result with the
-     * answer. The question and points are the learner's own pack, so they are data like the answer.
+     * Startup housekeeping (§8.3): usage rows older than the retention period go. The retired answer checks
+     * (RevisionEvaluation) are history now and are no longer touched.
      */
-    async checkAnswer(input: { question: string; kind: string; criteria: string[]; answer: string }) {
-      await requireReady();
-      const answer = input.answer.trim();
-      if (!answer) throw new HttpError(400, "VALIDATION_ERROR", "There is no answer to check yet.");
-      const criteria = input.criteria.map((c) => c.trim()).filter(Boolean).slice(0, 20);
-      if (!criteria.length) throw new HttpError(409, "AI_NO_CRITERIA", "This question has no expected points to check against.");
-      await usage.check("EVALUATE", providers.evaluation.name);
-      const p = providers.evaluation;
-      let r: Awaited<ReturnType<typeof withFallback<{ output: unknown }>>>;
-      try {
-        r = await withFallback("EVALUATE", p.name, config.evaluationModel, config.evaluationFallbackModel, (model, signal) =>
-          p.evaluate({ system: SYSTEM_PROMPT, user: buildUserPrompt({ promptText: input.question, retrievalMethod: input.kind, criteria, answer }), jsonSchema: evaluationJsonSchema(), model, signal }),
-        );
-      } catch (e) {
-        if (e instanceof ProviderError) throw providerHttpError(e);
-        throw e;
-      }
-      const parsed = EvaluationResult.safeParse(r.output);
-      let verified: VerifiedResult;
-      try {
-        if (!parsed.success) throw new VerificationError("Output does not match the schema");
-        verified = verifyResult(parsed.data, criteria, answer);
-      } catch (e) {
-        if (!(e instanceof VerificationError)) throw e;
-        throw providerHttpError(new ProviderError("INVALID_OUTPUT", e.message));
-      }
-      return {
-        relevant: verified.relevant,
-        criteria: verified.criteria.map((c) => ({ index: c.index, text: c.text, verdict: c.verdict, evidence: c.evidence })),
-        misconceptions: verified.misconceptions.map((m) => ({ claim: m.claim, correction: m.correction })),
-        feedback: verified.feedback,
-        suggestedScore: suggestScore({ relevant: verified.relevant, verdicts: verified.criteria.map((c) => c.verdict), misconceptions: verified.misconceptions.length }),
-        provider: p.name, model: r.model, promptVersion: config.promptVersion, latencyMs: r.latencyMs,
-      };
-    },
-
-    async evaluate(input: EvaluateInput) {
-      await requireReady();
-      const transcript = input.transcript.trim();
-      if (!transcript) throw new HttpError(400, "VALIDATION_ERROR", "There is no answer to check yet.");
-
-      const schedule = await prisma.revisionSchedule.findUnique({ where: { id: input.scheduleId } });
-      if (!schedule || schedule.suspendedAt) throw new HttpError(409, "NOT_ELIGIBLE", "This isn't ready for revision.");
-
-      let parent: EvalRow | null = null;
-      let chain: EvalRow[] = [];
-      if (input.parentId !== undefined) {
-        parent = await prisma.revisionEvaluation.findUnique({ where: { id: input.parentId } });
-        if (!parent || parent.scheduleId !== schedule.id) throw notFound("AI check");
-        if (parent.status !== "SUCCEEDED") throw new HttpError(409, "EVALUATION_STALE", "The first AI check did not finish.");
-        chain = [...(await ancestors(parent)), parent];
-        if (chain.length > config.maxFollowUps) throw new HttpError(409, "AI_FOLLOW_UP_LIMIT", "No more follow-up questions for this answer.");
-        if (!(parent.result as unknown as StoredResult).followUpQuestion) throw new HttpError(409, "AI_FOLLOW_UP_LIMIT", "There is no follow-up question to answer.");
-      }
-      const root = chain[0] ?? null;
-
-      // The rubric comes from the stored prompt, never from the client (§6.1). For a follow-up it is the root's snapshot.
-      let promptText: string;
-      let criteriaText: string;
-      let promptId: number | null;
-      let retrievalMethod: string;
-      if (root) {
-        promptText = root.promptText;
-        criteriaText = root.criteriaText;
-        promptId = root.promptId;
-        retrievalMethod = (await prisma.revisionPrompt.findUnique({ where: { id: root.promptId ?? -1 }, select: { retrievalMethod: true } }))?.retrievalMethod ?? "CONCEPTUAL";
-      } else {
-        if ((input.promptId === undefined) === (input.templateKey === undefined)) throw new HttpError(400, "VALIDATION_ERROR", "Provide exactly one of promptId or templateKey");
-        const prompt = await prisma.$transaction((tx) => resolvePrompt(tx, schedule, input.promptId, input.templateKey));
-        promptText = prompt.content;
-        criteriaText = prompt.expectedAnswer;
-        promptId = prompt.id;
-        retrievalMethod = prompt.retrievalMethod;
-      }
-      const criteria = splitCriteria(criteriaText);
-      if (criteria.length === 0) throw new HttpError(409, "AI_NO_CRITERIA", "This question has no expected points to check against. Add them to the prompt first.");
-
-      const followUpQuestion = parent ? (parent.result as unknown as StoredResult).followUpQuestion! : null;
-      const inputHash = createHash("sha256")
-        .update(JSON.stringify([config.promptVersion, providers.evaluation.name, config.evaluationModel, promptText, criteria, transcript, followUpQuestion, parent?.id ?? null]))
-        .digest("hex");
-      const depth = chain.length;
-
-      await usage.check("EVALUATE", providers.evaluation.name);
-
-      // Reserve the work (§7.1). A repeat of the same answer returns the stored result and costs nothing.
-      let row: EvalRow;
-      try {
-        row = await prisma.revisionEvaluation.create({
-          data: {
-            scheduleId: schedule.id, promptId, parentId: parent?.id ?? null, inputHash, promptText, criteriaText, transcript,
-            followUpQuestion, provider: providers.evaluation.name, model: config.evaluationModel, promptVersion: config.promptVersion,
-          },
-        });
-      } catch (e) {
-        if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
-        const existing = await prisma.revisionEvaluation.findUniqueOrThrow({ where: { scheduleId_inputHash: { scheduleId: schedule.id, inputHash } } });
-        if (existing.status === "SUCCEEDED") return evaluationDTO(existing, config.maxFollowUps, depth);
-        const staleBefore = new Date(clock.now().getTime() - config.requestTimeoutMs - 10_000);
-        const reset = await prisma.revisionEvaluation.updateMany({
-          where: { id: existing.id, OR: [{ status: "FAILED" }, { status: "PENDING", createdAt: { lt: staleBefore } }] },
-          data: { status: "PENDING", errorCode: null, createdAt: clock.now(), completedAt: null },
-        });
-        if (reset.count === 0) throw new HttpError(409, "EVALUATION_IN_PROGRESS", "This answer is already being checked.", { retryable: true });
-        row = { ...existing, status: "PENDING" };
-      }
-
-      const fail = async (code: string) => {
-        await prisma.revisionEvaluation.update({ where: { id: row.id }, data: { status: "FAILED", errorCode: code, completedAt: clock.now() } });
-      };
-
-      const parentResult = parent ? (parent.result as unknown as StoredResult) : null;
-      const fullAnswer = [root?.transcript ?? null, ...chain.slice(1).map((c) => c.transcript), transcript].filter((x): x is string => !!x).join("\n");
-      const p = providers.evaluation;
-      let output: unknown;
-      let latencyMs: number;
-      let usedModel = config.evaluationModel;
-      try {
-        const r = await withFallback("EVALUATE", p.name, config.evaluationModel, config.evaluationFallbackModel, (model, signal) =>
-          p.evaluate({
-            system: SYSTEM_PROMPT,
-            user: buildUserPrompt({
-              promptText, retrievalMethod, criteria,
-              answer: root ? [root.transcript, ...chain.slice(1).map((c) => c.transcript)].join("\n") : transcript,
-              followUp: parent && parentResult ? { question: followUpQuestion!, answer: transcript, previous: parentResult.criteria.map((c) => ({ index: c.index, verdict: c.verdict })) } : undefined,
-            }),
-            jsonSchema: evaluationJsonSchema(),
-            model,
-            signal,
-          }),
-        );
-        output = r.output;
-        latencyMs = r.latencyMs;
-        usedModel = r.model;
-      } catch (e) {
-        if (e instanceof ProviderError) {
-          await fail(providerHttpError(e).code);
-          throw providerHttpError(e);
-        }
-        await fail("AI_PROVIDER_ERROR");
-        throw e;
-      }
-
-      const parsed = EvaluationResult.safeParse(output);
-      let verified: VerifiedResult;
-      try {
-        if (!parsed.success) throw new VerificationError("Output does not match the schema");
-        verified = verifyResult(parsed.data, criteria, fullAnswer);
-      } catch (e) {
-        if (!(e instanceof VerificationError)) throw e;
-        await fail("AI_INVALID_OUTPUT");
-        throw providerHttpError(new ProviderError("INVALID_OUTPUT", e.message));
-      }
-
-      // Follow-up (§4.4): what was recovered only after the question counts as assisted; the suggestion stays the
-      // one from the original answer, and the existing rule turns an assisted 3 into a 2 for scheduling.
-      let suggestedScore: number;
-      let mistakes: string;
-      let assisted = false;
-      const criteriaOut = verified.criteria.map((c) => ({ ...c }));
-      if (parentResult && root) {
-        const rootResult = root.result as unknown as StoredResult;
-        const before = new Map(parentResult.criteria.map((c) => [c.index, c.verdict]));
-        const rank = { MISSING: 0, INCORRECT: 0, PARTIAL: 1, COVERED: 2 } as const;
-        for (const c of criteriaOut) {
-          const was = before.get(c.index) ?? "MISSING";
-          if (rank[c.verdict] > rank[was]) c.recoveredInFollowUp = true;
-        }
-        assisted = criteriaOut.some((c) => c.recoveredInFollowUp) || parentResult.assisted;
-        suggestedScore = root.suggestedScore!;
-        const recovered = criteriaOut.filter((c) => c.recoveredInFollowUp).map((c) => c.text);
-        mistakes = [rootResult.suggestedMistakes, recovered.length ? `Recalled only after the follow-up question: ${recovered.join("; ")}.` : ""].filter(Boolean).join(" ");
-      } else {
-        suggestedScore = suggestScore({ relevant: verified.relevant, verdicts: verified.criteria.map((c) => c.verdict), misconceptions: verified.misconceptions.length });
-        mistakes = suggestedMistakes(verified.criteria, verified.misconceptions);
-      }
-      const stored: StoredResult = {
-        relevant: verified.relevant,
-        criteria: criteriaOut,
-        misconceptions: verified.misconceptions,
-        feedback: verified.feedback,
-        followUpQuestion: depth + 1 <= config.maxFollowUps ? verified.followUpQuestion : null,
-        suggestedMistakes: mistakes,
-        assisted,
-        rootId: root?.id ?? row.id,
-        downgraded: verified.downgraded,
-      };
-      const done = await prisma.revisionEvaluation.update({
-        where: { id: row.id },
-        // The model that actually answered (the fallback when the main model was overloaded).
-        data: { status: "SUCCEEDED", result: stored as unknown as Prisma.InputJsonValue, suggestedScore, latencyMs, model: usedModel, completedAt: clock.now() },
-      });
-      return evaluationDTO(done, config.maxFollowUps, depth);
-    },
-
-    /** Startup housekeeping (§8.3): unfinished checks become FAILED; old unlinked checks and old usage rows go. */
     async cleanup() {
       const now = clock.now().getTime();
-      await prisma.revisionEvaluation.updateMany({ where: { status: "PENDING" }, data: { status: "FAILED", errorCode: "AI_TIMEOUT", completedAt: new Date(now) } });
-      const cut = new Date(now - UNLINKED_RETENTION_DAYS * 86_400_000);
-      const removed = await prisma.revisionEvaluation.deleteMany({ where: { parentId: null, attempt: null, createdAt: { lt: cut } } });
       const usageRemoved = await prisma.aiUsage.deleteMany({ where: { at: { lt: new Date(now - USAGE_RETENTION_DAYS * 86_400_000) } } });
-      return { evaluations: removed.count, usage: usageRemoved.count };
+      return { usage: usageRemoved.count };
     },
-
-    unitTerms,
   };
 }
 

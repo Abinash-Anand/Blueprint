@@ -10,7 +10,6 @@ import { DEFAULT_TARGETS, JOURNEY, districts as builtinDistricts, queues as buil
 import { curriculumPrompts } from "../../curriculum/prompts.js";
 import { type ISODate, toDate } from "../../domain/dates.js";
 import { buildPlan } from "../../domain/planner.js";
-import { backfillRevision } from "../revision/service.js";
 import { CURRICULUM_CONTRACT_VERSION, type CurriculumDocument } from "./contract.js";
 
 /** The built-in Engineering City curriculum as a contract document (keys = the original slugs). */
@@ -78,14 +77,6 @@ export async function applyCurriculum(db: PrismaClient, doc: CurriculumDocument,
     await db.topicDependency.deleteMany({ where: { topicId: id(t.key) } });
     if (t.dependsOn.length) await db.topicDependency.createMany({ data: t.dependsOn.map((dep) => ({ topicId: id(t.key), dependsOnId: id(dep) })) });
   }
-  // 1b. Curriculum revision prompts, by stable key; the learner's on/off choice is never overwritten.
-  for (const t of doc.districts.flatMap((d) => d.topics)) {
-    for (const [n, p] of t.prompts.entries()) {
-      const key = `cur:${id(t.key)}:${n + 1}`;
-      const data = { topicId: id(t.key), title: p.title, content: p.content, retrievalMethod: p.method, expectedAnswer: p.expected };
-      await db.revisionPrompt.upsert({ where: { key }, update: data, create: { ...data, key, source: "CURRICULUM" } });
-    }
-  }
 
   // 2. Calendar (created once; the learner may edit dates afterwards)
   for (const [i, s] of doc.stages.entries()) {
@@ -124,8 +115,4 @@ export async function applyCurriculum(db: PrismaClient, doc: CurriculumDocument,
     });
     log(`Curriculum loaded; generated ${plan.length} planned tasks (${plan.reduce((a, t) => a + t.minutes, 0) / 60} h).`);
   }
-
-  // 4. Revision backfill: schedules for learned sub-topics and eligible topics, placed from today.
-  const placed = await backfillRevision(db, today);
-  if (placed.length) log(`Scheduled ${placed.length} revision task(s).`);
 }

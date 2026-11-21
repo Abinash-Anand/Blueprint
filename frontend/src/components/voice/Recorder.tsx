@@ -4,7 +4,7 @@
  * sent once for transcription and then dropped. Errors leave typing available.
  */
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../../api/client";
+import { ApiError } from "../../api/client";
 import { toWav } from "../../lib/wav";
 import { FeedbackMessage, LoadingState } from "../Status";
 
@@ -18,7 +18,6 @@ export const canRecord = () =>
   typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof window !== "undefined" && "MediaRecorder" in window;
 
 export function Recorder({
-  scheduleId,
   transcribe,
   maxSeconds,
   maxBytes,
@@ -28,10 +27,8 @@ export function Recorder({
   autoStart = false,
   stopAfterSilenceMs,
 }: {
-  /** The revision unit the answer belongs to (answers are transcribed for it)… */
-  scheduleId?: number;
-  /** …or any other transcription, e.g. dictating a new city's goal. */
-  transcribe?: (wav: Blob) => Promise<{ text: string }>;
+  /** Sends the recording for transcription, e.g. dictating a new city's goal. */
+  transcribe: (wav: Blob) => Promise<{ text: string }>;
   maxSeconds: number;
   maxBytes: number;
   label?: string;
@@ -133,7 +130,7 @@ export function Recorder({
     try {
       const { wav } = await toWav(new Blob(chunks, { type: chunks[0].type }));
       if (wav.size > maxBytes) throw new ApiError(413, "AUDIO_TOO_LARGE", "The recording is too long. Keep answers under the time limit.");
-      const t = transcribe ? await transcribe(wav) : await api.transcribe(scheduleId!, wav);
+      const t = await transcribe(wav);
       if (!t.text.trim()) setError("No speech was recognised. Try again closer to the microphone, or type.");
       else onTranscript(t.text.trim());
     } catch (e) {

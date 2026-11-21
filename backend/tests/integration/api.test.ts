@@ -65,13 +65,9 @@ suite("Engineering City API", () => {
     expect(await prisma.task.count({ where: { source: "PLAN" } })).toBe(before);
     expect(await prisma.revisionPrompt.count()).toBe(prompts);
     expect((await prisma.subtopic.findUniqueOrThrow({ where: { id: sub.id } })).completedAt).not.toBeNull();
-    // Learning marked outside the API is picked up by the backfill, exactly once.
-    expect(await prisma.task.count({ where: { source: "REVISION" } })).toBe(1);
-    await seed(prisma, () => {}, "2026-11-17", { createEngineeringCity: true });
-    expect(await prisma.task.count({ where: { source: "REVISION" } })).toBe(1);
+    // The old revision systems are retired (docs/Recall-Plan.md §9): seeding plans no revision tasks.
+    expect(await prisma.task.count({ where: { source: "REVISION" } })).toBe(0);
     await prisma.subtopic.update({ where: { id: sub.id }, data: { completedAt: null } });
-    await seed(prisma, () => {}, "2026-11-17", { createEngineeringCity: true }); // suspends the schedule again and removes its open task
-    expect(await prisma.task.count({ where: { source: "REVISION", status: "TODO" } })).toBe(0);
   });
 
   it("shows today's mission: date, current topic, tasks and the 4-hour target", async () => {

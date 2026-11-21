@@ -1,8 +1,6 @@
 import type {
   Account, CityAttachment, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template, Understanding,
-  AiEvaluation, AiStatus, AttemptResult, Checkpoint, CheckpointResult, Curriculum, Progress, Prompt, RetrievalMethod, Session, Stage, Task, TaskKind,
-  RevisionOverview, TaskStatus, Today, Topic, TopicRevision, Week, PackConcept, PackItem, PackOverview, RevisionMaterial,
-  CompletionCard, RevisionHistory, RevisionHome, RevisionSessionView, SessionFeedback, SessionKind,
+  AiStatus, CheckpointResult, Curriculum, Progress, RecallHistoryRow, RecallHome, RecallMatrix, RecallReview, RetrievalMethod, RevisionArchive, Session, Stage, Task, TaskKind, TaskStatus, Today, Topic, Week,
 } from "./types";
 
 export class ApiError extends Error {
@@ -121,7 +119,7 @@ export const api = {
   today: (date?: string) => request<Today>("GET", `/today${q({ date })}`),
   week: (date?: string) => request<Week>("GET", `/week${q({ date })}`),
   setSubtopic: (id: number, completed: boolean) =>
-    request<{ id: number; completedAt: string | null }>("PATCH", `/subtopics/${id}`, { completed }),
+    request<{ id: number; completedAt: string | null; recallDue: string | null }>("PATCH", `/subtopics/${id}`, { completed }),
   patchTopic: (id: string, body: { demonstrated?: boolean; demonstrationNote?: string; needsReview?: boolean }) =>
     request<Topic>("PATCH", `/topics/${encodeURIComponent(id)}`, body),
   createTask: (body: NewTask) => request<Task>("POST", "/tasks", body),
@@ -134,54 +132,31 @@ export const api = {
   patchStage: (id: string, body: { startDate?: string; endDate?: string }) => request<Stage>("PATCH", `/stages/${id}`, body),
   patchSettings: (body: { revisionDailyMinutes?: number; revisionWeeklyOvertimeMinutes?: number }) =>
     request<{ revisionDailyMinutes: number; revisionWeeklyOvertimeMinutes: number }>("PATCH", "/settings", body),
-  revisionOverview: () => request<RevisionOverview>("GET", "/revision/overview"),
-  topicRevision: (id: string) => request<TopicRevision>("GET", `/topics/${encodeURIComponent(id)}/revision`),
-  submitAttempt: (body: AttemptInput) => request<AttemptResult>("POST", "/revision/attempts", body),
-  correctAttempt: (id: number, mistakes?: string) =>
-    request<{ id: number; nextDueDate: string | null; nextTaskDate: string | null }>("POST", `/revision/attempts/${id}/correction`, mistakes ? { mistakes } : {}),
-  createCheckpoint: (body: CheckpointInput) => request<Checkpoint>("POST", "/checkpoints", body),
-  createPrompt: (body: PromptInput) => request<Prompt>("POST", "/prompts", body),
-  patchPrompt: (id: number, body: Partial<Pick<Prompt, "title" | "content" | "retrievalMethod" | "expectedAnswer" | "isActive">>) =>
-    request<Prompt>("PATCH", `/prompts/${id}`, body),
-  deletePrompt: (id: number) => request<void>("DELETE", `/prompts/${id}`),
   aiStatus: () => request<AiStatus>("GET", "/ai/status"),
   aiConsent: () => request<{ consentedAt: string }>("POST", "/ai/consent", {}),
-  transcribe: (scheduleId: number, wav: Blob) =>
-    request<{ text: string; audioSeconds: number }>("POST", `/ai/transcriptions?scheduleId=${scheduleId}`, undefined, { data: wav, type: "audio/wav" }),
-  evaluate: (body: EvaluationInput) => request<AiEvaluation>("POST", "/revision/evaluations", body),
-  report: (body: { reason: "OUT_OF_SYLLABUS" | "UNCLEAR" | "UNFAIR_CHECK" | "OTHER"; promptText: string; note?: string; topicId?: string; scheduleId?: number; promptId?: number; evaluationId?: number; responseId?: number; itemId?: number; removeConcept?: boolean }) =>
-    request<{ id: number; reason: string; createdAt: string }>("POST", "/revision/reports", body),
+  /** The retired revision systems' history, read-only (docs/Recall-Plan.md §9). */
+  revisionArchive: () => request<RevisionArchive>("GET", "/revision/archive"),
 
-  /* Revision v2, phase 1: a topic's material and revision pack. */
-  pack: (topicId: string) => request<PackOverview>("GET", `/topics/${encodeURIComponent(topicId)}/revision/pack`),
-  addMaterial: (topicId: string, data: Blob, name: string, type: string) =>
-    request<RevisionMaterial>("POST", `/topics/${encodeURIComponent(topicId)}/revision/material?name=${encodeURIComponent(name)}`, undefined, { data, type }),
-  removeMaterial: (topicId: string, id: number) => request<void>("DELETE", `/topics/${encodeURIComponent(topicId)}/revision/material/${id}`),
-  buildPack: (topicId: string, basis: "MATERIAL" | "OUTLINE") =>
-    request<{ version: number; status: string; basis: string }>("POST", `/topics/${encodeURIComponent(topicId)}/revision/pack`, { basis }),
-  deletePack: (topicId: string) => request<{ deleted: number }>("DELETE", `/topics/${encodeURIComponent(topicId)}/revision/pack`),
-  addConcept: (topicId: string, body: { title: string; summary?: string }) =>
-    request<PackConcept>("POST", `/topics/${encodeURIComponent(topicId)}/revision/concepts`, body),
-  patchConcept: (id: number, body: { title?: string; summary?: string; removed?: boolean }) => request<PackConcept>("PATCH", `/revision/concepts/${id}`, body),
-  conceptItems: (id: number) => request<PackItem[]>("GET", `/revision/concepts/${id}/items`),
-  patchItem: (id: number, body: { question?: string; situation?: string; expected?: string[]; modelAnswer?: string; removed?: boolean }) =>
-    request<PackItem>("PATCH", `/revision/items/${id}`, body),
-
-  /* Revision v2, phases 2 and 3: home, sessions, history. */
-  revisionHome: () => request<RevisionHome>("GET", "/revision/home"),
-  startSession: (kind: SessionKind) => request<RevisionSessionView>("POST", "/revision/sessions", { kind }),
-  session: (id: number) => request<RevisionSessionView>("GET", `/revision/sessions/${id}`),
-  sessionHint: (id: number, index: number) => request<{ index: number; hintsUsed: number; hints: string[]; hintsAvailable: number }>("POST", `/revision/sessions/${id}/hint`, { index }),
-  sessionAnswer: (id: number, body: { index: number; mode: "TYPED" | "SPOKEN" | "CODE" | "CHOICE"; answer?: string; choice?: number[]; confidence?: number; seconds?: number }) =>
-    request<SessionFeedback>("POST", `/revision/sessions/${id}/answers`, body),
-  sessionResult: (id: number, body: { responseId: number; final: number; modelShown?: boolean }) => request<RevisionSessionView>("POST", `/revision/sessions/${id}/results`, body),
-  sessionSkip: (id: number, index: number) => request<RevisionSessionView>("POST", `/revision/sessions/${id}/skip`, { index }),
-  finishSession: (id: number) => request<{ cards: CompletionCard[]; session: RevisionSessionView }>("POST", `/revision/sessions/${id}/finish`),
-  sessionTranscribe: (id: number, index: number, wav: Blob) =>
-    request<{ text: string; audioSeconds: number }>("POST", `/revision/sessions/${id}/transcriptions?index=${index}`, undefined, { data: wav, type: "audio/wav" }),
-  setMaintenance: (topicId: string, maintenance: boolean) =>
-    request<{ topicId: string; maintenance: boolean; nextDueDate: string | null }>("PATCH", `/topics/${encodeURIComponent(topicId)}/revision/track`, { maintenance }),
-  revisionHistory: (topicId: string) => request<RevisionHistory>("GET", `/topics/${encodeURIComponent(topicId)}/revision/history`),
+  /* Recall (docs/Recall-Plan.md): due lists, a review from the blank slate to the results. */
+  recallHome: () => request<RecallHome>("GET", "/recall/home"),
+  recallHistory: () => request<RecallHistoryRow[]>("GET", "/recall/history"),
+  startRecall: (subtopicId: number) => request<RecallReview>("POST", "/recall/reviews", { subtopicId }),
+  recallReview: (id: number) => request<RecallReview>("GET", `/recall/reviews/${id}`),
+  saveRecallTyped: (id: number, typed: string) => request<RecallReview>("PATCH", `/recall/reviews/${id}`, { typed }),
+  addRecallPart: (id: number, wav: Blob) => request<RecallReview>("POST", `/recall/reviews/${id}/parts`, undefined, { data: wav, type: "audio/wav" }),
+  removeRecallPart: (id: number, index: number) => request<RecallReview>("DELETE", `/recall/reviews/${id}/parts/${index}`),
+  submitRecall: (id: number) => request<RecallReview>("POST", `/recall/reviews/${id}/submit`),
+  retryRecall: (id: number) => request<RecallReview>("POST", `/recall/reviews/${id}/retry`),
+  completeRecall: (id: number) => request<RecallReview>("POST", `/recall/reviews/${id}/complete`),
+  leaveOutPoint: (id: number, leftOut: boolean) => request<{ review: RecallReview | null }>("PATCH", `/recall/points/${id}`, { leftOut }),
+  // Phase 2: the senior engineer's follow-up, a spoken answer's text, the grid; phase 3: sketches.
+  probeRecall: (id: number) => request<RecallReview>("POST", `/recall/reviews/${id}/probe`),
+  answerFollowup: (id: number, answer: string) => request<RecallReview>("POST", `/recall/reviews/${id}/followup`, { answer }),
+  transcribeFollowup: (id: number, wav: Blob) => request<{ text: string; audioSeconds: number }>("POST", `/recall/reviews/${id}/transcriptions`, undefined, { data: wav, type: "audio/wav" }),
+  addSketch: (id: number, image: Blob, type: string) => request<RecallReview>("POST", `/recall/reviews/${id}/sketches`, undefined, { data: image, type }),
+  removeSketch: (id: number, index: number) => request<RecallReview>("DELETE", `/recall/reviews/${id}/sketches/${index}`),
+  recallMatrix: (subtopicId: number) => request<RecallMatrix>("GET", `/recall/subtopics/${subtopicId}/matrix`),
+  postponeRecall: (subtopicId: number) => request<{ subtopicId: number; nextDueDate: string }>("POST", `/recall/subtopics/${subtopicId}/postpone`),
 };
 
 /* ---------------- accounts, cities and curriculum versions (multi-user sprint) ---------------- */

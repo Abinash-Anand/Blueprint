@@ -108,7 +108,7 @@ export function gwdgProvider(o: GwdgOptions): TranscriptionProvider & Evaluation
     evaluate: (i: EvaluateInput) => structured(i, "evaluation", 4096, 0),
 
     /** A little temperature: a curriculum is a design, not a judgement. */
-    generate: (i: GenerateInput) => structured(i, i.name, i.maxTokens, 0.3),
+    generate: (i: GenerateInput) => structured(i, i.name, i.maxTokens, i.temperature ?? 0.3),
 
     async transcribe(i: TranscribeInput) {
       const form = new FormData();

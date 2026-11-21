@@ -51,7 +51,9 @@ export interface GenerateInput extends EvaluateInput {
   /** Short schema name for providers that label structured output ("curriculum_outline"). */
   name: string;
   maxTokens: number;
-  /** Images sent with the user message (revision material photos); only for providers with `images`. */
+  /** 0 for judging (recall grading); the provider's default otherwise. */
+  temperature?: number;
+  /** Images sent with the user message (sketches); only for providers with `images`. */
   images?: { mimeType: string; data: Buffer }[];
 }
 

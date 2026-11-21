@@ -55,7 +55,7 @@ export function geminiProvider(apiKey: string | undefined): TranscriptionProvide
       return { text: r.text.trim(), usage: { ...r.usage, audioSeconds: i.audioSeconds } };
     },
     evaluate: (i: EvaluateInput) => structured(i, 8192, 0),
-    generate: (i: GenerateInput) => structured(i, i.maxTokens, 0.3),
+    generate: (i: GenerateInput) => structured(i, i.maxTokens, i.temperature ?? 0.3),
   };
 
   async function structured(i: EvaluateInput, maxOutputTokens: number, temperature: number) {

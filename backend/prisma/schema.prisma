@@ -131,17 +131,20 @@ model Topic {
 }
 
 model Subtopic {
-  id          Int                  @id @default(autoincrement())
-  topicId     String
-  topic       Topic                @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  position    Int
-  name        String
-  completedAt DateTime?            @db.Timestamptz(3)
-  tasks       Task[]
-  prompts     RevisionPrompt[]
-  revision    RevisionSchedule?
-  checkpoints LearningCheckpoint[]
-  concepts    RevisionConcept[]
+  id               Int                  @id @default(autoincrement())
+  topicId          String
+  topic            Topic                @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  position         Int
+  name             String
+  completedAt      DateTime?            @db.Timestamptz(3)
+  tasks            Task[]
+  prompts          RevisionPrompt[]
+  revision         RevisionSchedule?
+  checkpoints      LearningCheckpoint[]
+  concepts         RevisionConcept[]
+  recallChecklists RecallChecklist[]
+  recallState      RecallState?
+  recallReviews    RecallReview[]
 
   @@unique([topicId, position])
 }
@@ -206,6 +209,9 @@ model Task {
   /// Set for scheduler-created revision tasks. At most one TODO task per schedule (partial unique index, REV-13).
   revisionScheduleId Int?
   revisionSchedule   RevisionSchedule? @relation(fields: [revisionScheduleId], references: [id], onDelete: SetNull)
+  /// Set for a recall task (docs/Recall-Plan.md): at most one TODO task per sub-topic in recall (partial unique index).
+  recallStateId      Int?
+  recallState        RecallState?      @relation(fields: [recallStateId], references: [id], onDelete: SetNull)
   createdAt          DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt          DateTime          @updatedAt @db.Timestamptz(3)
   sessions           StudySession[]
@@ -214,6 +220,7 @@ model Task {
   @@index([cityId, scheduledDate])
   @@index([cityId, status, scheduledDate])
   @@index([topicId])
+  @@index([recallStateId])
   @@index([stageId])
   @@index([revisionScheduleId])
 }
@@ -404,6 +411,8 @@ enum AiOperation {
   UNDERSTAND
   /// Building a topic's revision pack (Revision v2 plan §5).
   REVISION_PACK
+  /// Recall (docs/Recall-Plan.md): building a sub-topic's checklist and grading an explanation.
+  RECALL
 }
 
 /// One AI assessment of one answer to one prompt (AI design §5.1). Immutable once SUCCEEDED or FAILED.
@@ -599,6 +608,12 @@ model City {
   revisionSessions  RevisionSession[]
   revisionResponses RevisionResponse[]
   conceptResults    ConceptResult[]
+  recallChecklists  RecallChecklist[]
+  recallPoints      RecallPoint[]
+  recallStates      RecallState[]
+  recallReviews     RecallReview[]
+  recallResults     RecallPointResult[]
+  recallAnalyses    RecallAnalysis[]
   districts         District[]
   stages            Stage[]
   settings          Settings?
@@ -969,4 +984,189 @@ model ConceptResult {
   @@index([topicId, cycle])
   @@index([conceptId])
   @@index([cityId])
+}
+
+/**
+ * ---------------- Recall (docs/Recall-Plan.md) ----------------
+ */
+
+enum RecallReviewStatus {
+  /// The learner is recalling; transcribed parts and typed text are saved as they come.
+  DRAFT
+  /// Sent for grading; waiting for the grading model (or retrying after a busy provider).
+  WAITING
+  /// Graded: results are ready.
+  CHECKED
+  /// Closed by the learner after the results.
+  COMPLETE
+}
+
+enum RecallPointStatus {
+  ACCURATE
+  PARTIAL
+  MISSED
+}
+
+enum RecallDepth {
+  FOUNDATIONAL
+  INTERMEDIATE
+  MASTERY
+}
+
+enum RecallOutcome {
+  PASS
+  HOLD
+  LAPSE
+}
+
+/// A sub-topic's locked checklist (plan §4): built once from the curriculum, hidden until after the first review.
+model RecallChecklist {
+  id            Int            @id @default(autoincrement())
+  cityId        String         @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city          City           @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  subtopicId    Int
+  subtopic      Subtopic       @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  version       Int
+  provider      String
+  /// The model that wrote the checklist.
+  model         String
+  /// The model that grades explanations against it, pinned for the checklist's life (plan §5.5).
+  gradingModel  String
+  promptVersion String
+  /// "en" or "de", from the curriculum's own words: the checklist's language, and what recordings are transcribed as.
+  language      String         @default("en")
+  lockedAt      DateTime       @db.Timestamptz(3)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(3)
+  points        RecallPoint[]
+  reviews       RecallReview[]
+
+  @@unique([subtopicId, version])
+  @@index([cityId])
+}
+
+model RecallPoint {
+  id          Int                 @id @default(autoincrement())
+  cityId      String              @default("")
+  city        City                @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  checklistId Int
+  checklist   RecallChecklist     @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  /// c1, c2, … in checklist order.
+  code        String
+  position    Int
+  label       String
+  /// One line the grader uses to judge the point.
+  description String
+  tier        Int
+  weight      Int
+  /// Left out by the learner ("not part of this sub-topic"): not scored from then on.
+  leftOutAt   DateTime?           @db.Timestamptz(3)
+  results     RecallPointResult[]
+
+  @@unique([checklistId, code])
+  @@index([cityId])
+}
+
+/// When a learned sub-topic is next due (plan §6.3).
+model RecallState {
+  id             Int       @id @default(autoincrement())
+  cityId         String    @default("")
+  city           City      @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  subtopicId     Int       @unique
+  subtopic       Subtopic  @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  stage          Int       @default(0)
+  /// null while the sub-topic is not learned (unticked): nothing is due.
+  nextDueDate    DateTime? @db.Date
+  lastReviewDate DateTime? @db.Date
+  /// The last gap in days.
+  lastGapDays    Int?
+  tasks          Task[]
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([cityId, nextDueDate])
+}
+
+/// One recall of one sub-topic: the explanation, the grade, and what it did to the schedule. Kept as history.
+model RecallReview {
+  id               Int                 @id @default(autoincrement())
+  cityId           String              @default("")
+  city             City                @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  subtopicId       Int
+  subtopic         Subtopic            @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  checklistId      Int
+  checklist        RecallChecklist     @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  /// 1, 2, … per sub-topic.
+  attempt          Int
+  status           RecallReviewStatus  @default(DRAFT)
+  date             DateTime            @db.Date
+  /// Transcribed voice parts, in order (the audio is never stored).
+  spokenParts      Json                @default("[]")
+  typed            String              @default("")
+  /// The text that was graded (spoken parts then typed text), frozen when sent.
+  explanation      String              @default("")
+  gradingModel     String?
+  promptVersion    String?
+  score            Float?
+  depth            RecallDepth?
+  outcome          RecallOutcome?
+  /// [{ claim, correction }], each claim quoted from the explanation.
+  misconceptions   Json                @default("[]")
+  stageBefore      Int?
+  stageAfter       Int?
+  nextDueDate      DateTime?           @db.Date
+  /// Why grading is waiting (provider busy, invalid output), for the learner.
+  waitReason       String?
+  /// Phase 3: literal descriptions of sketches the learner drew from memory ([{ description }]); photos are never stored.
+  sketchParts      Json                @default("[]")
+  /// Phase 2: the senior engineer's follow-up question(s) about the gaps, and the learner's answer. Never changes the score.
+  followupQuestion String?
+  followupAnswer   String?
+  /// Phase 2: { foundationsSummary, architectureAndEdgeCasesSummary, focusNext, cuedReasoningRating } written at completion.
+  seniorVerdict    Json?
+  analysis         RecallAnalysis?
+  createdAt        DateTime            @default(now()) @db.Timestamptz(3)
+  submittedAt      DateTime?           @db.Timestamptz(3)
+  checkedAt        DateTime?           @db.Timestamptz(3)
+  completedAt      DateTime?           @db.Timestamptz(3)
+  results          RecallPointResult[]
+
+  @@unique([subtopicId, attempt])
+  @@index([cityId, status])
+}
+
+model RecallPointResult {
+  id                Int               @id @default(autoincrement())
+  cityId            String            @default("")
+  city              City              @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  reviewId          Int
+  review            RecallReview      @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  pointId           Int
+  point             RecallPoint       @relation(fields: [pointId], references: [id], onDelete: Cascade)
+  status            RecallPointStatus
+  /// The learner's own words that show the point (verified in code); null when missed.
+  evidence          String?
+  /// Shown only when asked in the senior-engineer step (phase 2); never changes the score or the date.
+  recalledWhenAsked Boolean           @default(false)
+
+  @@unique([reviewId, pointId])
+  @@index([cityId])
+}
+
+/// Phase 2: how a sub-topic's recall changed since earlier reviews, worked out in code (diffPayload), with a short summary
+/// written from that payload only (never from transcripts).
+model RecallAnalysis {
+  id          Int          @id @default(autoincrement())
+  cityId      String       @default("")
+  city        City         @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  reviewId    Int          @unique
+  review      RecallReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  subtopicId  Int
+  attempt     Int
+  diffPayload Json
+  /// "" when the summary could not be written; the payload is shown instead.
+  narrative   String       @default("")
+  model       String?
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([cityId, subtopicId])
 }

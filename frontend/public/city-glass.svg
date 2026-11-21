@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1064 900" preserveAspectRatio="xMidYMid slice">
+<style>
+.t{fill:var(--t)}.l{fill:var(--l)}.r{fill:var(--r)}.s{fill:var(--s)}
+.pt{fill:var(--pt)}.pl{fill:var(--pl)}.pr{fill:var(--pr)}
+.fe{--t:#a5b7c2;--l:#7f98a8;--r:#6b808d;--s:#c0cbcf;--pt:#d7dcdc;--pl:#b1bfc6;--pr:#9dafba}
+.be{--t:#b0c0ae;--l:#8ea58b;--r:#778b75;--s:#c7d0c2;--pt:#dbdfd5;--pl:#bac6b5;--pr:#a8b9a4}
+.da{--t:#d4c4a6;--l:#c2ab80;--r:#a3906c;--s:#dfd3bd;--pt:#e8e1d2;--pl:#d8caae;--pr:#cfbd9c}
+.pr-{--s:#d3cec7;--pt:#e2ded8;--pl:#c9c3bb;--pr:#bcb5ac}
+.ar{--s:#cec6ce;--pt:#dfdadc;--pl:#c2b9c5;--pr:#b3a8b8}
+.cl{--s:#c0cfcc;--pt:#d7dfdb;--pl:#b1c5c2;--pr:#9db7b5}
+.ai{--t:#d6b4a6;--l:#c4937f;--r:#a57c6b;--s:#dfc8bc;--pt:#e9dbd2;--pl:#d9bcae;--pr:#d0ab9b}
+</style>
+<defs>
+<radialGradient id="bg" cx="50%" cy="30%" r="80%"><stop offset="0" stop-color="#efece6"/><stop offset="1" stop-color="#e9e6df"/></radialGradient>
+<g id="plat"><path d="M0 11.2L153.6 88L0 164.8L-153.6 88Z" fill="rgba(60,55,45,.07)"/><path class="pr" d="M153.6 76.8L0 153.6L0 164.5L153.6 87.7Z"/><path class="pl" d="M-153.6 76.8L0 153.6L0 164.5L-153.6 87.7Z"/><path class="pt" d="M0 0L153.6 76.8L0 153.6L-153.6 76.8Z"/></g>
+<g id="h1"><path class="r" d="M28.8 14.4L0 28.8L0 -5.2L28.8 -19.6Z"/><path class="l" d="M-28.8 14.4L0 28.8L0 -5.2L-28.8 -19.6Z"/><path class="t" d="M0 -34L28.8 -19.6L0 -5.2L-28.8 -19.6Z"/></g>
+<g id="h2"><path class="r" d="M28.8 14.4L0 28.8L0 -25.6L28.8 -40Z"/><path class="l" d="M-28.8 14.4L0 28.8L0 -25.6L-28.8 -40Z"/><path class="t" d="M0 -54.4L28.8 -40L0 -25.6L-28.8 -40Z"/></g>
+<g id="h3"><path class="r" d="M28.8 14.4L0 28.8L0 -46L28.8 -60.4Z"/><path class="l" d="M-28.8 14.4L0 28.8L0 -46L-28.8 -60.4Z"/><path class="t" d="M0 -74.8L28.8 -60.4L0 -46L-28.8 -60.4Z"/></g>
+<path id="sl" class="s" d="M0 -3.4L28.8 11L0 25.4L-28.8 11Z"/>
+</defs>
+<rect width="1064" height="900" fill="url(#bg)"/>
+<path d="M196 5L420 117L644 229L420 341L644 453L420 565L644 677L420 789L644 901" fill="none" stroke="#d9d4c9" stroke-width="38" stroke-linejoin="round"/>
+<path d="M196 5L420 117L644 229L420 341L644 453L420 565L644 677L420 789L644 901" fill="none" stroke="#f3f0ea" stroke-width="2" stroke-dasharray="7 9" stroke-linecap="round"/>
+
+<g class="fe" transform="translate(420 40)"><use href="#plat"/>
+<use href="#h3" x="0" y="25.6"/><use href="#h2" x="44.8" y="48"/><use href="#h2" x="-44.8" y="48"/><use href="#h1" x="89.6" y="70.4"/><use href="#h3" x="0" y="70.4"/><use href="#h1" x="-89.6" y="70.4"/><use href="#h2" x="44.8" y="92.8"/><use href="#sl" x="-44.8" y="92.8"/><use href="#sl" x="0" y="115.2"/></g>
+
+<g class="be" transform="translate(644 152)"><use href="#plat"/>
+<use href="#h1" x="0" y="25.6"/><use href="#sl" x="44.8" y="48"/><use href="#h2" x="-44.8" y="48"/><use href="#sl" x="89.6" y="70.4"/><use href="#h1" x="0" y="70.4"/><use href="#sl" x="-89.6" y="70.4"/><use href="#sl" x="44.8" y="92.8"/><use href="#sl" x="-44.8" y="92.8"/><use href="#sl" x="0" y="115.2"/></g>
+
+<g class="da" transform="translate(420 264)"><use href="#plat"/>
+<use href="#h2" x="0" y="25.6"/><use href="#sl" x="44.8" y="48"/><use href="#sl" x="-44.8" y="48"/><use href="#h1" x="89.6" y="70.4"/><use href="#sl" x="0" y="70.4"/><use href="#sl" x="-89.6" y="70.4"/><use href="#sl" x="44.8" y="92.8"/><use href="#sl" x="-44.8" y="92.8"/><use href="#sl" x="0" y="115.2"/></g>
+
+<g class="pr-" transform="translate(644 376)"><use href="#plat"/>
+<use href="#sl" x="0" y="25.6"/><use href="#sl" x="44.8" y="48"/><use href="#sl" x="-44.8" y="48"/><use href="#sl" x="0" y="70.4"/><use href="#sl" x="44.8" y="92.8"/><use href="#sl" x="-44.8" y="92.8"/></g>
+
+<g class="ar" transform="translate(420 488)"><use href="#plat"/>
+<use href="#sl" x="0" y="25.6"/><use href="#sl" x="44.8" y="48"/><use href="#sl" x="-44.8" y="48"/><use href="#sl" x="89.6" y="70.4"/><use href="#sl" x="0" y="70.4"/><use href="#sl" x="-89.6" y="70.4"/></g>
+
+<g class="cl" transform="translate(644 600)"><use href="#plat"/>
+<use href="#sl" x="0" y="25.6"/><use href="#sl" x="44.8" y="48"/><use href="#sl" x="-44.8" y="48"/><use href="#sl" x="0" y="70.4"/><use href="#sl" x="0" y="115.2"/></g>
+
+<g class="ai" transform="translate(420 712)"><use href="#plat"/>
+<use href="#h1" x="0" y="25.6"/><use href="#sl" x="44.8" y="48"/><use href="#h2" x="-44.8" y="48"/><use href="#sl" x="89.6" y="70.4"/><use href="#sl" x="0" y="70.4"/><use href="#sl" x="-89.6" y="70.4"/><use href="#sl" x="44.8" y="92.8"/><use href="#sl" x="-44.8" y="92.8"/></g>
+</svg>

@@ -9,6 +9,7 @@ export const taskInclude = {
   subtopic: { select: { id: true, name: true, completedAt: true } },
   sessions: { select: { minutes: true } },
   revisionSchedule: { select: { id: true, scope: true, consecutiveFailures: true, correctionPending: true, lastScore: true } },
+  recallState: { select: { id: true, stage: true, lastReviewDate: true } },
 } satisfies Prisma.TaskInclude;
 
 export type TaskRow = Prisma.TaskGetPayload<{ include: typeof taskInclude }>;
@@ -31,7 +32,9 @@ export function taskDTO(t: TaskRow, today: ISODate) {
     // Revision tasks are named after their unit as it is now, so a curriculum rename never leaves a stale title.
     title: t.revisionSchedule
       ? `Revise: ${t.revisionSchedule.scope === "TOPIC" ? `${t.topic?.name ?? ""} (whole topic)` : (t.subtopic?.name ?? t.title.replace(/^Revise: /, ""))}`
-      : t.title,
+      : t.recallState
+        ? `Recall: ${t.subtopic?.name ?? t.title.replace(/^Recall: /, "")}`
+        : t.title,
     notes: t.notes,
     kind: t.kind,
     status: t.status,
@@ -58,6 +61,17 @@ export function taskDTO(t: TaskRow, today: ISODate) {
           dueDate: due,
           overdueDays: t.status === "TODO" && due < today ? diffDays(due, today) : 0,
           presentation: revisionPresentation({ correctionPending: correctionPending && t.status !== "DONE", nextDueDate: due, completed: t.status === "DONE", weak }, today),
+        }
+      : null,
+    // Recall tasks (docs/Recall-Plan.md): done by checking the recall; the original date is the due date.
+    recall: t.recallState
+      ? {
+          stateId: t.recallState.id,
+          stage: t.recallState.stage,
+          lastReviewDate: t.recallState.lastReviewDate ? d2i(t.recallState.lastReviewDate) : null,
+          dueDate: due,
+          overdueDays: t.status === "TODO" && due < today ? diffDays(due, today) : 0,
+          presentation: revisionPresentation({ correctionPending: false, nextDueDate: due, completed: t.status === "DONE", weak: false }, today),
         }
       : null,
   };

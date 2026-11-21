@@ -121,7 +121,6 @@ suite("multi-user foundation", () => {
     it("never shows or changes another user's city, whatever id is sent", async () => {
       const aTask = await prisma.task.findFirstOrThrow({ where: { cityId: "engineering", source: "PLAN" } });
       const aSub = await prisma.subtopic.findFirstOrThrow({ where: { topicId: "fe.ts", position: 1 } });
-      const aSchedule = await prisma.revisionSchedule.findFirstOrThrow({ where: { cityId: "engineering" } });
       // B names A's city: exactly like a missing city.
       expect((await asUser(app, bWith("engineering")).get("/api/today").expect(404)).body.error.code).toBe("CITY_NOT_FOUND");
       expect((await asUser(app, B).get("/api/cities/engineering").expect(404)).body.error.code).toBe("CITY_NOT_FOUND");
@@ -139,17 +138,19 @@ suite("multi-user foundation", () => {
       await asUser(app, own).post("/api/tasks").send({ title: "x", scheduledDate: "2026-11-24", estimatedMinutes: 30, topicId: "fe.ts" }).expect(404);
       await asUser(app, own).post("/api/sessions").send({ date: "2026-11-18", minutes: 10, topicId: "fe.ts" }).expect(404);
       await asUser(app, own).post("/api/sessions").send({ date: "2026-11-18", minutes: 10, taskId: aTask.id }).expect(404);
-      // A's revision unit answers exactly like a unit that does not exist at all (no existence oracle).
-      const attempt = (subtopicId: number) => asUser(app, own).post("/api/revision/attempts").send({ topicId: "fe.ts", subtopicId, templateKey: "explain", retrievalMethod: "CONCEPTUAL", score: 3, usedHints: false, usedNotes: false });
-      const theirs = await attempt(aSub.id).expect(409);
-      expect(theirs.body).toEqual((await attempt(99_999_999).expect(409)).body);
-      await asUser(app, own).post("/api/revision/evaluations").send({ scheduleId: aSchedule.id, templateKey: "explain", transcript: "x" }).expect(403); // AI off here; with AI on the schedule lookup is scoped too
       // Nothing of A's changed, and B's views contain nothing of A's.
       expect((await prisma.task.findUniqueOrThrow({ where: { id: aTask.id } })).title).toBe(aTask.title);
       expect((await prisma.subtopic.findUniqueOrThrow({ where: { id: aSub.id } })).completedAt).toBeNull();
       expect((await prisma.topic.findUniqueOrThrow({ where: { id: "fe.ts" } })).needsReview).toBe(false);
-      const overview = (await asUser(app, own).get("/api/revision/overview").expect(200)).body;
-      expect([...overview.due, ...overview.upcoming, ...overview.overdue].some((u: { topicId: string }) => !u.topicId.startsWith(bCity))).toBe(false);
+      // A's earlier revision history is not in B's archive.
+      const aSchedule = await prisma.revisionSchedule.create({ data: { cityId: "engineering", unit: `s:${aSub.id}`, scope: "SUBTOPIC", topicId: "fe.ts", subtopicId: aSub.id, eligibleSince: new Date("2026-11-17"), nextDueDate: new Date("2026-11-21") } });
+      await prisma.revisionAttempt.create({
+        data: {
+          cityId: "engineering", scheduleId: aSchedule.id, score: 2, effectiveScore: 2, retrievalMethod: "CONCEPTUAL", attemptDate: new Date("2026-11-18"),
+          usedHints: false, usedNotes: false, promptText: "p", correctionCompleted: true, intervalDays: 3,
+        },
+      });
+      expect((await asUser(app, own).get("/api/revision/archive").expect(200)).body).toEqual({ attempts: [], checkpoints: [] });
       expect((await asUser(app, own).get("/api/tasks?from=2026-11-01&to=2027-11-30").expect(200)).body.every((t: { id: number }) => t.id !== aTask.id)).toBe(true);
     });
 
@@ -214,17 +215,17 @@ suite("multi-user foundation", () => {
     it("records optional consent, lets it be withdrawn, and keeps required ones fixed", async () => {
       await asUser(app, B).post("/api/account/consents").send({ purpose: "AI_PROCESSING", granted: true }).expect(200);
       const w = await asUser(app, B).post("/api/account/consents").send({ purpose: "AI_PROCESSING", granted: false }).expect(200);
-      expect(w.body.current.find((c: { purpose: string }) => c.purpose === "AI_PROCESSING")).toMatchObject({ granted: false, optional: true, policyVersion: "2026-11-20.2" });
+      expect(w.body.current.find((c: { purpose: string }) => c.purpose === "AI_PROCESSING")).toMatchObject({ granted: false, optional: true, policyVersion: "2026-11-21" });
       expect(w.body.history.filter((h: { purpose: string }) => h.purpose === "AI_PROCESSING")).toHaveLength(2);
       await asUser(app, B).post("/api/account/consents").send({ purpose: "TERMS", granted: false }).expect(400);
     });
 
-    it("asks again for AI consent given under an older notice (revision material is now sent too)", async () => {
+    it("asks again for AI consent given under an older notice (recall now sends what the learner says)", async () => {
       const a = await prisma.user.findUniqueOrThrow({ where: { email: "a@example.test" } });
       await prisma.consentRecord.create({ data: { userId: a.id, purpose: "AI_PROCESSING", policyVersion: "2026-11-19", granted: true } });
       expect((await asUser(app, A).get("/api/ai/status").expect(200)).body.consented).toBe(false);
       const c = (await asUser(app, A).get("/api/account/consents").expect(200)).body.current.find((x: { purpose: string }) => x.purpose === "AI_PROCESSING");
-      expect(c).toMatchObject({ granted: true, policyVersion: "2026-11-19", currentVersion: "2026-11-20.2" });
+      expect(c).toMatchObject({ granted: true, policyVersion: "2026-11-19", currentVersion: "2026-11-21" });
       await asUser(app, A).post("/api/ai/consent").send({}).expect(200);
       expect((await asUser(app, A).get("/api/ai/status").expect(200)).body.consented).toBe(true);
     });

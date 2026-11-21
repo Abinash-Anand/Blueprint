@@ -5,6 +5,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../api/client";
 import type { Curriculum, District, Progress, Topic } from "../api/types";
+import { dayMonth } from "../lib/format";
 
 interface AppDataValue {
   curriculum: Curriculum | null;
@@ -94,9 +95,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         ...t,
         subtopics: t.subtopics.map((s) => (s.id === subtopicId ? { ...s, completedAt: completed ? new Date().toISOString() : null } : s)),
       }));
-      await mutate(() => api.setSubtopic(subtopicId, completed));
+      const r = await mutate(() => api.setSubtopic(subtopicId, completed));
+      // Recall (docs/Recall-Plan.md §3.1): say when it comes back, so the schedule is visible at once.
+      if (completed && r?.recallDue) showNotice(`Learned. Recall due on ${dayMonth(r.recallDue)}: it will be in Revision and on Today.`);
     },
-    [mutate],
+    [mutate, showNotice],
   );
 
   const patchTopic = useCallback(
