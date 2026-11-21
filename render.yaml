@@ -41,19 +41,16 @@ services:
       # frontend's static site proxies /api to it. See docs/Deploy-Render.md to check the value after deploying.
       - key: TRUST_PROXY
         value: "1"
-      # E-mail (sign-up verification, password reset).
+      # E-mail (sign-up verification, password reset). Render's free web services block the SMTP ports (25, 465,
+      # 587), so mail goes through Brevo's HTTPS API; MAIL_FROM must be a sender verified in the Brevo account.
       - key: MAIL_TRANSPORT
-        value: smtp
+        value: brevo
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
       - key: REQUIRE_EMAIL_VERIFICATION
         value: "true"
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        sync: false
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
       # AI (off unless AI_ENABLED is true); the same values as the local .env.
       - key: AI_ENABLED
         value: "true"
