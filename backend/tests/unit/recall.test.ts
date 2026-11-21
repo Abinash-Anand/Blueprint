@@ -37,6 +37,25 @@ describe("depth", () => {
     expect(depthOf(pts([1, "ACCURATE"], [2, "ACCURATE"]))).toBe("MASTERY");
     expect(tierShares(pts([1, "PARTIAL"], [2, "ACCURATE"]))).toEqual([0.5, 1, null]);
   });
+
+  it("counts a tier at exactly 70 % and not just below it", () => {
+    const at = (tier: number, earned: number, missed: number): ScoredPoint[] =>
+      [{ tier, weight: earned, status: "ACCURATE" }, { tier, weight: missed, status: "MISSED" }];
+    expect(depthOf([...at(1, 7, 3), ...at(2, 7, 3), ...at(3, 1, 9)])).toBe("INTERMEDIATE");
+    expect(depthOf([...at(1, 7, 3), ...at(2, 7, 3), ...at(3, 7, 3)])).toBe("MASTERY");
+    expect(depthOf([...at(1, 69, 31), ...at(2, 7, 3)])).toBe("FOUNDATIONAL");
+  });
+
+  it("leaves a left-out point out of its tier's share, so it can neither hold back nor lift the depth", () => {
+    // What the service passes in: only the points with leftOutAt == null.
+    const all = [{ tier: 3, weight: 3, status: "ACCURATE", leftOutAt: null }, { tier: 3, weight: 3, status: "MISSED", leftOutAt: new Date() }]
+      .map((p) => ({ ...p, status: p.status as PointStatus }));
+    const core = pts([1, "ACCURATE"], [2, "ACCURATE"]);
+    expect(depthOf([...core, ...all])).toBe("INTERMEDIATE"); // tier 3 at 50 % with the point counted
+    expect(depthOf([...core, ...all.filter((p) => !p.leftOutAt)])).toBe("MASTERY");
+    // Every tier-3 point left out: the tier has no active point and counts as met.
+    expect(tierShares([...core, ...all.filter((p) => p.tier !== 3)])[2]).toBeNull();
+  });
 });
 
 describe("result, stages and dates", () => {
@@ -192,5 +211,21 @@ describe("phase 2: cued reasoning and progress over time", () => {
       { ...view(3, 0.6, { 1: "ACCURATE" }), misconceptions: [again, other] },
     ], labels);
     expect(d.recurringMisconceptions).toEqual([{ claim: again.claim, correction: again.correction, seenBefore: 1 }]);
+  });
+});
+
+describe("prompts", () => {
+  it("asks for distinct checklist points and never an umbrella point over parts already listed", async () => {
+    const { checklistPrompt } = await import("../../src/modules/recall/prompts.js");
+    const { system } = checklistPrompt({ city: "C", district: "D", topic: "T", topicDescription: "about T", subtopic: "S", otherSubtopics: [], language: "en" });
+    expect(system).toContain("NEVER write an umbrella or summary point");
+    expect(system).toContain("does not overlap with any other point");
+  });
+
+  it("transcribes a sketch literally, word for word as agreed", async () => {
+    const { sketchPrompt } = await import("../../src/modules/recall/prompts.js");
+    expect(sketchPrompt({ district: "D", topic: "T", subtopic: "S", language: "en" }).system).toContain(
+      "Transcribe all text, labels, boxes, arrows, and notes shown in this diagram objectively and literally. Do not infer, explain, or fill in missing technical concepts.",
+    );
   });
 });

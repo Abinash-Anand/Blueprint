@@ -13,8 +13,10 @@ import { RULES } from "./rules.js";
  * v2 (21 Nov 2026), after the first real trial graded strong explanations 10–50 %: checklists keep to what a solid
  * learner explains (tier 3 only common pitfalls and trade-offs, at most two points); grading reads spoken paraphrase
  * generously, quotes short exact phrases, and lists only clear factual errors as misconceptions.
+ * v3 (21 Nov 2026): no umbrella point that only sums up points already on the list, so the learner is never asked to
+ * show the same idea twice.
  */
-export const CHECKLIST_PROMPT_VERSION = "recall-checklist-v2";
+export const CHECKLIST_PROMPT_VERSION = "recall-checklist-v3";
 /** v3 (21 Nov 2026): casing, spelling and transcription formatting are never misconceptions; sketch descriptions count. */
 export const GRADE_PROMPT_VERSION = "recall-grade-v3";
 
@@ -74,6 +76,8 @@ export function checklistPrompt(i: ChecklistInput, problems: string[] = []) {
     "You write the hidden checklist used to check a learner's active recall of one sub-topic of their curriculum.",
     "The learner will later explain from memory everything they know about the sub-topic; a grader then checks which of your points they showed.",
     `Write ${RULES.minPoints} to ${RULES.maxPoints} atomic points, each one idea a learner can show or miss on its own.`,
+    "Every point must be a distinct concept that does not overlap with any other point: a learner must never need the same words to show two points.",
+    "NEVER write an umbrella or summary point (for example 'The three kinds of X') when you already wrote separate points for its parts (one point for each kind). Write either the parts or the summary, never both.",
     "Every point must be something a learner who studied this sub-topic well is expected to explain from memory: the core of the sub-topic as it is taught, not everything that is true about it.",
     "Tier 1: what it is and why it exists (definition, purpose, the problem it solves). Tier 2: how it works and how it is used (the main mechanisms, syntax and everyday use). Tier 3: the common pitfalls and trade-offs that are taught with the sub-topic.",
     "Order the points by tier. Write two or three tier 1 points and two to four tier 2 points. Write at most two tier 3 points, and none when the sub-topic has no well-known pitfall.",
@@ -260,7 +264,8 @@ export function narrativePrompt(c: Context, diff: unknown) {
 
 /* ---------------- phase 3: sketches ---------------- */
 
-export const SKETCH_PROMPT_VERSION = "recall-sketch-v1";
+/** v2 (21 Nov 2026): opens with the strict transcription rule word for word. */
+export const SKETCH_PROMPT_VERSION = "recall-sketch-v2";
 export const sketchJsonSchema = {
   type: "object", additionalProperties: false, required: ["readable", "lines"],
   properties: {
@@ -274,6 +279,7 @@ export const SketchReply = z.object({ readable: z.boolean(), lines: z.array(z.st
 export function sketchPrompt(c: Context) {
   const system = [
     "You describe, literally and objectively, a sketch a learner drew from memory: a diagram, a data flow, a few boxes and arrows, or code written by hand.",
+    "Transcribe all text, labels, boxes, arrows, and notes shown in this diagram objectively and literally. Do not infer, explain, or fill in missing technical concepts.",
     "List every box or shape with its label, every arrow as 'from → to' with its label, groupings and nesting, and all handwritten text and code exactly as written, line by line.",
     "Do not infer, complete, correct, explain or judge anything. Do not add what the drawing does not show, even if it is the obvious next step. Mark a word you cannot read as [?].",
     "If the image shows no drawing, diagram, notes or code that can be read, set readable to false and lines to [].",
