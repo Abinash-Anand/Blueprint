@@ -8,6 +8,7 @@ import type { AuthService } from "../modules/auth/service.js";
 import { cookieName, readCookie } from "../modules/auth/security.js";
 import { cityScoped } from "./cityScope.js";
 import { HttpError } from "./http.js";
+import { withTimeZone } from "./zone.js";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -53,7 +54,9 @@ export const requireCity = (prisma: PrismaClient): RequestHandler => async (req,
     if (city.status === "ARCHIVED" && !SAFE.has(req.method)) throw new HttpError(409, "CITY_ARCHIVED", "This city is archived. Restore it to make changes.");
     req.city = city;
     req.db = cityScoped(prisma, city.id);
-    next();
+    // The rest of the request counts "today" in this city's time zone.
+    const settings = await prisma.settings.findUnique({ where: { cityId: city.id }, select: { timezone: true } });
+    withTimeZone(settings?.timezone, () => next());
   } catch (e) {
     next(e);
   }

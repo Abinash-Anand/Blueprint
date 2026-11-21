@@ -253,6 +253,8 @@ export interface Session {
 export interface Today {
   date: ISODate;
   today: ISODate;
+  /** The city's time zone: "today" is counted in it. */
+  timezone?: string;
   weekday: number;
   isRestDay: boolean;
   isBufferDay: boolean;
@@ -342,6 +344,8 @@ export interface Progress {
   core: { total: number; learned: number; demonstrated: number };
   practice: { total: number; done: number };
   road: Road;
+  /** What is realistically achievable with the learner's week (reported only; nothing is scheduled from it). */
+  forecast?: Forecast;
   stages: (Stage & {
     status: StageStatus;
     presentation?: Presentation;
@@ -751,4 +755,17 @@ export interface RecallMatrix {
   points: { id: number; code: string; label: string; tier: number; leftOut: boolean }[];
   attempts: { reviewId: number; attempt: number; date: ISODate; score: number | null; depth: RecallDepth | null; outcome: "PASS" | "HOLD" | "LAPSE" | null; cells: Record<number, { status: RecallPointStatus; recalledWhenAsked: boolean }> }[];
   analyses: { attempt: number; narrative: string; diff: RecallDiff }[];
+}
+
+/** The forecast (Blueprint relationship model): open new material against the week, due revision first. Minutes. */
+export interface Forecast {
+  remainingNewMinutes: number;
+  projectedFinish: ISODate | null;
+  planEnd: ISODate;
+  daysVsPlan: number | null;
+  targetDate: ISODate | null;
+  meetsTarget: boolean | null;
+  neededNewMinutesPerWeek: number | null;
+  week: { available: number; newMaterial: number; revision: number };
+  revisionLoad: { weekStart: ISODate; recalls: number; minutes: number }[];
 }

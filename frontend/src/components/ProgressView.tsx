@@ -1,7 +1,7 @@
 /** Progress and timeline (SRS §3.6–§3.7): only measurements that support a learning decision. */
 import { useState } from "react";
 import { api } from "../api/client";
-import type { Progress, RecallCoaching } from "../api/types";
+import type { Forecast, Progress, RecallCoaching } from "../api/types";
 import { INK, mix } from "../lib/color";
 import { dayMonth, hours1, monthName, pct, plural, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
@@ -47,6 +47,8 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
             detail={`${p.core.learned} learned · ${p.practice.done}/${p.practice.total} practical assignments done`}
           />
         </div>
+
+        {p.forecast && <ForecastView f={p.forecast} />}
 
         <div className="section">
           <h3>Districts · learned vs demonstrated</h3>
@@ -173,6 +175,45 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
  * newly locked in, what slipped and mistakes that came back, and the note written after its last review. Each opens
  * the sub-topic's recall over time.
  */
+/** How far "days" are from the plan, in words: "on the plan's last day", "3 weeks after it", "5 days before it". */
+const vsPlan = (days: number) => {
+  if (days === 0) return "on the plan's last day";
+  const n = Math.abs(days), unit = n >= 14 ? plural(Math.round(n / 7), "week") : plural(n, "day");
+  return `${unit} ${days > 0 ? "after" : "before"} the plan's end`;
+};
+const yearDate = (iso: string) => `${dayMonth(iso)} ${iso.slice(0, 4)}`;
+
+/** The forecast (Blueprint relationship model): what the learner's week realistically achieves. Reported only. */
+export function ForecastView({ f }: { f: Forecast }) {
+  const recalls = f.revisionLoad.reduce((a, w) => a + w.recalls, 0);
+  return (
+    <div className="section">
+      <h3>Forecast</h3>
+      <div className="grid4">
+        <Stat
+          label="Projected finish"
+          value={f.projectedFinish ? yearDate(f.projectedFinish) : f.remainingNewMinutes ? "Over 3 years" : "Done"}
+          detail={f.projectedFinish && f.daysVsPlan !== null ? `${hours1(f.remainingNewMinutes)} of new material left · ${vsPlan(f.daysVsPlan)} (${yearDate(f.planEnd)})` : `${hours1(f.remainingNewMinutes)} of new material left`}
+        />
+        <Stat
+          label="Target date"
+          value={f.targetDate ? yearDate(f.targetDate) : "None"}
+          detail={f.meetsTarget === null ? "No finish date was set" : f.meetsTarget ? "On track at this pace"
+            : f.neededNewMinutesPerWeek !== null ? `Not at this pace: it needs about ${hours1(f.neededNewMinutesPerWeek)} of new material a week (you plan ${hours1(f.week.newMaterial)})` : "Already past"}
+        />
+        <Stat label="Your week" value={hours1(f.week.available)} detail={`${hours1(f.week.newMaterial)} new material · ${hours1(f.week.revision)} revision`} />
+        <Stat
+          label="Revision, next 4 weeks"
+          value={recalls}
+          unit={recalls === 1 ? "recall" : "recalls"}
+          detail={`${f.revisionLoad.map((w) => w.recalls).join(" · ")} a week, from the week of ${dayMonth(f.revisionLoad[0].weekStart)}`}
+        />
+      </div>
+      <div className="sub">Best case: every recall remembered; sub-topics not yet in recall add none. Due revision comes first in your week, and what does not fit in its revision time is taken from new material. Nothing is moved by this forecast.</div>
+    </div>
+  );
+}
+
 export function RecallCoachingView({ c }: { c: RecallCoaching }) {
   if (!c.subtopics.length) return null;
   const delta = (d: number | null) => (d === null ? "first recall" : d === 0 ? "same as last time" : `${d > 0 ? "+" : "−"}${Math.round(Math.abs(d) * 100)} points since last time`);

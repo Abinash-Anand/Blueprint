@@ -178,7 +178,7 @@ export function App() {
               </button>
             ))}
           </nav>
-          <span className="vdate">{today ? `${shortDate(today.today)} · Europe/Berlin` : ""}</span>
+          <span className="vdate">{today ? `${shortDate(today.today)}${today.timezone ? ` · ${today.timezone}` : ""}` : ""}</span>
           <TopBar />
         </header>
         {view === "today" && <TodayView date={param} onDate={(d) => go({ view: "today", param: d }, true)} onOpenTopic={openTopic} onOpenRevision={() => go({ view: "revision", param: null })} />}

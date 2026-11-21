@@ -8,6 +8,7 @@ import { cityPresentation } from "../../domain/presentation.js";
 import type { Clock } from "../../lib/clock.js";
 import { cityScoped } from "../../lib/cityScope.js";
 import { HttpError } from "../../lib/http.js";
+import { recordAvailability } from "../schedule/service.js";
 import { TEMPLATES, type TemplateId, applyCurriculum } from "./apply.js";
 import { CURRICULUM_CONTRACT_VERSION, type CurriculumDocument, diffCurriculum, shiftDocument, validateCurriculum } from "./contract.js";
 
@@ -232,6 +233,7 @@ export function cityService(prisma: PrismaClient, clock: Clock, userId: string) 
         await db.topic.deleteMany({ where: { id: { in: ids } } });
       }
       await applyCurriculum(db, doc, c.idPrefix, clock.today());
+      await recordAvailability(db, c.constraints);
       for (const k of changes.removed.districts) await db.district.deleteMany({ where: { id: `${c.idPrefix}${k}`, topics: { none: {} } } });
       const appliedAt = new Date();
       await prisma.$transaction([
