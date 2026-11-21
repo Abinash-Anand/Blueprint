@@ -116,12 +116,13 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         // Recall (docs/Recall-Plan.md §3.1): sub-topics due this week; anything already overdue is shown on today.
         prisma.recallState.findMany({
           where: { nextDueDate: { not: null, lte: i2d(we) } },
-          select: { nextDueDate: true, subtopic: { select: { name: true } } },
+          select: { nextDueDate: true, subtopic: { select: { name: true } }, tasks: { where: { status: "TODO" }, select: { scheduledDate: true }, orderBy: { scheduledDate: "asc" }, take: 1 } },
           orderBy: [{ nextDueDate: "asc" }, { subtopicId: "asc" }],
         }),
       ]);
+      // The day a recall is planned on (its open task, moved off rest days and over the daily limit), else its due date.
       const recallDay = (r: (typeof recalls)[number]) => {
-        const due = d2i(r.nextDueDate!);
+        const due = d2i(r.tasks[0]?.scheduledDate ?? r.nextDueDate!);
         return due < today ? today : due;
       };
       const live = tasks.filter((t) => t.status !== "SKIPPED");

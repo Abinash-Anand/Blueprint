@@ -46,6 +46,23 @@ describe("Revision tab", () => {
     expect(screen.getByRole("button", { name: "Recall over time: Operators" }).textContent).toMatch(/20 Nov · Intermediate · partly remembered · next 24 Nov.*62 %/);
   });
 
+  it("with nothing due, shows the next recall and puts the next two weeks first, so no half of the page is empty", async () => {
+    const saved = home;
+    home = { ...home, due: [], later: [], open: [], upcoming: [item(4, "Testing", { nextDueDate: "2026-11-25" }), item(5, "Guards", { nextDueDate: "2026-11-27" })] };
+    try {
+      const { container } = render(<RevisionView />);
+      expect(await screen.findByRole("heading", { name: "Nothing to recall today" })).toBeTruthy();
+      expect(screen.queryByRole("region", { name: "Up next" })).toBeNull();
+      const soon = screen.getByRole("region", { name: "Next recall" });
+      expect(soon.textContent).toMatch(/Next recall · 25 Nov.*Testing/);
+      expect(within(soon).getByRole("button", { name: "Recall Testing early" })).toBeTruthy();
+      const [first] = container.querySelectorAll(".g-cols > div");
+      expect(first.textContent).toMatch(/Next two weeks.*Testing.*Guards/);
+    } finally {
+      home = saved;
+    }
+  });
+
   it("opens the recall page for a sub-topic", async () => {
     render(<RevisionView />);
     fireEvent.click(await screen.findByRole("button", { name: "Revise Subjects" }));
