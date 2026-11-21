@@ -26,7 +26,8 @@ vi.mock("../api/client", () => ({
   },
   ApiError: class extends Error {},
 }));
-vi.mock("../state/AppData", () => ({ useAppData: () => ({ version: 0, reload: async () => {} }) }));
+const invalidate = vi.fn(async () => {});
+vi.mock("../state/AppData", () => ({ useAppData: () => ({ version: 0, reload: async () => {}, invalidate }) }));
 
 import { RevisionView } from "../components/RevisionView";
 
@@ -34,7 +35,7 @@ describe("Revision tab", () => {
   it("puts the next recall first, then what is due today, what waits for a free day, and the next two weeks", async () => {
     render(<RevisionView />);
     expect(await screen.findByRole("heading", { name: "2 sub-topics to recall today" })).toBeTruthy();
-    expect(screen.getByText(/Up to 3 reviews a day · 1 done today/)).toBeTruthy();
+    expect(screen.getByText(/Up to 3 reviews planned a day · 1 done today\./)).toBeTruthy();
     const next = screen.getByRole("region", { name: "Up next" });
     expect(next.textContent).toMatch(/Subjects.*RxJS · Frontend · first recall/);
     expect(within(next).getByRole("button", { name: "Start recall" })).toBeTruthy();
@@ -63,6 +64,17 @@ describe("Revision tab", () => {
     }
   });
 
+  it("says when recalls done today go beyond the daily plan", async () => {
+    const saved = home;
+    home = { ...home, doneToday: 4 };
+    try {
+      render(<RevisionView />);
+      expect(await screen.findByText(/Up to 3 reviews planned a day · 4 done today, 1 extra\./)).toBeTruthy();
+    } finally {
+      home = saved;
+    }
+  });
+
   it("opens the recall page for a sub-topic", async () => {
     render(<RevisionView />);
     // The recall flow is a page with its own address (Back and reload work).
@@ -76,6 +88,8 @@ describe("Revision tab", () => {
     const next = await screen.findByRole("region", { name: "Up next" });
     fireEvent.click(within(next).getByRole("button", { name: "Not today: Subjects" }));
     await waitFor(() => expect(postponeRecall).toHaveBeenCalled());
+    // Every view refetches (the sidebar's Today card and the tab badge too), not only this list.
+    await waitFor(() => expect(invalidate).toHaveBeenCalled());
     location.hash = "#/revision";
     fireEvent.click(within(next).getByRole("button", { name: "Start recall" }));
     expect(location.hash).toBe("#/recall/1");

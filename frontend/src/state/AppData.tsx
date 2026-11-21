@@ -16,6 +16,8 @@ interface AppDataValue {
   topicById: Map<string, Topic>;
   districtById: Map<string, District>;
   reload: () => Promise<void>;
+  /** Refetch shared data and tell every view to refetch its own (after a change made outside mutate, e.g. a recall). */
+  invalidate: () => Promise<void>;
   /** Run a mutation, then refresh shared data. Errors are shown as a notice. */
   mutate: <T>(fn: () => Promise<T>) => Promise<T | undefined>;
   toggleSubtopic: (topicId: string, subtopicId: number, completed: boolean) => Promise<void>;
@@ -63,6 +65,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     void reload();
   }, [reload]);
 
+  const invalidate = useCallback(async () => {
+    await reload();
+    setVersion((v) => v + 1);
+  }, [reload]);
+
   const mutate = useCallback(
     async <T,>(fn: () => Promise<T>) => {
       try {
@@ -97,7 +104,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }));
       const r = await mutate(() => api.setSubtopic(subtopicId, completed));
       // Recall (docs/Recall-Plan.md §3.1): say when it comes back, so the schedule is visible at once.
-      if (completed && r?.recallDue) showNotice(`Learned. Recall due on ${dayMonth(r.recallDue)}: it will be in Revision and on Today.`);
+      if (completed && r) {
+        const study = r.studyTasksDone ? ` ${r.studyTasksDone === 1 ? "Its study task is" : `Its ${r.studyTasksDone} study tasks are`} done.` : "";
+        if (r.recallDue) showNotice(`Learned.${study} Recall due on ${dayMonth(r.recallDue)}: it will be in Revision and on Today.`);
+        else if (study) showNotice(`Learned.${study}`);
+      }
     },
     [mutate, showNotice],
   );
@@ -117,10 +128,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       for (const t of d.topics) topicById.set(t.id, t);
     }
     return {
-      curriculum, progress, loadError, version, topicById, districtById, reload, mutate,
+      curriculum, progress, loadError, version, topicById, districtById, reload, invalidate, mutate,
       toggleSubtopic, patchTopic, notice, setNotice: showNotice,
     };
-  }, [curriculum, progress, loadError, version, reload, mutate, toggleSubtopic, patchTopic, notice, showNotice]);
+  }, [curriculum, progress, loadError, version, reload, invalidate, mutate, toggleSubtopic, patchTopic, notice, showNotice]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -83,7 +83,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
             )}
             {compact && t.scheduledDate !== today && <span>on {dayMonth(t.scheduledDate)}</span>}
             {t.subtopic && !rv && (
-              <label className="subchk" title="Ticks the floor in the curriculum. Separate from completing the task.">
+              <label className="subchk" title="Ticks the floor in the curriculum and completes this sub-topic's open study tasks (practice tasks stay open).">
                 <input type="checkbox" aria-label={`Sub-topic "${t.subtopic.name}" learned`} checked={t.subtopic.completed} onChange={(e) => void toggleSubtopic(t.topic!.id, t.subtopic!.id, e.target.checked)} />
                 sub-topic learned
               </label>

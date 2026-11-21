@@ -27,7 +27,7 @@ import {
   curriculumLanguage, gradeJsonSchema, gradePrompt, narrativeJsonSchema, narrativePrompt, probeJsonSchema, probePrompt, sketchJsonSchema, sketchPrompt,
   toDraft, toGradeReply, verdictJsonSchema, verdictPrompt,
 } from "./prompts.js";
-import { completeRecallTask, syncRecallTasks } from "./tasks.js";
+import { RECALL_TASK_MINUTES, completeRecallTask, syncRecallTasks } from "./tasks.js";
 import {
   type AttemptView, type Depth, GradeError, type PointStatus, checklistProblems, computeSessionDiff, cuedRating, dailyLimit, depthOf, imageType, nextSchedule, outcomeOf,
   recallScore, tierShares, verifyGrade,
@@ -196,8 +196,16 @@ export function recallService(d: RecallDeps) {
     return { ...graded, misconceptions: confirmed };
   }
 
-  /** Applies a verified grade to the review and the schedule (§6), in one transaction. */
-  async function applyGrade(cityId: string, review: RecallReview, checklist: RecallChecklist & { points: RecallPoint[] }, graded: Awaited<ReturnType<typeof gradeOnce>>) {
+  /**
+   * Applies a verified grade to the review and the schedule (§6), in one transaction with the next recall task's
+   * planning. The first grade also completes the open recall task and logs its minutes as study time (so Actual hours
+   * count recall). A regrade (a point left out while the results are open) only works the result out again from the
+   * stage the review started at: it completes no task, logs no time, and keeps when and how the review was checked.
+   */
+  async function applyGrade(
+    cityId: string, review: RecallReview, checklist: RecallChecklist & { points: RecallPoint[] }, graded: Awaited<ReturnType<typeof gradeOnce>>,
+    opts: { regrade?: boolean } = {},
+  ) {
     const db = cityScoped(d.prisma, cityId);
     const scored = checklist.points.filter((p) => !p.leftOutAt);
     const status = new Map(graded.points.map((p) => [p.code, p]));
@@ -205,10 +213,11 @@ export function recallService(d: RecallDeps) {
     const score = recallScore(points, graded.misconceptions.length);
     const outcome = outcomeOf(score, graded.misconceptions.length);
     const state = await db.recallState.findUnique({ where: { subtopicId: review.subtopicId } });
-    const stageBefore = state?.stage ?? 0;
+    const stageBefore = opts.regrade ? (review.stageBefore ?? 0) : (state?.stage ?? 0);
     const reviewed = d2i(review.date);
     const next = nextSchedule(stageBefore, outcome, reviewed);
-    await d.prisma.$transaction(async (tx) => {
+    const now = d.clock.now();
+    await db.$transaction(async (tx) => {
       await tx.recallPointResult.deleteMany({ where: { reviewId: review.id } });
       await tx.recallPointResult.createMany({
         data: scored.map((p) => ({ cityId, reviewId: review.id, pointId: p.id, status: status.get(p.code)!.status, evidence: status.get(p.code)!.evidence })),
@@ -216,9 +225,9 @@ export function recallService(d: RecallDeps) {
       await tx.recallReview.update({
         where: { id: review.id },
         data: {
-          status: "CHECKED", gradingModel: checklist.gradingModel, promptVersion: GRADE_PROMPT_VERSION, score, depth: depthOf(points), outcome,
+          status: "CHECKED", score, depth: depthOf(points), outcome,
           misconceptions: graded.misconceptions as unknown as Prisma.InputJsonValue, stageBefore, stageAfter: next.stage, nextDueDate: i2d(next.nextDueDate),
-          waitReason: null, checkedAt: d.clock.now(),
+          ...(opts.regrade ? {} : { gradingModel: checklist.gradingModel, promptVersion: GRADE_PROMPT_VERSION, waitReason: null, checkedAt: now }),
         },
       });
       const st = await tx.recallState.upsert({
@@ -226,10 +235,16 @@ export function recallService(d: RecallDeps) {
         create: { cityId, subtopicId: review.subtopicId, stage: next.stage, nextDueDate: i2d(next.nextDueDate), lastReviewDate: review.date, lastGapDays: next.gap },
         update: { stage: next.stage, nextDueDate: i2d(next.nextDueDate), lastReviewDate: review.date, lastGapDays: next.gap },
       });
-      // The recall task is done by this check; the next one is planned below.
-      await completeRecallTask(tx, st.id, reviewed, d.clock.now());
+      if (!opts.regrade) {
+        // The recall task is done by this check, and its minutes count as study time.
+        const done = await completeRecallTask(tx, st.id, reviewed, now);
+        const sub = await tx.subtopic.findUnique({ where: { id: review.subtopicId }, select: { topicId: true, name: true } });
+        await tx.studySession.create({
+          data: { cityId, date: review.date, minutes: RECALL_TASK_MINUTES, taskId: done, topicId: sub?.topicId ?? null, note: `Recall: ${sub?.name ?? ""}`.trim() },
+        });
+      }
+      await syncRecallTasks(tx, today());
     });
-    await syncRecallTasks(db, today());
     if (graded.rejectedQuotes) console.log(JSON.stringify({ level: "info", msg: "Recall quotes rejected", count: graded.rejectedQuotes }));
   }
 
@@ -692,9 +707,8 @@ export function recallService(d: RecallDeps) {
           points: scored.map((x) => ({ code: x.code, status: byPoint.get(x.id)?.status ?? ("MISSED" as PointStatus), evidence: byPoint.get(x.id)?.evidence ?? null })),
           misconceptions: misconceptionsOf(latest.misconceptions), rejectedQuotes: 0,
         };
-        // The schedule is worked out again from where this review started.
-        await db.recallState.update({ where: { subtopicId: latest.subtopicId }, data: { stage: latest.stageBefore ?? 0 } });
-        await applyGrade(cityId, latest, checklist, graded);
+        // The schedule is worked out again from where this review started; no task is completed a second time.
+        await applyGrade(cityId, latest, checklist, graded, { regrade: true });
         return reviewDTO(await loadReview(db, latest.id));
       }
       return null;
@@ -722,8 +736,10 @@ export function recallService(d: RecallDeps) {
       const s = await db.recallState.findUnique({ where: { subtopicId } });
       if (!s?.nextDueDate) throw notFound("Sub-topic in recall");
       const tomorrow = addDays(today(), 1);
-      await db.recallState.update({ where: { subtopicId }, data: { nextDueDate: i2d(tomorrow) } });
-      await syncRecallTasks(db, today());
+      await db.$transaction(async (tx) => {
+        await tx.recallState.update({ where: { subtopicId }, data: { nextDueDate: i2d(tomorrow) } });
+        await syncRecallTasks(tx, today());
+      });
       return { subtopicId, nextDueDate: tomorrow };
     },
 

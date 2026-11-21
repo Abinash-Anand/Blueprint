@@ -1,6 +1,8 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { d2i, i2d } from "../../db.js";
 import { HttpError, notFound } from "../../lib/http.js";
+import type { ISODate } from "../../domain/dates.js";
+import { syncRecallTasks } from "../recall/tasks.js";
 
 export const stageInclude = { districts: { select: { id: true } } } satisfies Prisma.StageInclude;
 type StageRow = Prisma.StageGetPayload<{ include: typeof stageInclude }>;
@@ -34,7 +36,7 @@ export async function loadSettings(prisma: Db) {
   };
 }
 
-export function scheduleService(prisma: PrismaClient) {
+export function scheduleService(prisma: PrismaClient, today?: () => ISODate) {
   return {
     async listStages() {
       const rows = await prisma.stage.findMany({ orderBy: { position: "asc" }, include: stageInclude });
@@ -77,6 +79,13 @@ export function scheduleService(prisma: PrismaClient) {
             })]
           : []),
       ]);
+      // Study days and the daily recall limit decide where recalls are planned: open recall tasks are planned again.
+      if (today) {
+        await prisma.$transaction(async (tx) => {
+          await tx.task.deleteMany({ where: { recallStateId: { not: null }, status: "TODO" } });
+          await syncRecallTasks(tx, today());
+        });
+      }
       return this.getSettings();
     },
   };

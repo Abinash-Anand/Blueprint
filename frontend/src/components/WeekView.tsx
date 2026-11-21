@@ -40,6 +40,9 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
   const restNames = w.days.filter((d) => d.isRestDay).map((d) => new Date(`${d.date}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" }));
   const rest = restNames.length === 0 ? "no rest day" : `${restNames.join(" and ")} ${restNames.length > 1 ? "are" : "is"} rest`;
   const todo = w.tasks.filter((x) => x.status === "TODO");
+  // Recall tasks count as assignments too; say how many of the done ones were recalls.
+  const recallDone = w.tasks.filter((x) => x.status === "DONE" && x.kind === "REVISION").length;
+  const doneSplit = `${t.tasksDone - recallDone} study · ${recallDone} recall`;
 
   return (
     <div className="view">
@@ -69,7 +72,7 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
             value={hours1(t.actualMinutes)}
             detail={<Bar value={t.targetMinutes ? t.actualMinutes / t.targetMinutes : 0} />}
           />
-          <Stat label="Completed" value={t.tasksDone} unit={`/ ${t.tasksDone + t.tasksRemaining}`} detail={t.tasksRemaining ? `${hm(t.remainingMinutes)} of work remaining` : "Nothing remaining"} />
+          <Stat label="Completed" value={t.tasksDone} unit={`/ ${t.tasksDone + t.tasksRemaining}`} detail={`${doneSplit}${t.tasksRemaining ? ` · ${hm(t.remainingMinutes)} remaining` : " · nothing remaining"}`} />
         </div>
 
         <div className="section">
