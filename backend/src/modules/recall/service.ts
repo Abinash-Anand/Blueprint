@@ -680,6 +680,23 @@ export function recallService(d: RecallDeps) {
       return null;
     },
 
+    /**
+     * Rebuilds a sub-topic's checklist with the current prompt (an owner's decision, §4, §14): a new version, built and
+     * locked like the first. Earlier versions and their reviews stay as they were graded, and the schedule is kept. An
+     * unsent draft moves to the new version, since nothing in it is graded yet; a review on its results stays on its
+     * version; a review waiting for its grade stops the rebuild.
+     */
+    async rebuildChecklist(db: PrismaClient, cityId: string, subtopicId: number) {
+      const old = await currentChecklist(db, subtopicId);
+      if (!old) throw notFound("Checklist");
+      if (await db.recallReview.count({ where: { subtopicId, status: "WAITING" } }))
+        throw new HttpError(409, "REVIEW_WAITING", "A recall of this sub-topic is being checked; rebuild its checklist afterwards.");
+      const fresh = await buildChecklist(db, cityId, subtopicId);
+      const moved = await db.recallReview.updateMany({ where: { subtopicId, checklistId: old.id, status: "DRAFT" }, data: { checklistId: fresh.id } });
+      const view = (c: typeof old) => ({ id: c.id, version: c.version, promptVersion: c.promptVersion, points: c.points.map((p) => ({ tier: p.tier, label: p.label })) });
+      return { subtopicId, from: view(old), to: view(fresh), movedDrafts: moved.count };
+    },
+
     /** "Not today": the sub-topic moves to tomorrow without a result (§3.2). */
     async postpone(db: PrismaClient, subtopicId: number) {
       const s = await db.recallState.findUnique({ where: { subtopicId } });

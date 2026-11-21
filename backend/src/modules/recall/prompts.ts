@@ -15,8 +15,10 @@ import { RULES } from "./rules.js";
  * generously, quotes short exact phrases, and lists only clear factual errors as misconceptions.
  * v3 (21 Nov 2026): no umbrella point that only sums up points already on the list, so the learner is never asked to
  * show the same idea twice.
+ * v4 (21 Nov 2026): a last self-check against umbrella points, which v3 still wrote once; code now also sends a
+ * draft with one back (rules.ts, umbrellaPoints).
  */
-export const CHECKLIST_PROMPT_VERSION = "recall-checklist-v3";
+export const CHECKLIST_PROMPT_VERSION = "recall-checklist-v4";
 /** v3 (21 Nov 2026): casing, spelling and transcription formatting are never misconceptions; sketch descriptions count. */
 export const GRADE_PROMPT_VERSION = "recall-grade-v3";
 
@@ -84,6 +86,7 @@ export function checklistPrompt(i: ChecklistInput, problems: string[] = []) {
     "Leave out internals, rare edge cases, version history, exact numbers, API trivia and anything a typical course on this sub-topic would not teach.",
     "Stay inside this sub-topic: the topic's other sub-topics are listed so you leave their content out.",
     `Write labels and descriptions in ${LANGUAGE[i.language]}, each on one line.`,
+    "Before you answer, check every point once more: if a point counts or lists things that other points already cover, remove it.",
   ].join("\n");
   const user = [
     tag("stage", "recall-checklist"),

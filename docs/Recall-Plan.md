@@ -195,7 +195,7 @@ All three phases are built, tested and live. Where the build differs from the pl
 
 | Phase | Status |
 |---|---|
-| 1. Recall core | Live since 20 Nov. Grader pinned to Qwen 3.5 397B at temperature 0, never a fallback model. Prompts: checklist `recall-checklist-v3` (core points only, at most two tier-3 points; v3: distinct points, never an umbrella point over parts already listed), grading `recall-grade-v3` (generous with paraphrase; casing, spelling and speech-to-text formatting are never misconceptions). |
+| 1. Recall core | Live since 20 Nov. Grader pinned to Qwen 3.5 397B at temperature 0, never a fallback model. Prompts: checklist `recall-checklist-v4` (core points only, at most two tier-3 points; v3: distinct points, never an umbrella point over parts already listed; v4: a last self-check, and code sends back a draft with an umbrella point, `umbrellaPoints` in rules.ts), grading `recall-grade-v3` (generous with paraphrase; casing, spelling and speech-to-text formatting are never misconceptions). |
 | 2. Senior engineer and progress | Live since 21 Nov. Follow-up (`POST /probe`, `/followup`), verdict (`/complete`), comparison and progress note (`RecallAnalysis`), grid (`GET /subtopics/:id/matrix`). |
 | 3. Sketches | Live since 21 Nov. Up to 3 photos (PNG, JPEG, WebP, 5 MB); only the literal description is kept and graded as `[SKETCH n]`. |
 
@@ -211,5 +211,5 @@ The consistency test passed on 21 Nov with `recall-grade-v3`: 95.7 % of point la
 ### 14.3 Open
 
 1. **Scoring weight of edge cases: decided 21 Nov 2026.** Tier weights 1/2/3 made the two tier-3 points about 43 % of a checklist, so a strong explanation that skipped them could not reach *remembered well*: in the consistency test, strong explanations of Subjects scored 57 % and of Guards 46 to 64 %. The score now counts tiers 1 and 2 only and tier 3 decides Mastery depth (§6.1). On the same labels that gives 100 % (PASS) and 62 % (HOLD), while partial and wrong explanations still lapse. Recalls checked before the change keep their scores and dates.
-2. **Live data from before the v2 and v3 prompts:** re-grading the 2 recalls graded with v1, and rebuilding the 4 checklists built with v1. Both wait for a decision.
+2. **Live data from before the v2 and v3 prompts:** the 4 checklists built with v1 and the Observers checklist (v2, with an umbrella point) were rebuilt on 21 Nov as new versions (v3, and Observers again with v4) by `src/scripts/rebuild-recall-checklists.ts`; graded reviews stay on their versions, an unsent draft moved, schedules unchanged. Re-grading the 2 recalls graded with v1 still waits for a decision.
 

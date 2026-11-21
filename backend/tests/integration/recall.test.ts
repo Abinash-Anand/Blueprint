@@ -9,6 +9,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../../prisma/seed.js";
 import { createApp } from "../../src/app.js";
+import { cityScoped } from "../../src/lib/cityScope.js";
 import { loadAuthConfig } from "../../src/config.js";
 import { TestClock } from "../../src/lib/clock.js";
 import { loadAiConfig } from "../../src/modules/ai/config.js";
@@ -16,6 +17,7 @@ import { createProviders } from "../../src/modules/ai/providers/factory.js";
 import { fakeProvider } from "../../src/modules/ai/providers/fake.js";
 import { type AiProviders, ProviderError } from "../../src/modules/ai/providers/types.js";
 import { memoryMailer } from "../../src/modules/auth/mailer.js";
+import type { RecallService } from "../../src/modules/recall/service.js";
 import { asUser, signIn } from "../helpers/auth.js";
 import { wav } from "../helpers/wav.js";
 
@@ -133,7 +135,7 @@ suite("recall", () => {
     expect(r).toMatchObject({ status: "DRAFT", attempt: 1, spokenParts: [], typed: "", result: null });
     expect(JSON.stringify(r)).not.toMatch(/definition|mechanism|pitfalls/i);
     const c = await prisma.recallChecklist.findFirstOrThrow({ where: { subtopicId: subA }, include: { points: { orderBy: { position: "asc" } } } });
-    expect(c).toMatchObject({ version: 1, provider: "fake", language: "en", promptVersion: "recall-checklist-v3" });
+    expect(c).toMatchObject({ version: 1, provider: "fake", language: "en", promptVersion: "recall-checklist-v4" });
     expect(c.points.map((p) => [p.code, p.tier, p.weight])).toEqual([["c1", 1, 1], ["c2", 1, 1], ["c3", 2, 2], ["c4", 2, 2], ["c5", 2, 2], ["c6", 3, 3]]);
     // Starting again returns the same open review; no second checklist.
     expect((await asUser(app, H).post("/api/recall/reviews").send({ subtopicId: subA }).expect(201)).body.id).toBe(r.id);
@@ -355,5 +357,31 @@ suite("recall", () => {
     // What the sketch shows counts like what was said.
     expect(r.result.points.find((x: { code: string }) => x.code === "c3")).toMatchObject({ status: "ACCURATE", evidence: "mechanism" });
     await asUser(app, H).delete(`/api/recall/reviews/${draft.id}/sketches/0`).expect(409); // sent: no more changes
+  });
+
+  it("rebuilds a checklist as a new version: graded reviews stay on theirs, an unsent draft moves, the schedule is kept", async () => {
+    const recall = app.locals.recall as RecallService;
+    const old = await prisma.recallChecklist.findFirstOrThrow({ where: { subtopicId: subA }, orderBy: { version: "desc" }, include: { reviews: true, points: true } });
+    const graded = old.reviews.filter((r) => r.status !== "DRAFT").map((r) => r.id);
+    expect(graded.length).toBeGreaterThan(0);
+    const last = await prisma.recallReview.findFirstOrThrow({ where: { subtopicId: subA }, orderBy: { attempt: "desc" } });
+    const draft = last.status === "DRAFT" ? last
+      : await prisma.recallReview.create({ data: { cityId: old.cityId, subtopicId: subA, checklistId: old.id, attempt: last.attempt + 1, date: last.date, typed: "kept as typed" } });
+    const state = await prisma.recallState.findUniqueOrThrow({ where: { subtopicId: subA } });
+
+    const out = await recall.rebuildChecklist(cityScoped(prisma, old.cityId), old.cityId, subA);
+    expect(out).toMatchObject({ from: { id: old.id, version: old.version }, to: { version: old.version + 1, promptVersion: "recall-checklist-v4" }, movedDrafts: 1 });
+    // Graded reviews and the old points stay exactly as they were.
+    expect((await prisma.recallReview.findMany({ where: { id: { in: graded } } })).every((r) => r.checklistId === old.id)).toBe(true);
+    expect(await prisma.recallPoint.count({ where: { checklistId: old.id } })).toBe(old.points.length);
+    // The unsent draft moves to the new version with what was typed; the schedule is untouched.
+    expect(await prisma.recallReview.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({ checklistId: out.to.id, typed: draft.typed });
+    expect(await prisma.recallState.findUniqueOrThrow({ where: { subtopicId: subA } })).toMatchObject({ stage: state.stage, nextDueDate: state.nextDueDate });
+    // Recall over time starts again on the new version.
+    expect((await asUser(app, H).get(`/api/recall/subtopics/${subA}/matrix`).expect(200)).body).toMatchObject({ version: old.version + 1, attempts: [] });
+    // A review waiting for its grade stops a rebuild.
+    await prisma.recallReview.update({ where: { id: draft.id }, data: { status: "WAITING" } });
+    await expect(recall.rebuildChecklist(cityScoped(prisma, old.cityId), old.cityId, subA)).rejects.toMatchObject({ code: "REVIEW_WAITING" });
+    await prisma.recallReview.update({ where: { id: draft.id }, data: { status: "DRAFT" } });
   });
 });
