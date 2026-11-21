@@ -14,6 +14,7 @@ import { d2i, i2d } from "../../db.js";
 import { type ISODate, addDays, diffDays } from "../../domain/dates.js";
 import type { Clock } from "../../lib/clock.js";
 import { cityScoped } from "../../lib/cityScope.js";
+import { withTimeZone } from "../../lib/zone.js";
 import { HttpError, notFound } from "../../lib/http.js";
 import type { AiConfig } from "../ai/config.js";
 import { jobCaller } from "../ai/jobCaller.js";
@@ -95,6 +96,12 @@ export function recallService(d: RecallDeps) {
     });
     if (!s) throw notFound("Sub-topic");
     return s;
+  }
+
+  /** Runs background work (outside a request) with "today" in the city's own time zone. */
+  async function inCityZone<T>(cityId: string, fn: () => Promise<T>): Promise<T> {
+    const s = await d.prisma.settings.findUnique({ where: { cityId }, select: { timezone: true } });
+    return withTimeZone(s?.timezone, fn);
   }
 
   /* ---------------- the checklist ---------------- */
@@ -462,7 +469,8 @@ export function recallService(d: RecallDeps) {
     async planAll() {
       const cities = await d.prisma.recallState.findMany({ distinct: ["cityId"], select: { cityId: true } });
       let n = 0;
-      for (const c of cities) n += await syncRecallTasks(cityScoped(d.prisma, c.cityId), today());
+      // Each city plans from its own today (its time zone), as its requests do.
+      for (const c of cities) n += await inCityZone(c.cityId, () => syncRecallTasks(cityScoped(d.prisma, c.cityId), today()));
       return n;
     },
 
@@ -746,7 +754,7 @@ export function recallService(d: RecallDeps) {
     /** Grading that was waiting when the server stopped carries on after a restart. */
     async resumeWaiting() {
       const waiting = await d.prisma.recallReview.findMany({ where: { status: "WAITING" }, select: { id: true, cityId: true } });
-      for (const w of waiting) void runGrade(w.cityId, w.id);
+      for (const w of waiting) void inCityZone(w.cityId, () => runGrade(w.cityId, w.id));
       return waiting.length;
     },
 

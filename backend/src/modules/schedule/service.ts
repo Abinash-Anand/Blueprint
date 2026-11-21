@@ -27,12 +27,43 @@ export async function loadTargets(prisma: Db): Promise<Record<number, number>> {
   return t;
 }
 
+/**
+ * The learner's week (Blueprint relationship model): per ISO weekday the minutes they can study (availability) and the
+ * new-material minutes the plan fills (allocation); what is left is revision time. Rows from before availability was
+ * kept read their target as their availability.
+ */
+export async function loadWeek(prisma: Db): Promise<Record<number, { available: number; newTarget: number }>> {
+  const rows = await prisma.weeklyTarget.findMany();
+  const w: Record<number, { available: number; newTarget: number }> = {};
+  for (const d of [1, 2, 3, 4, 5, 6, 7]) w[d] = { available: 0, newTarget: 0 };
+  for (const r of rows) w[r.weekday] = { available: Math.max(r.availableMinutes ?? r.targetMinutes, r.targetMinutes), newTarget: r.targetMinutes };
+  return w;
+}
+
+/**
+ * Records a new city's availability from its creation answers (hours a day; the study days are the plan's): a study
+ * day is available for those hours, never less than its target; a rest day stays 0. Also its target date. Only fills
+ * what is not recorded yet, so approving a later curriculum version changes nothing the learner set.
+ */
+export async function recordAvailability(prisma: Db, constraints: unknown) {
+  const c = (constraints ?? {}) as { hoursPerDay?: unknown; targetDate?: unknown };
+  const perDay = typeof c.hoursPerDay === "number" && c.hoursPerDay > 0 ? Math.round(c.hoursPerDay * 60) : null;
+  for (const r of await prisma.weeklyTarget.findMany({ where: { availableMinutes: null } })) {
+    const available = r.targetMinutes === 0 ? 0 : Math.max(r.targetMinutes, perDay ?? r.targetMinutes);
+    await prisma.weeklyTarget.updateMany({ where: { weekday: r.weekday }, data: { availableMinutes: available } });
+  }
+  if (typeof c.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.targetDate)) {
+    await prisma.settings.updateMany({ where: { targetDate: null }, data: { targetDate: i2d(c.targetDate) } });
+  }
+}
+
 export async function loadSettings(prisma: Db) {
   const s = await prisma.settings.findFirst();
   if (!s) throw new HttpError(500, "NOT_SEEDED", "Settings missing: the database has not been seeded");
   return {
     journeyStart: d2i(s.journeyStart), journeyEnd: d2i(s.journeyEnd), timezone: s.timezone,
     revisionDailyMinutes: s.revisionDailyMinutes, revisionWeeklyOvertimeMinutes: s.revisionWeeklyOvertimeMinutes,
+    targetDate: s.targetDate ? d2i(s.targetDate) : null,
   };
 }
 

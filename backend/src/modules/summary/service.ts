@@ -13,7 +13,9 @@ import { d2i, i2d } from "../../db.js";
 import type { Clock } from "../../lib/clock.js";
 import { loadLearning } from "../learning.js";
 import { loadCoaching } from "../recall/coaching.js";
-import { loadSettings, loadTargets, stageDTO, stageInclude } from "../schedule/service.js";
+import { loadSettings, loadTargets, loadWeek, stageDTO, stageInclude } from "../schedule/service.js";
+import { forecast } from "../../domain/forecast.js";
+import { RULES, gapFor } from "../recall/rules.js";
 import { sessionDTO } from "../sessions/routes.js";
 import { taskDTO, taskInclude, taskOrder } from "../tasks/mapper.js";
 
@@ -73,6 +75,8 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
       return {
         date: day,
         today,
+        /** The city's time zone: "today" is counted in it. */
+        timezone: settings.timezone,
         weekday: isoWeekday(day),
         isRestDay: weekdayTarget === 0,
         isBufferDay: target > 0 && !tasks.some((t) => !isRevision(t)),
@@ -206,15 +210,25 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         prisma.studySession.findMany({ select: { date: true, minutes: true, topicId: true } }),
         prisma.task.findMany({ where: { scheduledDate: i2d(today), status: "TODO" }, select: { topicId: true }, orderBy: taskOrder }),
       ]);
-      const [targets, recalls, inRecall, recallDue, coaching] = await Promise.all([
+      const [targets, recalls, inRecall, recallDue, coaching, week, recallStates] = await Promise.all([
         loadTargets(prisma),
         // Recall (docs/Recall-Plan.md): measurements only, no streaks or points.
         prisma.recallReview.findMany({ where: { status: { in: ["CHECKED", "COMPLETE"] } }, select: { date: true, score: true, depth: true, outcome: true } }),
         prisma.recallState.count({ where: { nextDueDate: { not: null } } }),
         prisma.task.count({ where: { recallStateId: { not: null }, status: "TODO", scheduledDate: { lte: i2d(today) } } }),
         loadCoaching(prisma),
+        loadWeek(prisma),
+        prisma.recallState.findMany({ where: { nextDueDate: { not: null } }, select: { stage: true, nextDueDate: true } }),
       ]);
       const live = tasks.filter((t) => t.status !== "SKIPPED");
+      // What is realistically achievable (Blueprint relationship model): open new material against the learner's week,
+      // with the revision that is due coming first. Reported only; nothing is scheduled from it.
+      const outlook = forecast({
+        today, planEnd: settings.journeyEnd, targetDate: settings.targetDate, week,
+        remainingNewMinutes: sum(tasks.filter((t) => t.status === "TODO" && t.kind !== "REVISION"), (t) => t.estimatedMinutes),
+        recalls: recallStates.map((r) => ({ stage: r.stage, nextDueDate: d2i(r.nextDueDate!) })),
+        recallMinutes: RULES.minutesPerReview, gapFor,
+      });
       const orig = (t: { originalDate: Date }) => d2i(t.originalDate);
 
       // Weekly series: journey start → current week (or journey end).
@@ -310,6 +324,7 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         },
         practice: { total: practice.length, done: practice.filter((t) => t.status === "DONE").length },
         road: { ...road, currentTopicId: currentTopicId(learning.districts, todayOpen.map((t) => t.topicId)) },
+        forecast: outlook,
         stages: stageStatus,
         recall: {
           inRecall,

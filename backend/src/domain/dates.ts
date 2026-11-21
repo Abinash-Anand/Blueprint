@@ -66,16 +66,17 @@ export function eachDay(a: ISODate, b: ISODate): ISODate[] {
   return out;
 }
 
-const berlinFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Europe/Berlin",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
+const formatters = new Map<string, Intl.DateTimeFormat>();
+/** Calendar date in a time zone for an instant (handles daylight saving). */
+export function dateIn(timeZone: string, now: Date): ISODate {
+  let f = formatters.get(timeZone);
+  if (!f) formatters.set(timeZone, (f = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })));
+  return f.format(now);
+}
 
 /** Calendar date in Europe/Berlin for an instant (handles CET/CEST). */
 export function berlinDate(now: Date): ISODate {
-  return berlinFormatter.format(now);
+  return dateIn("Europe/Berlin", now);
 }
 
 export const maxDate = (a: ISODate, b: ISODate) => (a > b ? a : b);

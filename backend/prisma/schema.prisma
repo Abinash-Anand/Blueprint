@@ -253,15 +253,21 @@ model Settings {
   revisionDailyMinutes          Int       @default(30)
   /// Over-target revision minutes a week may carry (REVISION_POLICY.weeklyOvertimeMinutes).
   revisionWeeklyOvertimeMinutes Int       @default(120)
+  /// The finish date the learner asked for (null: none); the forecast checks it, nothing moves the plan to it.
+  targetDate                    DateTime? @db.Date
   /// When the learner accepted the AI first-use notice (AI design §8.3); null until then.
   aiConsentAt                   DateTime? @db.Timestamptz(3)
 }
 
 model WeeklyTarget {
-  cityId        String @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
-  city          City   @relation(fields: [cityId], references: [id], onDelete: Cascade)
-  weekday       Int // ISO 8601: 1 = Monday … 7 = Sunday
-  targetMinutes Int
+  cityId           String @default("") /// "" matches no city: a create outside the city scope fails on the foreign key
+  city             City   @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  weekday          Int // ISO 8601: 1 = Monday … 7 = Sunday
+  /// New-material minutes the plan fills on this weekday (the allocation).
+  targetMinutes    Int
+  /// Minutes the learner can study on this weekday (availability); the rest after targetMinutes is revision time.
+  /// Null on rows from before availability was kept: read as targetMinutes.
+  availableMinutes Int?
 
   @@id([cityId, weekday])
 }
