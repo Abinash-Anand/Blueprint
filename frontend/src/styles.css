@@ -902,3 +902,14 @@ body{overflow-wrap:break-word}
 
 /* Week: day cards start at the top, so day names and dates line up across the row (buttons centre their content). */
 @media (min-width:821px){.wday{display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch}}
+
+/* Scrollbars: thin and quiet in the app's colours. Windows otherwise draws a full 15 px bar with arrows on every
+   scrolling area (districts, the view, a sheet); the districts' bar shows only while the pointer or focus is there. */
+html,aside,.view,.g-stage,.g-sheet,.panel,.dialog{scrollbar-width:thin;scrollbar-color:rgba(60,64,67,.28) transparent}
+aside{scrollbar-gutter:stable;scrollbar-color:transparent transparent}
+aside:hover,aside:focus-within{scrollbar-color:rgba(60,64,67,.28) transparent}
+
+/* Recall over time as a page (#/revision/history/<id>, #/progress/history/<id>). */
+.rh-back{margin:-4px 0 10px -4px}
+.rh-card{max-width:none;margin:0}
+@container main (max-width:700px){.rh .g-overtime{grid-template-columns:minmax(0,1fr)!important}.rh-card{padding:20px 18px 22px;border-radius:26px}}

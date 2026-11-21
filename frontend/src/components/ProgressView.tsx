@@ -5,7 +5,7 @@ import type { Progress, RecallCoaching } from "../api/types";
 import { INK, mix } from "../lib/color";
 import { dayMonth, hours1, monthName, pct, plural, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { MatrixDialog } from "./recall/MatrixDialog";
+import { historyHash, openPage } from "../lib/nav";
 import { Loading, Stat } from "./ui";
 import { StatusBadge } from "./Status";
 
@@ -174,7 +174,6 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
  * the sub-topic's recall over time.
  */
 export function RecallCoachingView({ c }: { c: RecallCoaching }) {
-  const [grid, setGrid] = useState<number | null>(null);
   if (!c.subtopics.length) return null;
   const delta = (d: number | null) => (d === null ? "first recall" : d === 0 ? "same as last time" : `${d > 0 ? "+" : "−"}${Math.round(Math.abs(d) * 100)} points since last time`);
   return (
@@ -186,7 +185,7 @@ export function RecallCoachingView({ c }: { c: RecallCoaching }) {
             {c.blindSpots.map((b) => (
               <li key={`${b.subtopicId}-${b.label}`}>
                 <span><b>{b.label}</b> <span className="m">({b.subtopic})</span></span>
-                <span className="m">missed {b.missedInARow}× · <button type="button" className="pg-link" onClick={() => setGrid(b.subtopicId)} aria-label={`Recall over time: ${b.subtopic}`}>over time</button></span>
+                <span className="m">missed {b.missedInARow}× · <button type="button" className="pg-link" onClick={() => openPage(historyHash("progress", b.subtopicId))} aria-label={`Recall over time: ${b.subtopic}`}>over time</button></span>
               </li>
             ))}
           </ul>
@@ -209,12 +208,11 @@ export function RecallCoachingView({ c }: { c: RecallCoaching }) {
             <span className="pg-score">
               <b>{pct(s.lastScore)}</b>
               <span className="m">{delta(s.scoreDelta)}</span>
-              <button type="button" className="pg-link" onClick={() => setGrid(s.subtopicId)} aria-label={`Recall over time: ${s.subtopic}`}>Over time</button>
+              <button type="button" className="pg-link" onClick={() => openPage(historyHash("progress", s.subtopicId))} aria-label={`Recall over time: ${s.subtopic}`}>Over time</button>
             </span>
           </li>
         ))}
       </ul>
-      {grid !== null && <MatrixDialog subtopicId={grid} onClose={() => setGrid(null)} />}
     </>
   );
 }

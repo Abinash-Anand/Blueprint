@@ -1,5 +1,5 @@
 /** The concept grid (docs/Recall-Plan.md §3.5, phase 2): points × recalls, recalled when asked, and the progress note. */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RecallMatrix } from "../api/types";
 
@@ -17,12 +17,17 @@ const matrix: RecallMatrix = {
 };
 vi.mock("../api/client", () => ({ api: { recallMatrix: vi.fn(async () => matrix) }, ApiError: class extends Error {} }));
 
-import { MatrixDialog } from "../components/recall/MatrixDialog";
+import { RecallHistory } from "../components/recall/RecallHistory";
 
 describe("recall over time", () => {
   it("shows each point across the recalls, marks what came only when asked, and the progress note", async () => {
-    render(<MatrixDialog subtopicId={4} onClose={() => {}} />);
-    expect(await screen.findByRole("heading", { name: "Subjects" })).toBeTruthy();
+    const onBack = vi.fn();
+    render(<RecallHistory subtopicId={4} backLabel="Progress" onBack={onBack} />);
+    // A page, not a dialog: its heading and a way back to where it was opened from.
+    expect(await screen.findByRole("heading", { level: 2, name: "Subjects" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to Progress" }));
+    expect(onBack).toHaveBeenCalled();
     expect(screen.getByText("You now remember late subscribers.")).toBeTruthy();
     expect(screen.getByText(/Newly remembered: Late subscribers/)).toBeTruthy();
     expect(screen.getByLabelText("Late subscribers, 21 Nov: missed, recalled when asked").textContent).toBe("✗ ↑");

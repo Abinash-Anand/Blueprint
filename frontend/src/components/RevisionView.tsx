@@ -9,8 +9,7 @@ import type { RecallHistoryRow, RecallHome, RecallItem, RevisionArchive } from "
 import { CHECKPOINT_RESULTS, METHOD_LABEL, dayMonth, plural, scoreLabel } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { Chevron, ChevronDown, Spark } from "./recall/icons";
-import { MatrixDialog } from "./recall/MatrixDialog";
-import { RecallPage } from "./recall/RecallPage";
+import { historyHash, openPage, recallHash } from "../lib/nav";
 import { Sheet } from "./recall/Sheet";
 import { Loading } from "./ui";
 
@@ -26,8 +25,6 @@ export function RevisionView() {
   const [a, setA] = useState<RevisionArchive | null>(null);
   const [hist, setHist] = useState<RecallHistoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<number | null>(null);
-  const [grid, setGrid] = useState<number | null>(null);
   const [n, setN] = useState(0);
 
   useEffect(() => {
@@ -47,11 +44,6 @@ export function RevisionView() {
   const refresh = () => setN((x) => x + 1);
   const status = (s: RecallItem) => h.open.find((o) => o.subtopicId === s.subtopicId)?.status;
   const color = (s: RecallItem) => districtById?.get(topicById?.get(s.topicId)?.districtId ?? "")?.color;
-  const close = () => {
-    setOpen(null);
-    refresh();
-    void reload();
-  };
   const next = h.due[0] ?? h.later[0] ?? null;
   const soon = next ? null : h.upcoming[0] ?? null;
   const can = h.ai.available;
@@ -63,7 +55,7 @@ export function RevisionView() {
       <ul className="g-group">
         {h.upcoming.map((s) => (
           <li key={s.subtopicId}>
-            <button type="button" className="g-row" disabled={!can} onClick={() => setOpen(s.subtopicId)} aria-label={`Revise ${s.subtopic} early`}>
+            <button type="button" className="g-row" disabled={!can} onClick={() => openPage(recallHash(s.subtopicId))} aria-label={`Revise ${s.subtopic} early`}>
               <span className="g-lbl">{s.subtopic}<small>{s.topic}</small></span>
               <span className="g-val">{dayMonth(s.scheduledDate)}</span>
               <Chevron />
@@ -94,7 +86,7 @@ export function RevisionView() {
               <p className="g-sub">{next.topic} · {next.district} · {next.lastReviewDate ? `last recalled ${dayMonth(next.lastReviewDate)}` : "first recall"}{status(next) ? ` · ${OPEN[status(next)!].toLowerCase()}` : ""}</p>
             </div>
             <NotToday s={next} onDone={() => { refresh(); void reload(); }} />
-            <button type="button" className="btn primary big" disabled={!can} onClick={() => setOpen(next.subtopicId)}>
+            <button type="button" className="btn primary big" disabled={!can} onClick={() => openPage(recallHash(next.subtopicId))}>
               {status(next) === "CHECKED" ? "See results" : status(next) ? "Continue" : "Start recall"}
             </button>
           </section>
@@ -107,7 +99,7 @@ export function RevisionView() {
               <div className="g-hero-name"><span className="g-dot" style={{ background: color(soon) }} />{soon.subtopic}</div>
               <p className="g-sub">{soon.topic} · {soon.district} · {soon.lastReviewDate ? `last recalled ${dayMonth(soon.lastReviewDate)}` : "first recall"}</p>
             </div>
-            <button type="button" className="btn quiet big" disabled={!can} onClick={() => setOpen(soon.subtopicId)} aria-label={`Recall ${soon.subtopic} early`}>Recall early</button>
+            <button type="button" className="btn quiet big" disabled={!can} onClick={() => openPage(recallHash(soon.subtopicId))} aria-label={`Recall ${soon.subtopic} early`}>Recall early</button>
           </section>
         )}
 
@@ -119,7 +111,7 @@ export function RevisionView() {
                 <ul className="g-group">
                   {h.due.map((s) => (
                     <li key={s.subtopicId}>
-                      <button type="button" className="g-row" disabled={!can} onClick={() => setOpen(s.subtopicId)} aria-label={`Revise ${s.subtopic}`}>
+                      <button type="button" className="g-row" disabled={!can} onClick={() => openPage(recallHash(s.subtopicId))} aria-label={`Revise ${s.subtopic}`}>
                         <span className="g-dot" style={{ background: color(s) }} />
                         <span className="g-lbl">
                           {s.subtopic}
@@ -143,7 +135,7 @@ export function RevisionView() {
                 <ul className="g-group">
                   {h.later.map((s) => (
                     <li key={s.subtopicId}>
-                      <button type="button" className="g-row" disabled={!can} onClick={() => setOpen(s.subtopicId)} aria-label={`Revise ${s.subtopic} now`}>
+                      <button type="button" className="g-row" disabled={!can} onClick={() => openPage(recallHash(s.subtopicId))} aria-label={`Revise ${s.subtopic} now`}>
                         <span className="g-lbl">{s.subtopic}<small>{s.topic}</small></span>
                         <span className="g-val">since {dayMonth(s.nextDueDate!)}</span>
                         <Chevron />
@@ -174,7 +166,7 @@ export function RevisionView() {
                 <ul className="g-group">
                   {hist.map((r) => (
                     <li key={r.reviewId}>
-                      <button type="button" className="g-row" onClick={() => setGrid(r.subtopicId)} aria-label={`Recall over time: ${r.subtopic}`}>
+                      <button type="button" className="g-row" onClick={() => openPage(historyHash("revision", r.subtopicId))} aria-label={`Recall over time: ${r.subtopic}`}>
                         <span className="g-lbl">
                           {r.subtopic}
                           <small>{dayMonth(r.date)} · {DEPTH[r.depth]} · {OUTCOME[r.outcome]}{r.nextDueDate ? ` · next ${dayMonth(r.nextDueDate)}` : ""}</small>
@@ -193,8 +185,6 @@ export function RevisionView() {
           </div>
         </div>
       </div>
-      {open !== null && <RecallPage subtopicId={open} onClose={close} />}
-      {grid !== null && <MatrixDialog subtopicId={grid} onClose={() => setGrid(null)} />}
     </div>
   );
 }

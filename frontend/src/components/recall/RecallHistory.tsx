@@ -1,19 +1,20 @@
 /**
- * Recall over time for one sub-topic (docs/Recall-Plan.md §3.5, phase 2) in a glass sheet (DESIGN.md §10): the score
- * of each checked recall, the progress note written from the computed diff, and the checklist's points × recalls,
- * with ↑ where a missed point was recalled when asked. On phones the sheet rises from the bottom and the grid scrolls.
+ * Recall over time for one sub-topic (docs/Recall-Plan.md §3.5, phase 2), a page of its own inside its tab
+ * (#/revision/history/<id>, #/progress/history/<id>): the score of each checked recall, the progress note written
+ * from the computed diff, and the checklist's points × recalls, with ↑ where a missed point was recalled when asked.
+ * It scrolls with the view; only the grid scrolls sideways, when there are many recalls.
  */
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../../api/client";
 import type { RecallMatrix } from "../../api/types";
 import { dayMonth } from "../../lib/format";
-import { Sheet } from "./Sheet";
+import { Back } from "./icons";
 
 const MARK = { ACCURATE: "✓", PARTIAL: "~", MISSED: "✗" } as const;
 const WORD = { ACCURATE: "remembered", PARTIAL: "partly", MISSED: "missed" } as const;
 const TONE = { ACCURATE: "ok", PARTIAL: "part", MISSED: "miss" } as const;
 
-export function MatrixDialog({ subtopicId, onClose }: { subtopicId: number; onClose: () => void }) {
+export function RecallHistory({ subtopicId, backLabel, onBack }: { subtopicId: number; backLabel: string; onBack: () => void }) {
   const [m, setM] = useState<RecallMatrix | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -23,9 +24,12 @@ export function MatrixDialog({ subtopicId, onClose }: { subtopicId: number; onCl
   const latest = m?.analyses[m.analyses.length - 1];
   const scored = m?.attempts.filter((a) => a.score !== null) ?? [];
   return (
-    <Sheet labelledBy="rc-grid-title" wide onClose={onClose}>
+    <div className="view gl gl-bg">
+      <div className="wrap rh">
+      <button type="button" className="g-link rh-back" onClick={onBack} aria-label={`Back to ${backLabel}`}><Back />{backLabel}</button>
+      <section className="g-card rh-card" aria-labelledby="rc-grid-title">
       <div className="kick">Recall over time · {m?.topic ?? "…"}</div>
-      <h2 id="rc-grid-title" className="g-t2" style={{ fontSize: 24, marginTop: 4 }}>{m?.subtopic ?? "…"}</h2>
+      <h2 id="rc-grid-title" className="g-t2" style={{ fontSize: 26, marginTop: 4 }}>{m?.subtopic ?? "…"}</h2>
       {error && <p className="g-err" role="alert">{error}</p>}
       {m && !m.attempts.length && <p className="g-sub" style={{ marginTop: 10 }}>No checked recall of this sub-topic yet.</p>}
       {m && m.attempts.length > 0 && (
@@ -101,6 +105,8 @@ export function MatrixDialog({ subtopicId, onClose }: { subtopicId: number; onCl
           </div>
         </>
       )}
-    </Sheet>
+      </section>
+      </div>
+    </div>
   );
 }

@@ -7,7 +7,7 @@ import { LAYERS } from "../lib/layers";
 import type { Building } from "../map/geometry";
 import { useAppData } from "../state/AppData";
 import { Bar } from "./ui";
-import { RecallPage } from "./recall/RecallPage";
+import { openPage, recallHash } from "../lib/nav";
 import { StatusIndicator } from "./Status";
 
 interface Props {
@@ -22,8 +22,7 @@ interface Props {
 const KIND = { ROADMAP: "Roadmap", DOCS: "Docs", COURSE: "Course", ARTICLE: "Article" } as const;
 
 export function TopicPanel({ ref, building, route, today, onOpenTopic, onClose }: Props) {
-  const { toggleSubtopic, patchTopic, mutate, topicById, reload } = useAppData();
-  const [recallSub, setRecallSub] = useState<number | null>(null);
+  const { toggleSubtopic, patchTopic, mutate, topicById } = useAppData();
   const t = building.topic;
   const d = building.block.district;
   const n = t.subtopics.length;
@@ -86,7 +85,7 @@ export function TopicPanel({ ref, building, route, today, onOpenTopic, onClose }
                     ↻ {s.recall.nextDueDate ? (s.recall.nextDueDate <= today ? "recall due now" : `recall ${dayMonth(s.recall.nextDueDate)}`) : "not scheduled"}
                     {s.recall.last && ` · last ${Math.round(s.recall.last.score * 100)} % on ${dayMonth(s.recall.last.date)}`}
                   </span>
-                  {s.recall.nextDueDate && <button className="link" onClick={() => setRecallSub(s.id)} aria-label={`Recall ${s.name} now`}>Recall now</button>}
+                  {s.recall.nextDueDate && <button className="link" onClick={() => openPage(recallHash(s.id))} aria-label={`Recall ${s.name} now`}>Recall now</button>}
                 </div>
               )}
             </li>
@@ -220,7 +219,6 @@ export function TopicPanel({ ref, building, route, today, onOpenTopic, onClose }
           </button>
         </div>
       </div>
-      {recallSub !== null && <RecallPage subtopicId={recallSub} onClose={() => { setRecallSub(null); void reload(); }} />}
     </section>
   );
 }

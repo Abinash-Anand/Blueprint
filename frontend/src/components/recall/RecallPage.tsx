@@ -1,12 +1,11 @@
 /**
- * One recall (docs/Recall-Plan.md §3.2–§3.3) in glass (DESIGN.md §10): a focused flow over the city with a floating
- * step bar. 1 · Recall: the learner says, types or sketches everything they remember. 2 · Check, then Results: the
+ * One recall (docs/Recall-Plan.md §3.2–§3.3) in glass (DESIGN.md §10): a focused page of its own (#/recall/<id>, so
+ * Back and reload work) over the city, with a floating step bar. 1 · Recall: the learner says, types or sketches everything they remember. 2 · Check, then Results: the
  * AI's check against the hidden checklist, worked out in code. 3 · Follow-up: a senior engineer asks about the gaps
  * (never changes the score). Then the verdict. The learner never grades themselves; the checklist appears only with
  * the results.
  */
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { ApiError, api } from "../../api/client";
 import type { AiStatus, RecallPointView, RecallReview } from "../../api/types";
 import { dayMonth, plural } from "../../lib/format";
@@ -26,7 +25,7 @@ const MOVE = { PASS: "the gap grows", HOLD: "the same gap again", LAPSE: "back t
 type Run = (f: () => Promise<RecallReview>) => Promise<boolean>;
 type Stage = "results" | "followup";
 
-export function RecallPage({ subtopicId, onClose }: { subtopicId: number; onClose: () => void }) {
+export function RecallPage({ subtopicId, backLabel = "Revision", onClose }: { subtopicId: number; backLabel?: string; onClose: () => void }) {
   const [r, setR] = useState<RecallReview | null>(null);
   const [ai, setAi] = useState<AiStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,15 +90,15 @@ export function RecallPage({ subtopicId, onClose }: { subtopicId: number; onClos
     : r.status === "COMPLETE" ? (showResults ? "results" : "verdict") : stage;
   const step = { loading: [1, "Recall"], draft: [1, "Recall"], waiting: [2, "Check"], results: [2, "Results"], followup: [3, "Follow-up"], verdict: [3, "Done"] }[view] as [number, string];
 
-  return createPortal(
-    <div className="rc gl gl-bg" role="dialog" aria-modal="true" aria-label={r ? `Recall: ${r.subtopic}` : "Recall"} tabIndex={-1} ref={box}>
+  return (
+    <div className="rc gl gl-bg" tabIndex={-1} ref={box}>
       <header className="g-flowbar">
         {view === "followup" ? (
           <button type="button" className="g-link" onClick={() => setStage("results")}><Back />Results</button>
         ) : view === "results" && r?.status === "COMPLETE" ? (
           <button type="button" className="g-link" onClick={() => setShowResults(false)}><Back />Verdict</button>
         ) : (
-          <button type="button" className="g-link" aria-label="Back to Revision" onClick={onClose}><Back />Revision</button>
+          <button type="button" className="g-link" aria-label={`Back to ${backLabel}`} onClick={onClose}><Back />{backLabel}</button>
         )}
         <div className="g-step">
           <span className="g-steps" aria-hidden="true">{[1, 2, 3].map((i) => <i key={i} className={i <= step[0] ? "on" : undefined} />)}</span>
@@ -107,20 +106,19 @@ export function RecallPage({ subtopicId, onClose }: { subtopicId: number; onClos
         </div>
         {view === "draft" ? <button type="button" className="g-link quiet" disabled={busy} onClick={() => void postpone()}>Not today</button> : <span />}
       </header>
-      <main className="g-stage">
+      <main className="g-stage" aria-label={r ? `Recall: ${r.subtopic}` : "Recall"}>
         {view === "loading" && (
           <section className="g-card narrow">
             {error ? <p className="g-err" role="alert">{error}</p> : <><div className="g-spin" aria-hidden="true" /><p className="g-sub" role="status">Preparing this sub-topic… the first time takes a few seconds.</p></>}
           </section>
         )}
         {r && view === "draft" && <BlankSlate r={r} ai={ai} busy={busy} run={run} error={error} />}
-        {r && view === "waiting" && <Waiting r={r} busy={busy} run={run} onClose={onClose} />}
+        {r && view === "waiting" && <Waiting r={r} busy={busy} run={run} backLabel={backLabel} onClose={onClose} />}
         {r && view === "results" && <Results r={r} busy={busy} run={run} error={error} onFollowup={() => setStage("followup")} onVerdict={() => setShowResults(false)} />}
         {r && view === "followup" && <FollowUp r={r} ai={ai} busy={busy} run={run} error={error} />}
         {r && view === "verdict" && <Verdict r={r} onResults={() => setShowResults(true)} onClose={onClose} />}
       </main>
-    </div>,
-    document.body,
+    </div>
   );
 }
 
@@ -263,7 +261,7 @@ function BlankSlate({ r, ai, busy, run, error }: { r: RecallReview; ai: AiStatus
 
 /* ---------------- 2 · checking ---------------- */
 
-function Waiting({ r, busy, run, onClose }: { r: RecallReview; busy: boolean; run: Run; onClose: () => void }) {
+function Waiting({ r, busy, run, backLabel, onClose }: { r: RecallReview; busy: boolean; run: Run; backLabel: string; onClose: () => void }) {
   return (
     <section className="g-card narrow" aria-label="Checking" role="status" aria-live="polite">
       {!r.waitReason && <div className="g-spin" aria-hidden="true" />}
@@ -287,7 +285,7 @@ function Waiting({ r, busy, run, onClose }: { r: RecallReview; busy: boolean; ru
         <li className="g-row"><Glyph kind="dot" /><span className="g-lbl" style={{ color: "var(--g-muted)" }}>Score and next date</span><span className="g-val">Next</span></li>
       </ul>
       <p className="g-foot" style={{ textAlign: "center", marginTop: 14 }}>You can leave. It keeps going, and the result waits on Today.</p>
-      <button type="button" className="btn big" style={{ marginTop: 10 }} onClick={onClose}>Back to Revision</button>
+      <button type="button" className="btn big" style={{ marginTop: 10 }} onClick={onClose}>Back to {backLabel}</button>
     </section>
   );
 }

@@ -2,7 +2,7 @@
  * Top-level routing (multi-user sprint): sign-in and account screens, onboarding, city management, and the existing
  * learning app for the selected city. The learning app is keyed by city, so switching city starts from clean state.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { App } from "./App";
 import { AccountSettings, Onboarding } from "./components/account/Account";
 import { type AuthRoute, AuthScreens } from "./components/account/AuthScreens";
@@ -29,6 +29,22 @@ export function TopBar() {
   const { city, cities, selectCity, user, signOut } = useSession();
   const openable = cities.filter((c) => c.status !== "DRAFT" && c.status !== "ARCHIVED");
   const [menu, setMenu] = useState(false);
+  const acct = useRef<HTMLDivElement>(null);
+  // The account menu closes on a click or tap outside it, on Escape and when the page changes.
+  useEffect(() => {
+    if (!menu) return;
+    const outside = (e: PointerEvent) => !acct.current?.contains(e.target as Node) && setMenu(false);
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setMenu(false);
+    const nav = () => setMenu(false);
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", key);
+    addEventListener("hashchange", nav);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", key);
+      removeEventListener("hashchange", nav);
+    };
+  }, [menu]);
   return (
     <div className="topctl">
       <label className="city-switch">
@@ -51,7 +67,7 @@ export function TopBar() {
           <option value="__manage">Manage cities…</option>
         </select>
       </label>
-      <div className="acct">
+      <div className="acct" ref={acct}>
         <button className="btn acct-btn" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((x) => !x)} title={user?.email}>
           <span className="acct-av" aria-hidden="true">{(user?.name ?? "?").slice(0, 1).toUpperCase()}</span>
           <span className="sr">Account menu</span>

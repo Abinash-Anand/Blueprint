@@ -65,9 +65,10 @@ describe("Revision tab", () => {
 
   it("opens the recall page for a sub-topic", async () => {
     render(<RevisionView />);
+    // The recall flow is a page with its own address (Back and reload work).
     fireEvent.click(await screen.findByRole("button", { name: "Revise Subjects" }));
-    expect(await screen.findByRole("dialog")).toBeTruthy();
-    expect(screen.getByText(/Preparing this sub-topic/)).toBeTruthy();
+    expect(location.hash).toBe("#/recall/1");
+    expect(history.state).toMatchObject({ from: expect.any(String) });
   });
 
   it("starts the next recall from the hero, or puts it off to a free day", async () => {
@@ -75,15 +76,15 @@ describe("Revision tab", () => {
     const next = await screen.findByRole("region", { name: "Up next" });
     fireEvent.click(within(next).getByRole("button", { name: "Not today: Subjects" }));
     await waitFor(() => expect(postponeRecall).toHaveBeenCalled());
+    location.hash = "#/revision";
     fireEvent.click(within(next).getByRole("button", { name: "Start recall" }));
-    expect(await screen.findByRole("dialog", { name: "Recall" })).toBeTruthy();
+    expect(location.hash).toBe("#/recall/1");
   });
 
   it("opens recall over time from a recent recall", async () => {
     render(<RevisionView />);
     fireEvent.click(await screen.findByRole("button", { name: "Recall over time: Operators" }));
-    expect(await screen.findByRole("dialog")).toBeTruthy();
-    expect(screen.getByText(/Recall over time ·/)).toBeTruthy();
+    expect(location.hash).toBe("#/revision/history/2");
   });
 
   it("keeps the earlier revision history read-only, folded into one row", async () => {
