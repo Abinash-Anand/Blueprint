@@ -15,7 +15,7 @@ import type { CityAttachment, CityConstraints, CityProposal, CityRequirements, C
 import { useSession } from "../../../state/Session";
 import { FlowHeader, Sheet } from "../../kit";
 import { LoadingState } from "../../Status";
-import { DEFAULT_PACES, FILE_LIMITS, type Pace, type StepId, type TimeInput, addMonthsIso, fileType, longDate, provisionalName, resumeStep, timePlan } from "./logic";
+import { DEFAULT_PACES, FILE_LIMITS, type Pace, type StepId, type TimeInput, addMonthsIso, fileType, longDate, onlyUnderstanding, provisionalName, resumeStep, timePlan } from "./logic";
 import { CityPreview, type PreviewDistrict, fromDocument } from "./CityPreview";
 import { BuildStep, EditSheet, type EditRequest, GoalStep, type Subject, TimeStep, UnderstoodStep } from "./Steps";
 import { useGeneration } from "./useGeneration";
@@ -122,7 +122,7 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
 
   const requirements = (extra: Partial<CityRequirements> = {}): CityRequirements => ({
     brief: brief.trim(),
-    ...(Object.keys(u).length ? { understood: { ...u, subjects: subjects.filter((s) => s.on).map((s) => s.name) } } : {}),
+    ...(Object.keys(u).length ? { understood: { ...onlyUnderstanding(u), subjects: subjects.filter((s) => s.on).map((s) => s.name) } } : {}),
     ...(focus ? { focus } : {}),
     answers: Object.entries(answers).map(([question, answer]) => ({ question, answer })),
     ...extra,
@@ -164,7 +164,8 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.understand(cid);
+      // Only the summary itself is kept and sent back (the reply also carries prompt version, model and provider).
+      const r = onlyUnderstanding(await api.understand(cid));
       setU(r);
       setSubjects((r.subjects ?? []).map((name) => ({ name, on: true })));
       setFocus(r.focusOptions?.[0] ?? null);

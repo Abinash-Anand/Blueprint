@@ -1,6 +1,6 @@
 /** City creation without UI: the time promise, files, resuming. */
 import { describe, expect, it } from "vitest";
-import { addMonthsIso, fileSummary, fileType, provisionalName, resumeStep, timePlan } from "../components/cities/create/logic";
+import { addMonthsIso, fileSummary, fileType, onlyUnderstanding, provisionalName, resumeStep, timePlan } from "../components/cities/create/logic";
 
 describe("time plan (matches the backend generator)", () => {
   const base = { hoursPerDay: 1, weekdays: [1, 2, 3, 4, 5], pace: "STEADY" as const, startDate: "2026-11-23" };
@@ -69,5 +69,12 @@ describe("resuming a draft", () => {
     expect(provisionalName("  I want to reach German C1 so I can work  ")).toBe("I want to reach");
     expect(provisionalName("")).toBe("New city");
     expect(addMonthsIso("2026-11-23", 12)).toBe("2027-11-23");
+  });
+});
+
+describe("the summary sent back with the draft", () => {
+  it("keeps the summary's own fields and drops the reply's bookkeeping, which the draft's save refuses", () => {
+    const reply = { name: "German B2", goal: "Work in Germany", subjects: ["Grammar"], plan: null, estimatedHours: 400, promptVersion: "understand-v3", model: "m", provider: "gwdg" };
+    expect(onlyUnderstanding(reply)).toEqual({ name: "German B2", goal: "Work in Germany", subjects: ["Grammar"], plan: null, estimatedHours: 400 });
   });
 });

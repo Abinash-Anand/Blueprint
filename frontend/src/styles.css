@@ -913,3 +913,12 @@ aside:hover,aside:focus-within{scrollbar-color:rgba(60,64,67,.28) transparent}
 .rh-back{margin:-4px 0 10px -4px}
 .rh-card{max-width:none;margin:0}
 @container main (max-width:700px){.rh .g-overtime{grid-template-columns:minmax(0,1fr)!important}.rh-card{padding:20px 18px 22px;border-radius:26px}}
+
+/* Create a city, time step: what the pace does to the week (new material against revision). */
+.cc-split{margin-top:12px}
+.cc-split-bar{height:8px;border-radius:99px;background:var(--soft);border:1px solid var(--line);overflow:hidden}
+.cc-split-bar i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width var(--dur-slow) var(--ease-standard)}
+.cc-split-legend{display:flex;justify-content:space-between;gap:12px;margin-top:6px;font-size:13px;color:var(--muted)}
+.cc-split-legend b{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums}
+.cc-split-note{margin:6px 0 0;font-size:12.5px;color:var(--muted);line-height:1.45}
+@media (prefers-reduced-motion:reduce){.cc-split-bar i{transition:none}}
