@@ -15,7 +15,9 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
   if (!p || !curriculum) return <div className="view"><Loading /></div>;
 
   const h = p.hours;
-  const maxWeek = Math.max(240 * 6, ...p.weekly.map((w) => Math.max(w.actualMinutes, w.plannedMinutes)));
+  // The chart's scale comes from this city's own weeks (at least an hour), never a fixed weekly target.
+  const maxWeek = Math.max(60, ...p.weekly.map((w) => Math.max(w.actualMinutes, w.plannedMinutes)));
+  const thisWeekPlanned = p.weekly.length ? p.weekly[p.weekly.length - 1].plannedMinutes : 0;
   const curDistrict = curriculum.districts[p.road.currentDistrictIndex];
 
   return (
@@ -36,7 +38,7 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
 
         <div className="grid4">
           <Stat label="Actual hours" value={hours1(h.actualTotal)} detail={`of ${hours1(h.plannedToDate)} planned to date`} />
-          <Stat label="This week" value={hours1(h.thisWeek)} detail="target 24 h" />
+          <Stat label="This week" value={hours1(h.thisWeek)} detail={thisWeekPlanned ? `of ${hours1(thisWeekPlanned)} planned` : "nothing planned"} />
           <Stat label="This month" value={hours1(h.thisMonth)} detail={`${hours1(h.plannedTotal)} planned in total`} />
           <Stat
             label="Core topics"
@@ -100,6 +102,7 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
               <div className="empty" style={{ padding: 0 }}>The journey hasn't started yet.</div>
             ) : (
               <>
+                <div className="chart-box" style={{ ["--weeks" as string]: p.weekly.length }}>
                 <div className="chart" role="img" aria-label="Weekly planned and actual study hours">
                   {p.weekly.map((w, i) => (
                     <div key={w.weekStart} className={`col${i === p.weekly.length - 1 ? " now" : ""}`} title={`Week of ${dayMonth(w.weekStart)}: ${hours1(w.actualMinutes)} actual, ${hours1(w.plannedMinutes)} planned`}>
@@ -109,8 +112,9 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
                   ))}
                 </div>
                 <div className="axis">
-                  <span>{dayMonth(p.weekly[0].weekStart)}</span>
+                  {p.weekly.length > 1 && <span>{dayMonth(p.weekly[0].weekStart)}</span>}
                   <span>this week</span>
+                </div>
                 </div>
                 <div className="legend">
                   <span><i style={{ background: "#d3d8da" }} />Planned (original plan)</span>

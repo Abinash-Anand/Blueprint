@@ -53,7 +53,26 @@ export function RevisionView() {
     void reload();
   };
   const next = h.due[0] ?? h.later[0] ?? null;
+  const soon = next ? null : h.upcoming[0] ?? null;
   const can = h.ai.available;
+  // With nothing due, the next two weeks move into the first column so the page never opens on an empty half.
+  const upcomingFirst = !h.due.length && !h.later.length && h.upcoming.length > 0;
+  const upcoming = h.upcoming.length > 0 && (
+    <>
+      <h3 className="g-cap">Next two weeks <span className="g-r">{h.upcoming.length}</span></h3>
+      <ul className="g-group">
+        {h.upcoming.map((s) => (
+          <li key={s.subtopicId}>
+            <button type="button" className="g-row" disabled={!can} onClick={() => setOpen(s.subtopicId)} aria-label={`Revise ${s.subtopic} early`}>
+              <span className="g-lbl">{s.subtopic}<small>{s.topic}</small></span>
+              <span className="g-val">{dayMonth(s.scheduledDate)}</span>
+              <Chevron />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
 
   return (
     <div className="view gl gl-bg">
@@ -78,6 +97,17 @@ export function RevisionView() {
             <button type="button" className="btn primary big" disabled={!can} onClick={() => setOpen(next.subtopicId)}>
               {status(next) === "CHECKED" ? "See results" : status(next) ? "Continue" : "Start recall"}
             </button>
+          </section>
+        )}
+
+        {soon && (
+          <section className="g-hero quiet" aria-label="Next recall">
+            <div className="g-grow">
+              <div className="kick">Next recall · {dayMonth(soon.scheduledDate)}</div>
+              <div className="g-hero-name"><span className="g-dot" style={{ background: color(soon) }} />{soon.subtopic}</div>
+              <p className="g-sub">{soon.topic} · {soon.district} · {soon.lastReviewDate ? `last recalled ${dayMonth(soon.lastReviewDate)}` : "first recall"}</p>
+            </div>
+            <button type="button" className="btn quiet big" disabled={!can} onClick={() => setOpen(soon.subtopicId)} aria-label={`Recall ${soon.subtopic} early`}>Recall early</button>
           </section>
         )}
 
@@ -125,6 +155,8 @@ export function RevisionView() {
               </>
             )}
 
+            {upcomingFirst && upcoming}
+
             {!h.due.length && !h.later.length && !h.upcoming.length && (
               <>
                 <h3 className="g-cap">How revision starts</h3>
@@ -134,22 +166,7 @@ export function RevisionView() {
           </div>
 
           <div>
-            {h.upcoming.length > 0 && (
-              <>
-                <h3 className="g-cap">Next two weeks <span className="g-r">{h.upcoming.length}</span></h3>
-                <ul className="g-group">
-                  {h.upcoming.map((s) => (
-                    <li key={s.subtopicId}>
-                      <button type="button" className="g-row" disabled={!can} onClick={() => setOpen(s.subtopicId)} aria-label={`Revise ${s.subtopic} early`}>
-                        <span className="g-lbl">{s.subtopic}<small>{s.topic}</small></span>
-                        <span className="g-val">{dayMonth(s.scheduledDate)}</span>
-                        <Chevron />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
+            {!upcomingFirst && upcoming}
 
             {hist.length > 0 && (
               <>

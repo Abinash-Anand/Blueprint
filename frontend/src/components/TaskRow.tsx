@@ -91,7 +91,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
             )}
           </div>
           {t.notes && !compact && <div className="notes">{t.notes}</div>}
-          <div className="acts">
+          {!(rv && done) && <div className="acts">
             {t.recall && !done && t.subtopic && (
               <button className="btn primary" onClick={() => setRecallOpen(true)} aria-label={`Revise: ${t.subtopic.name}`}>Revise</button>
             )}
@@ -105,7 +105,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
             ) : (
               <button className="btn danger" onClick={() => void mutate(() => api.deleteTask(t.id))}>Delete</button>
             )}
-          </div>
+          </div>}
 
           {mode === "log" && (
             <div className="form">

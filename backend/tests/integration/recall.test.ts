@@ -302,6 +302,12 @@ suite("recall", () => {
     await asUser(app, H).patch(`/api/subtopics/${subD}`).send({ completed: true }).expect(200);
     const t = await prisma.task.findFirstOrThrow({ where: { subtopicId: subD, status: "TODO", recallStateId: { not: null } } });
     expect([t.originalDate.toISOString().slice(0, 10), t.scheduledDate.toISOString().slice(0, 10)]).toEqual(["2026-11-29", "2026-11-30"]);
+    // The week shows it on Monday too, where it is planned, never on the rest day.
+    const sub = (await prisma.subtopic.findUniqueOrThrow({ where: { id: subD } })).name;
+    const days = (await asUser(app, H).get("/api/week?date=2026-11-30").expect(200)).body.days as { date: string; recall: string[] }[];
+    const prev = (await asUser(app, H).get("/api/week?date=2026-11-29").expect(200)).body.days as { date: string; recall: string[] }[];
+    expect(prev.find((d) => d.date === "2026-11-29")!.recall).not.toContain(sub);
+    expect(days.find((d) => d.date === "2026-11-30")!.recall).toContain(sub);
     await asUser(app, H).patch(`/api/subtopics/${subD}`).send({ completed: false }).expect(200);
     clock.date = "2026-11-25";
   });

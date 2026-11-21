@@ -890,3 +890,15 @@ body{overflow-wrap:break-word}
 .pg-coach li>div,.pg-coach li>span:first-child{min-width:0;align-self:stretch}
 .pg-note,.g-note,.rc-note{overflow-wrap:anywhere}
 .g-pills .g-sb{white-space:normal;max-width:100%}
+
+/* Lists drawn as cards keep the card's inner padding (".list" resets padding for plain lists). */
+.list.card{padding:4px 16px}
+
+/* Weekly hours: the chart is as wide as its weeks (36 px each, up to the card), so a young plan shows a few clear
+   bars with the axis under them instead of one stub at the left of an empty strip. */
+.chart-box{width:min(100%,max(120px,calc(var(--weeks,1) * 36px)))}
+.chart-box .chart{justify-content:space-between}
+.chart-box .chart .col{max-width:32px}
+
+/* Week: day cards start at the top, so day names and dates line up across the row (buttons centre their content). */
+@media (min-width:821px){.wday{display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch}}

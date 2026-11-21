@@ -183,7 +183,7 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
           ) : data.isRestDay ? (
             <div className="card rest">
               <h3>Rest day</h3>
-              <p>Sunday has no assignments and no target. Rest is part of the plan. If you want to, catch up on carried-over tasks or revise a topic you marked for review.</p>
+              <p>A rest day has no assignments and no target. Rest is part of the plan. If you want to, catch up on carried-over tasks or revise a topic you marked for review.</p>
             </div>
           ) : data.isBufferDay ? (
             <div className="card rest">

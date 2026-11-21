@@ -36,6 +36,9 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
   const t = w.totals;
   const thisWeek = w.today >= w.weekStart && w.today <= w.weekEnd;
   const studyDays = w.days.filter((d) => !d.isRestDay && d.inJourney);
+  // The rest days come from the city's own week (Settings), never a fixed weekday.
+  const restNames = w.days.filter((d) => d.isRestDay).map((d) => new Date(`${d.date}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" }));
+  const rest = restNames.length === 0 ? "no rest day" : `${restNames.join(" and ")} ${restNames.length > 1 ? "are" : "is"} rest`;
   const todo = w.tasks.filter((x) => x.status === "TODO");
 
   return (
@@ -48,7 +51,7 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
               {dayMonth(w.weekStart)} – {dayMonth(w.weekEnd)}
             </h2>
             <div className="sub">
-              {plural(studyDays.length, "study day")} × {hm(studyDays[0]?.targetMinutes ?? 0)} · Sunday is rest, no target
+              {plural(studyDays.length, "study day")} × {hm(studyDays[0]?.targetMinutes ?? 0)} · {rest}{restNames.length ? ", no target" : ""}
             </div>
           </div>
           <div className="nav">
@@ -59,7 +62,7 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
         </div>
 
         <div className="grid4">
-          <Stat label="Target" value={hours1(t.targetMinutes)} detail={`${plural(studyDays.length, "study day")}, Sunday is rest`} />
+          <Stat label="Target" value={hours1(t.targetMinutes)} detail={`${plural(studyDays.length, "study day")}, ${rest}`} />
           <Stat label="Planned" value={hours1(t.plannedMinutes)} detail={`${plural(w.tasks.filter((x) => x.status !== "SKIPPED").length, "assignment")}`} />
           <Stat
             label="Actual"
