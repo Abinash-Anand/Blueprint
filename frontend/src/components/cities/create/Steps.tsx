@@ -178,6 +178,11 @@ export function TimeStep(p: {
 }) {
   const pct = (x: Pace) => `${Math.round(p.paces[x] * 100)}%`;
   const today = new Date().toISOString().slice(0, 10);
+  // Pace never changes the hours or the days (they are the learner's limit): it splits those hours between new
+  // material and revision, which moves the finish date. The split is shown so the choice visibly does something.
+  const h1 = (x: number) => Math.round(x * 10) / 10;
+  const newH = h1(p.plan.newHoursPerWeek), revH = h1(p.plan.weeklyHours - p.plan.newHoursPerWeek);
+  const share = p.plan.weeklyHours ? (p.plan.newHoursPerWeek / p.plan.weeklyHours) * 100 : 0;
   return (
     <>
       <Title sub="Your plan never asks for more than this.">How much time do you have?</Title>
@@ -194,6 +199,11 @@ export function TimeStep(p: {
             { value: "INTENSIVE", label: "Intensive", hint: `${pct("INTENSIVE")} new material, little slack` },
           ]}
         />
+        <div className="cc-split" aria-live="polite">
+          <div className="cc-split-bar" role="img" aria-label={`Each week: ${newH} hours of new material and ${revH} hours of revision`}><i style={{ width: `${share}%` }} /></div>
+          <div className="cc-split-legend"><span><b>{newH} h</b> new material</span><span><b>{revH} h</b> revision</span></div>
+          <p className="cc-split-note">Pace splits your {p.plan.weeklyHours} hours a week between new material and revision. It never adds hours; it moves the finish date.</p>
+        </div>
       </div>
       <Group>
         <DisclosureRow label="Starts" value={longDate(p.t.startDate)} onClick={() => p.edit({ title: "When do you start?", label: "Start date", value: p.t.startDate, kind: "date", min: today, onSave: (v) => v && p.onT({ ...p.t, startDate: v }) })} />
@@ -201,7 +211,6 @@ export function TimeStep(p: {
         <DisclosureRow label="Time zone" value={p.timezone} onClick={() => p.edit({ title: "Time zone", label: "Time zone (e.g. Europe/Berlin)", value: p.timezone, onSave: (v) => v && p.onTimezone(v) })} />
       </Group>
       <div className="cc-result" aria-live="polite">
-        <div className="cc-result-sub">{p.plan.weeklyHours} hours a week · {Math.round(p.plan.newHoursPerWeek * 10) / 10} of them new material</div>
         {p.plan.finish && <div className="cc-result-big">You'll finish around {longDate(p.plan.finish)}</div>}
         {p.t.targetDate && <div className="cc-result-big">About {p.plan.fitHours} hours by {longDate(p.t.targetDate)}</div>}
       </div>

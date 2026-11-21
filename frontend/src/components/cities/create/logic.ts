@@ -98,3 +98,21 @@ export const provisionalName = (brief: string) => {
   const words = brief.replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ");
   return words.length > 2 ? words.slice(0, 60) : "New city";
 };
+
+/* ---------------- "Here's what I understood" ---------------- */
+
+const UNDERSTANDING_KEYS = [
+  "name", "category", "goal", "currentLevel", "targetLevel", "subjects", "alreadyKnown", "resources", "focusOptions",
+  "questions", "plan", "planMonths", "estimatedHours",
+] as const;
+/**
+ * Only the summary's own fields. The AI step's reply carries more (prompt version, model, provider), and the draft's
+ * save refuses fields it doesn't know: sending the reply back as it came failed with "Request validation failed"
+ * until a reload, which read the summary back from the saved draft.
+ */
+export function onlyUnderstanding(r: object): Understanding {
+  const src = r as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of UNDERSTANDING_KEYS) if (src[k] !== undefined) out[k] = src[k];
+  return out as Understanding;
+}
