@@ -64,7 +64,7 @@ export function MatrixDialog({ subtopicId, onClose }: { subtopicId: number; onCl
             </div>
           </div>
 
-          <div className="g-gridbox">
+          <div className="g-gridbox" role="region" aria-label="Points by recall; scrolls sideways when there are many recalls" tabIndex={0}>
             <table className="g-grid">
               <thead>
                 <tr>
