@@ -15,11 +15,14 @@ export interface AuthConfig {
 
 /**
  * Outgoing mail. SMTP is configured either as one URL (SMTP_URL) or as separate fields (SMTP_HOST, SMTP_PORT,
- * SMTP_SECURE, SMTP_USER, SMTP_PASS), which avoids URL-encoding a password. Without SMTP, mail goes to the outbox folder.
+ * SMTP_SECURE, SMTP_USER, SMTP_PASS), which avoids URL-encoding a password. Brevo's HTTPS API (BREVO_API_KEY) is for
+ * hosts that block SMTP ports, such as Render's free web services. Without either, mail goes to the outbox folder.
  */
 export interface MailConfig {
-  transport: "smtp" | "file";
+  transport: "smtp" | "file" | "brevo";
   smtp: { url: string } | { host: string; port: number; secure: boolean; user: string | null; pass: string | null } | null;
+  /** Brevo's transactional e-mail API (transport "brevo"); the sender (MAIL_FROM) must be verified in the account. */
+  brevo: { apiKey: string } | null;
   from: string;
   outboxDir: string;
 }
@@ -53,8 +56,10 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
 export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig {
   const url = env.SMTP_URL?.trim() || null;
   const host = env.SMTP_HOST?.trim() || null;
-  const transport = (env.MAIL_TRANSPORT?.trim() || (url || host ? "smtp" : "file")) as "smtp" | "file";
-  if (transport !== "smtp" && transport !== "file") throw new Error(`Unknown MAIL_TRANSPORT: ${transport}`);
+  const brevoKey = env.BREVO_API_KEY?.trim() || null;
+  const transport = (env.MAIL_TRANSPORT?.trim() || (brevoKey ? "brevo" : url || host ? "smtp" : "file")) as MailConfig["transport"];
+  if (transport !== "smtp" && transport !== "file" && transport !== "brevo") throw new Error(`Unknown MAIL_TRANSPORT: ${transport}`);
+  if (transport === "brevo" && !brevoKey) throw new Error("MAIL_TRANSPORT=brevo needs BREVO_API_KEY");
   let smtp: MailConfig["smtp"] = null;
   if (transport === "smtp") {
     if (url) smtp = { url };
@@ -70,18 +75,29 @@ export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig
     } else throw new Error("MAIL_TRANSPORT=smtp needs SMTP_HOST (or SMTP_URL)");
   }
   const user = smtp && "user" in smtp ? smtp.user : null;
+  // The sender must be an address the account may send as (Gmail: the account itself; Brevo: a verified sender).
+  const from = env.MAIL_FROM?.trim() || (user ? `Blueprint <${user}>` : env.SMTP_USER?.trim() && transport === "brevo" ? `Blueprint <${env.SMTP_USER.trim()}>` : "Blueprint <no-reply@localhost>");
+  const sender = mailAddress(from).email;
+  if (transport === "brevo" && (!sender.includes("@") || sender.endsWith("@localhost")))
+    throw new Error("MAIL_TRANSPORT=brevo needs MAIL_FROM, a sender verified in the Brevo account (e.g. Blueprint <you@example.com>)");
   return {
     transport,
     smtp,
-    // The sender must be an address the SMTP account may send as (for Gmail: the account itself).
-    from: env.MAIL_FROM?.trim() || (user ? `Blueprint <${user}>` : "Blueprint <no-reply@localhost>"),
+    brevo: transport === "brevo" ? { apiKey: brevoKey! } : null,
+    from,
     outboxDir: env.MAIL_OUTBOX_DIR?.trim() || "mail-outbox",
   };
 }
 
 /** Where mail goes, for logs: never the password. */
+/** "Blueprint <you@example.com>" or "you@example.com" as a name and an address. */
+export function mailAddress(from: string): { name: string | null; email: string } {
+  const m = from.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+  return m ? { name: m[1].trim() || null, email: m[2].trim() } : { name: null, email: from.trim() };
+}
+
 export const describeMail = (m: MailConfig) =>
-  m.transport === "file" ? { mail: "file" } : m.smtp && "url" in m.smtp ? { mail: "smtp", via: "SMTP_URL" } : { mail: "smtp", host: (m.smtp as { host: string }).host, port: (m.smtp as { port: number }).port };
+  m.transport === "file" ? { mail: "file" } : m.transport === "brevo" ? { mail: "brevo" } : m.smtp && "url" in m.smtp ? { mail: "smtp", via: "SMTP_URL" } : { mail: "smtp", host: (m.smtp as { host: string }).host, port: (m.smtp as { port: number }).port };
 
 /**
  * How many reverse proxies stand in front of the API and append to X-Forwarded-For (the client's address is read

@@ -35,8 +35,19 @@ Required:
 | `TZ` | `Europe/Berlin` |
 | `TRUST_PROXY` | `1` (see below) |
 
-E-mail: `MAIL_TRANSPORT=smtp`, `REQUIRE_EMAIL_VERIFICATION=true`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`
-(or one `SMTP_URL`). Optional: `MAIL_FROM`.
+E-mail: `MAIL_TRANSPORT=brevo`, `BREVO_API_KEY`, `MAIL_FROM` (for example `Blueprint <you@gmail.com>`) and
+`REQUIRE_EMAIL_VERIFICATION=true`. Render's free web services cannot send on the SMTP ports ("Free web services can't
+send outbound network traffic on ports 25, 465, or 587", render.com/docs/free), so the start-up check logs
+`Mail server check failed … ETIMEDOUT` with SMTP and no mail leaves. Brevo sends over HTTPS instead:
+
+1. Create a free Brevo account, then add and confirm your sender address in its **Senders** settings (a Gmail
+   address works; Brevo sends a confirmation e-mail to it).
+2. Create an **API key** in Brevo's settings and set it as `BREVO_API_KEY` (a secret: never in Git or chat).
+3. Set `MAIL_FROM` to that confirmed sender. The `SMTP_` variables are then unused and can be removed.
+4. Redeploy and look for `Mail server reachable and login accepted` in the log (the start-up check reads the Brevo
+   account, which confirms the key without sending anything).
+
+On a paid instance SMTP works too (`MAIL_TRANSPORT=smtp` with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`).
 
 AI: `AI_ENABLED=true`, `SAIA_API_KEY`, and the providers and models from the local `.env`
 (`AI_EVALUATION_PROVIDER`, `AI_EVALUATION_MODEL`, `AI_EVALUATION_FALLBACK_MODEL`, `AI_TRANSCRIPTION_PROVIDER`,
@@ -71,4 +82,4 @@ chain). `ip` should be your own public address; if it is a Render address, raise
 
 A free web service sleeps when idle, so the first request after a pause takes about a minute; a recall that was
 being graded when it stopped is graded again on the next start. It has no persistent disk, which the backend does
-not need (mail goes out over SMTP; uploaded plan files and recordings are never stored as files).
+not need (mail goes out through Brevo; uploaded plan files and recordings are never stored as files).
