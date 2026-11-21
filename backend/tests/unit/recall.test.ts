@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type PointStatus, type ScoredPoint, GradeError, RULES, checklistProblems, dailyLimit, depthOf, gapFor, nextSchedule, outcomeOf, recallScore,
-  quoteMatches, tierShares, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
+  quoteMatches, tierShares, umbrellaPoints, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
 } from "../../src/modules/recall/rules.js";
 
 const pts = (...xs: [number, PointStatus][]): ScoredPoint[] => xs.map(([tier, status]) => ({ tier, weight: tier, status }));
@@ -163,6 +163,29 @@ describe("checking a drafted checklist", () => {
     expect(checklistProblems([...good.slice(0, 5), p(3, "Guards and resolvers")], ["Guards and resolvers"])).toContain('"Guards and resolvers" is another sub-topic of this topic');
     expect(checklistProblems([...good.slice(0, 4), p(3, "Pitfall one"), p(3, "Pitfall two"), p(3, "Internals")], [])).toContain("write at most 2 tier 3 points");
   });
+
+  it("sends back an umbrella point that counts parts already on the list, from the words alone", () => {
+    const d = (tier: number, label: string, description: string) => ({ tier, label, description });
+    const parts = [
+      d(1, "What a cache is", "A cache keeps copies of data close to where it is read."),
+      d(2, "Read-through loading", "On a miss the cache loads the value from the store itself."),
+      d(2, "Write-behind saving", "Writes go to the cache first and reach the store later."),
+      d(2, "Expiry by time", "Each entry is dropped after its time to live."),
+      d(2, "Key design", "Keys name the data a cached value belongs to."),
+    ];
+    // Counts the strategies and names them by what sets each apart, stems included ("loading" in "loads").
+    const umbrella = d(1, "Three cache strategies", "The three ways a cache works: read-through loads, write-behind writes, and expiry.");
+    expect(umbrellaPoints([parts[0], umbrella, ...parts.slice(1)]).map((u) => u.parts)).toEqual([["Read-through loading", "Write-behind saving", "Expiry by time"]]);
+    expect(checklistProblems([parts[0], umbrella, ...parts.slice(1)], [])).toEqual([
+      '"Three cache strategies" only sums up points already on the list ("Read-through loading", "Write-behind saving", "Expiry by time"): leave it out',
+    ]);
+    // German counts too.
+    expect(umbrellaPoints([parts[0], { ...umbrella, label: "Drei Strategien", description: "Drei Arten von Cache: read-through, write-behind und expiry." }, ...parts.slice(1)])).toHaveLength(1);
+    // Naming the parts without counting them is a point of its own (syntax, a comparison) ...
+    expect(umbrellaPoints([...parts, d(3, "Choosing a strategy", "Pick read-through, write-behind or expiry by how often data changes.")])).toEqual([]);
+    // ... and so is a count that does not repeat other points.
+    expect(umbrellaPoints([...parts, d(3, "Two hard problems", "Invalidation and naming are the classic hard problems of caching.")])).toEqual([]);
+  });
 });
 
 describe("phase 2: cued reasoning and progress over time", () => {
@@ -220,6 +243,7 @@ describe("prompts", () => {
     const { system } = checklistPrompt({ city: "C", district: "D", topic: "T", topicDescription: "about T", subtopic: "S", otherSubtopics: [], language: "en" });
     expect(system).toContain("NEVER write an umbrella or summary point");
     expect(system).toContain("does not overlap with any other point");
+    expect(system).toContain("if a point counts or lists things that other points already cover, remove it");
   });
 
   it("transcribes a sketch literally, word for word as agreed", async () => {

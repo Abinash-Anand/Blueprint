@@ -212,7 +212,36 @@ export function checklistProblems(points: DraftPoint[], otherSubtopics: string[]
   if (points.some((p) => !p.label.trim() || !p.description.trim())) problems.push("every point needs a label and a description");
   const others = otherSubtopics.map(normalise).filter((x) => x.length > 3);
   for (const p of points) if (others.includes(normalise(p.label))) problems.push(`"${p.label}" is another sub-topic of this topic`);
+  for (const u of umbrellaPoints(points))
+    problems.push(`"${u.point.label}" only sums up points already on the list (${u.parts.map((x) => `"${x}"`).join(", ")}): leave it out`);
   return problems;
+}
+
+/** A count in a label or description: "three kinds", "both", "2 ways"; English and German, the checklist languages. */
+const COUNTED = /(^|[^\p{L}\p{N}])(two|three|four|five|six|both|zwei|drei|vier|fünf|sechs|beide[nrs]?|[2-6])([^\p{L}\p{N}]|$)|\b(types|kinds|forms|ways) of\b|\b(arten|formen) (von|der|des)\b/iu;
+const stemsMatch = (a: string, b: string) => {
+  const n = Math.min(5, a.length);
+  return b.length >= n && a.slice(0, n) === b.slice(0, n);
+};
+
+/**
+ * Umbrella points (checklist prompt v3): a point that counts things ("the three kinds of X") and whose description
+ * names two or more other points by what sets each apart. Each point's distinctive words are the words of its label
+ * that no other label uses, so words several labels share, such as "role" or "callback", never count. Works on the
+ * words alone, with no knowledge of the subject.
+ */
+export function umbrellaPoints(points: DraftPoint[]): { point: DraftPoint; parts: string[] }[] {
+  const labelWords = points.map((p) => [...contentWords(p.label)]);
+  const distinctive = labelWords.map((ws, i) => ws.filter((w) => labelWords.every((xs, j) => j === i || !xs.includes(w))));
+  const out: { point: DraftPoint; parts: string[] }[] = [];
+  points.forEach((u, i) => {
+    if (!COUNTED.test(`${u.label} ${u.description}`)) return;
+    const said = [...contentWords(u.description)];
+    const own = new Set(labelWords[i]);
+    const parts = points.filter((_, j) => j !== i && distinctive[j].some((w) => !own.has(w) && said.some((x) => stemsMatch(w, x))));
+    if (parts.length >= 2) out.push({ point: u, parts: parts.map((p) => p.label) });
+  });
+  return out;
 }
 
 /* ---------------- phase 2: the follow-up and progress over time ---------------- */
