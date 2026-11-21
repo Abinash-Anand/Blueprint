@@ -57,7 +57,9 @@ export const requestLog: RequestHandler = (req, res, next) => {
   const t0 = performance.now();
   res.on("finish", () => {
     if (process.env.NODE_ENV === "test") return;
-    console.log(JSON.stringify({ level: "info", method: req.method, path: req.originalUrl, status: res.statusCode, ms: Math.round(performance.now() - t0) }));
+    // Addresses are personal data and are not logged; LOG_CLIENT_IP=true adds them for a short check of TRUST_PROXY.
+    const ip = process.env.LOG_CLIENT_IP === "true" ? { ip: req.ip, forwardedFor: req.get("x-forwarded-for") ?? null } : {};
+    console.log(JSON.stringify({ level: "info", method: req.method, path: req.originalUrl, status: res.statusCode, ms: Math.round(performance.now() - t0), ...ip }));
   });
   next();
 };

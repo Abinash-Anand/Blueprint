@@ -80,7 +80,12 @@ export function rateLimiter(now: () => number = Date.now) {
 export type RateLimiter = ReturnType<typeof rateLimiter>;
 
 /** Client address for rate limits: Nginx sets X-Real-IP; otherwise the socket address. */
-export const clientIp = (req: Request) => (req.get("x-real-ip") || req.socket.remoteAddress || "unknown").slice(0, 64);
+/**
+ * The client's address for sign-in limits: Express's req.ip, which reads X-Forwarded-For only as far as the trusted
+ * proxies go (app "trust proxy", TRUST_PROXY). Not X-Real-IP: no proxy here sets it, so a client could choose it and
+ * walk past the limits, and without it every visitor looked like the proxy and shared one limit.
+ */
+export const clientIp = (req: Request) => (req.ip || req.socket.remoteAddress || "unknown").slice(0, 64);
 
 /* ---------------- input rules ---------------- */
 

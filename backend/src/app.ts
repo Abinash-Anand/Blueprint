@@ -4,7 +4,7 @@ import { type AuthConfig, loadAuthConfig } from "./config.js";
 import { presentationCatalog } from "./domain/presentation.js";
 import type { Clock } from "./lib/clock.js";
 import { authenticate, requireCity, requireUser } from "./lib/context.js";
-import { requestGuard } from "./lib/guard.js";
+import { requestGuardFor } from "./lib/guard.js";
 import { errorHandler, notFoundRoute, requestLog } from "./lib/http.js";
 import { AI_DISABLED, type AiConfig } from "./modules/ai/config.js";
 import { createProviders } from "./modules/ai/providers/factory.js";
@@ -52,6 +52,8 @@ export interface AppInput {
   limiter?: RateLimiter;
   /** Tests: shorter waits between grading tries while the provider is busy. */
   recallRetryDelaysMs?: readonly number[];
+  /** Reverse proxies in front of the API (config.ts trustProxyHops); 1, the bundled Nginx, by default. */
+  trustProxy?: number;
 }
 
 export function createApp(input: AppInput) {
@@ -76,13 +78,13 @@ export function createApp(input: AppInput) {
   const app = express();
   app.disable("x-powered-by");
   app.set("query parser", "simple");
-  // One reverse proxy (Nginx) in front: trust its X-Forwarded-* for the client address.
-  app.set("trust proxy", 1);
+  // The reverse proxies in front (1: the bundled Nginx) append the client's address to X-Forwarded-For; req.ip reads it.
+  app.set("trust proxy", input.trustProxy ?? 1);
   app.use(requestLog);
   app.use(express.json({ limit: "1mb" }));
 
   const api = express.Router();
-  api.use(requestGuard);
+  api.use(requestGuardFor(authConfig.publicUrl));
   api.use(authenticate(deps.auth, authConfig.cookieSecure));
   api.get("/health", async (_req, res) => {
     try {

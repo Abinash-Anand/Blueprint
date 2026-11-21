@@ -1,0 +1,79 @@
+# Render Blueprint for Blueprint's backend and database (docs/Deploy-Render.md).
+# Paths are relative to the repository root. Secrets and per-deployment values use `sync: false`: Render asks for
+# them when the Blueprint is first created and never stores them in this file.
+
+databases:
+  - name: blueprint-db
+    plan: free            # Render's free Postgres has limits and an expiry: check its current terms before keeping real data
+    region: frankfurt
+    databaseName: blueprint
+    user: blueprint
+    postgresMajorVersion: "17"   # the version the app is developed and tested on
+
+services:
+  - type: web
+    name: blueprint-api
+    runtime: docker
+    plan: free            # sleeps when idle; the first request after that takes about a minute
+    region: frankfurt     # with the database, and close to GWDG Academic Cloud
+    branch: main
+    rootDir: backend      # only changes under backend/ redeploy this service
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    # PORT is set by Render and read by the server. On every start the container applies pending migrations
+    # (never resetting data), seeds the built-in city, then starts the API (backend/docker-entrypoint.sh).
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: blueprint-db
+          property: connectionString
+      - key: APP_ENV
+        value: production
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: TZ
+        value: Europe/Berlin
+      # The frontend's https address (for e-mail links, and the one page origin the API accepts besides its own).
+      - key: PUBLIC_URL
+        sync: false
+      # Proxies in front that append to X-Forwarded-For: 1 when browsers call this service directly; one more when the
+      # frontend's static site proxies /api to it. See docs/Deploy-Render.md to check the value after deploying.
+      - key: TRUST_PROXY
+        value: "1"
+      # E-mail (sign-up verification, password reset).
+      - key: MAIL_TRANSPORT
+        value: smtp
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "true"
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      # AI (off unless AI_ENABLED is true); the same values as the local .env.
+      - key: AI_ENABLED
+        value: "true"
+      - key: SAIA_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AI_EVALUATION_PROVIDER
+        sync: false
+      - key: AI_EVALUATION_MODEL
+        sync: false
+      - key: AI_EVALUATION_FALLBACK_MODEL
+        sync: false
+      - key: AI_TRANSCRIPTION_PROVIDER
+        sync: false
+      - key: AI_TRANSCRIPTION_MODEL
+        sync: false
+      - key: AI_TRANSCRIPTION_FALLBACK_MODEL
+        sync: false
+      - key: AI_REQUEST_TIMEOUT_MS
+        sync: false
+      - key: AI_DAILY_REQUEST_LIMIT
+        sync: false
