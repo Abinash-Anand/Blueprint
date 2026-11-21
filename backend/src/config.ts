@@ -26,6 +26,8 @@ export interface MailConfig {
 
 export interface Config {
   port: number;
+  /** Reverse proxies in front of the API (see trustProxyHops). */
+  trustProxy: number;
   databaseUrl: string;
   appToday?: string;
   production: boolean;
@@ -81,11 +83,23 @@ export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig
 export const describeMail = (m: MailConfig) =>
   m.transport === "file" ? { mail: "file" } : m.smtp && "url" in m.smtp ? { mail: "smtp", via: "SMTP_URL" } : { mail: "smtp", host: (m.smtp as { host: string }).host, port: (m.smtp as { port: number }).port };
 
+/**
+ * How many reverse proxies stand in front of the API and append to X-Forwarded-For (the client's address is read
+ * from there, for sign-in limits). 1 behind the bundled Nginx; behind a host's load balancer, or a static site that
+ * proxies /api to it, set it to that chain's length. 0 trusts no header.
+ */
+export function trustProxyHops(v: string | undefined): number {
+  const n = Number(v?.trim() || 1);
+  if (!Number.isInteger(n) || n < 0 || n > 5) throw new Error(`TRUST_PROXY must be a whole number from 0 to 5, got "${v}"`);
+  return n;
+}
+
 export function loadConfig(env = process.env): Config {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
   return {
     port: Number(env.PORT ?? 3000),
+    trustProxy: trustProxyHops(env.TRUST_PROXY),
     databaseUrl,
     appToday: env.APP_TODAY || undefined,
     production: env.NODE_ENV === "production" && env.APP_ENV !== "local",

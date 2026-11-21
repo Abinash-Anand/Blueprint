@@ -15,7 +15,7 @@ const prisma = createPrisma();
 const clock = systemClock(config.appToday);
 const aiConfig = loadAiConfig();
 const providers = createProviders(aiConfig);
-const app = createApp({ prisma, clock, ai: { config: aiConfig, providers }, authConfig: config.auth });
+const app = createApp({ prisma, clock, ai: { config: aiConfig, providers }, authConfig: config.auth, trustProxy: config.trustProxy });
 void (app.locals.recall as RecallService).planAll().then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall tasks planned", count: n })));
 void (app.locals.recall as RecallService).resumeWaiting().then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall grading resumed", count: n })));
 
