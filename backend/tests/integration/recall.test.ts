@@ -182,13 +182,27 @@ suite("recall", () => {
     expect(used.length).toBe(3);
   });
 
+  it("counts a checked recall as study time: its planned minutes are logged once, with its topic", async () => {
+    const r = await checked(reviewId);
+    const sessions = await prisma.studySession.findMany({ where: { note: { startsWith: "Recall:" } } });
+    const task = await prisma.task.findFirstOrThrow({ where: { subtopicId: subA, recallStateId: { not: null }, status: "DONE" } });
+    expect(sessions).toEqual([expect.objectContaining({ minutes: 8, taskId: task.id, topicId: "fe.ts", date: new Date(`${r.result!.nextDueDate ? "2026-11-21" : ""}T00:00:00.000Z`) })]);
+  });
+
   it("works the result out again when a point is left out, while the results are open", async () => {
     const c6 = (await checked(reviewId)).result!.points.find((p) => p.code === "c6")!;
+    // Nothing but the result may change: no recall task is completed again, no time logged again, the check time kept.
+    const recallTasks = () => prisma.task.findMany({ where: { subtopicId: subA, recallStateId: { not: null } }, orderBy: { id: "asc" }, select: { id: true, status: true, scheduledDate: true } });
+    const before = { tasks: await recallTasks(), sessions: await prisma.studySession.count(), checkedAt: (await prisma.recallReview.findUniqueOrThrow({ where: { id: reviewId } })).checkedAt };
     const r = (await asUser(app, H).patch(`/api/recall/points/${c6.id}`).send({ leftOut: true }).expect(200)).body.review as Review;
     expect(r.result!.points.find((p) => p.code === "c6")!.leftOut).toBe(true);
     expect(r.result!.score).toBeCloseTo(4 / 8 - 0.15, 3); // without the tier-3 point: 4 of 8
     expect(r.result).toMatchObject({ outcome: "LAPSE", stageAfter: 1 });
     await asUser(app, H).patch(`/api/recall/points/${c6.id}`).send({ leftOut: false }).expect(200);
+    expect((await recallTasks()).filter((t) => t.status === "DONE")).toEqual(before.tasks.filter((t) => t.status === "DONE"));
+    expect((await recallTasks()).filter((t) => t.status === "TODO")).toHaveLength(1);
+    expect(await prisma.studySession.count()).toBe(before.sessions);
+    expect((await prisma.recallReview.findUniqueOrThrow({ where: { id: reviewId } })).checkedAt).toEqual(before.checkedAt);
   });
 
   it("asks the senior engineer's follow-up about the gaps; an answer marks points recalled when asked, never the score", async () => {
@@ -390,5 +404,35 @@ suite("recall", () => {
     await prisma.recallReview.update({ where: { id: draft.id }, data: { status: "WAITING" } });
     await expect(recall.rebuildChecklist(cityScoped(prisma, old.cityId), old.cityId, subA)).rejects.toMatchObject({ code: "REVIEW_WAITING" });
     await prisma.recallReview.update({ where: { id: draft.id }, data: { status: "DRAFT" } });
+  });
+
+  it("ticking a sub-topic learned completes its open study tasks (today, if planned later), never its practice tasks", async () => {
+    const sub = await prisma.subtopic.findFirstOrThrow({ where: { topicId: "fe.ts", position: 4 } });
+    expect(sub.completedAt).toBeNull();
+    const mk = (kind: string, date: string) => asUser(app, H).post("/api/tasks").send({ title: `${kind} ${sub.name}`, scheduledDate: date, estimatedMinutes: 30, topicId: "fe.ts", subtopicId: sub.id, kind }).expect(201);
+    const today = clock.date;
+    const study = [(await mk("STUDY", today)).body.id, (await mk("STUDY", "2026-12-15")).body.id];
+    const practice = (await mk("PRACTICE", "2026-12-16")).body.id;
+    // Study tasks the plan already has for this sub-topic are closed too.
+    const planned = await prisma.task.count({ where: { subtopicId: sub.id, kind: "STUDY", status: "TODO", id: { notIn: study } } });
+    const r = (await asUser(app, H).patch(`/api/subtopics/${sub.id}`).send({ completed: true }).expect(200)).body;
+    expect(r.studyTasksDone).toBe(planned + 2);
+    const rows = await prisma.task.findMany({ where: { id: { in: [...study, practice] } }, orderBy: { id: "asc" } });
+    expect(rows.map((t) => [t.kind, t.status, t.scheduledDate.toISOString().slice(0, 10), t.originalDate.toISOString().slice(0, 10)])).toEqual([
+      ["STUDY", "DONE", today, today], ["STUDY", "DONE", today, "2026-12-15"], ["PRACTICE", "TODO", "2026-12-16", "2026-12-16"],
+    ]);
+    // Unticking reopens nothing; ticking again closes nothing more.
+    await asUser(app, H).patch(`/api/subtopics/${sub.id}`).send({ completed: false }).expect(200);
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: study[0] } })).status).toBe("DONE");
+    await prisma.task.deleteMany({ where: { id: { in: [...study, practice] } } });
+  });
+
+  it("plans open recall tasks again when the daily limit or the study days change", async () => {
+    const open = () => prisma.task.findMany({ where: { recallStateId: { not: null }, status: "TODO", cityId: "engineering" }, select: { scheduledDate: true } });
+    await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 10 }).expect(200); // one recall a day (8 minutes each)
+    const days = (await open()).map((t) => t.scheduledDate.toISOString().slice(0, 10));
+    expect(days.length).toBeGreaterThan(1);
+    expect(new Set(days).size).toBe(days.length);
+    await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 30 }).expect(200);
   });
 });

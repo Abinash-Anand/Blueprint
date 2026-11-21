@@ -29,9 +29,9 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
             <h2>{pct(p.road.overall)} of the road travelled</h2>
             <div className="sub">
               {curDistrict
-                ? `Checkpoint ${p.road.currentDistrictIndex + 1} of 7: ${curDistrict.name} (${pct(p.road.districtFraction)} of its core work).`
+                ? `Checkpoint ${p.road.currentDistrictIndex + 1} of ${curriculum.districts.length}: ${curDistrict.name} (${pct(p.road.districtFraction)} of its core work).`
                 : "Every checkpoint passed."}{" "}
-              The road counts demonstrated core topics only.
+              The road counts core topics: learned sub-topics take a topic up to 80 %, demonstrating it completes it.
             </div>
           </div>
         </div>

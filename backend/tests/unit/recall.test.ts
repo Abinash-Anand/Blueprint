@@ -283,3 +283,19 @@ describe("confirming misconceptions", () => {
     expect(user).toContain("1. claim: ng on in it runs once after the first ng on changes | proposed correction: It runs after ngOnChanges.");
   });
 });
+
+describe("progress note facts", () => {
+  it("gives the note scores as percentages, the change in points and depth as words", async () => {
+    const { narrativePrompt, noteFacts } = await import("../../src/modules/recall/prompts.js");
+    const diff = {
+      attempt: 3, previousAttempt: 2, scoreDelta: 0.8, newlyMastered: [], retained: [], regressed: [], persistentBlindSpots: [], recurringMisconceptions: [],
+      scoreTrajectory: [{ attempt: 2, date: "2026-11-21", score: 0, depth: "FOUNDATIONAL" as const }, { attempt: 3, date: "2026-11-21", score: 0.8, depth: "INTERMEDIATE" as const }],
+    };
+    expect(noteFacts(diff)).toMatchObject({ scoreDelta: "+80 points", scoreTrajectory: [{ score: "0 %", depth: "foundational" }, { score: "80 %", depth: "intermediate" }] });
+    expect(noteFacts({ ...diff, scoreDelta: -0.214 }).scoreDelta).toBe("−21 points");
+    const { system, user } = narrativePrompt({ district: "D", topic: "T", subtopic: "S", language: "en" }, diff);
+    expect(user).toContain('"score":"80 %"');
+    expect(user).not.toContain('"score":0.8');
+    expect(system).toContain("never as decimals");
+  });
+});

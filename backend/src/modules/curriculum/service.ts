@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { d2i } from "../../db.js";
+import { d2i, i2d } from "../../db.js";
 import { subtopicPresentation, topicPresentation } from "../../domain/presentation.js";
 import { topicStatus } from "../../domain/progress.js";
 import type { Clock } from "../../lib/clock.js";
@@ -99,13 +99,22 @@ export function curriculumService(prisma: PrismaClient, clock: Clock) {
       // Learned status is the learner's explicit action; recall follows it (docs/Recall-Plan.md §3.1).
       const u = await prisma.$transaction(async (tx) => {
         const row = await tx.subtopic.update({ where: { id }, data: { completedAt } });
+        // Learned means there is nothing left to study: its open study tasks are done (today, if they were planned
+        // later). Practice tasks stay open: they ask for the exercise. Unticking reopens nothing.
+        let studyDone = 0;
+        if (completed && !s.completedAt) {
+          const today = clock.today(), now = clock.now();
+          const open = { subtopicId: id, kind: "STUDY" as const, status: "TODO" as const };
+          studyDone += (await tx.task.updateMany({ where: { ...open, scheduledDate: { gt: i2d(today) } }, data: { status: "DONE", completedAt: now, scheduledDate: i2d(today) } })).count;
+          studyDone += (await tx.task.updateMany({ where: open, data: { status: "DONE", completedAt: now } })).count;
+        }
         await syncRecallState(tx, id, completedAt !== null, clock.today());
         await syncRecallTasks(tx, clock.today());
         const recall = await tx.recallState.findUnique({ where: { subtopicId: id }, select: { nextDueDate: true } });
-        return { row, recallDue: recall?.nextDueDate ? d2i(recall.nextDueDate) : null };
+        return { row, studyDone, recallDue: recall?.nextDueDate ? d2i(recall.nextDueDate) : null };
       });
-      // When the sub-topic is next due for recall, so the learner sees it was scheduled.
-      return { id: u.row.id, topicId: u.row.topicId, completedAt: u.row.completedAt?.toISOString() ?? null, recallDue: u.recallDue };
+      // When the sub-topic is next due for recall, so the learner sees it was scheduled; and how many study tasks it closed.
+      return { id: u.row.id, topicId: u.row.topicId, completedAt: u.row.completedAt?.toISOString() ?? null, recallDue: u.recallDue, studyTasksDone: u.studyDone };
     },
 
     async patchTopic(id: string, body: { demonstrated?: boolean; demonstrationNote?: string; needsReview?: boolean }) {

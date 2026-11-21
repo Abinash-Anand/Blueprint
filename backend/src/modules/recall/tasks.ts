@@ -65,10 +65,16 @@ export async function syncRecallTasks(db: Db, today: ISODate) {
   return place.length;
 }
 
-/** The sub-topic's open recall task is done: its recall was checked today (an early recall moves it to today). */
-export async function completeRecallTask(db: Db, recallStateId: number, today: ISODate, at: Date) {
+/**
+ * The sub-topic's open recall task is done: its recall was checked today (an early recall moves it to today).
+ * Returns the completed task's id (the earliest open one), or null when none was open.
+ */
+export async function completeRecallTask(db: Db, recallStateId: number, today: ISODate, at: Date): Promise<number | null> {
+  const open = await db.task.findMany({ where: { recallStateId, status: "TODO" }, select: { id: true }, orderBy: [{ originalDate: "asc" }, { id: "asc" }] });
+  if (!open.length) return null;
   await db.task.updateMany({
-    where: { recallStateId, status: "TODO" },
+    where: { id: { in: open.map((t) => t.id) } },
     data: { status: "DONE", completedAt: at, scheduledDate: i2d(today) },
   });
+  return open[0].id;
 }

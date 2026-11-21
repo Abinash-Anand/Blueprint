@@ -45,7 +45,7 @@ const toHash = (r: Route) =>
   r.recall != null ? `#/recall/${r.recall}` : `#/${r.view}${r.param ? `/${encodeURIComponent(r.param)}` : ""}${r.param && r.sub ? `/${encodeURIComponent(r.sub)}` : ""}`;
 
 export function App() {
-  const { curriculum, progress, loadError, reload, version, notice, setNotice } = useAppData();
+  const { curriculum, progress, loadError, reload, invalidate, version, notice, setNotice } = useAppData();
   const [route, setRoute] = useState<Route>(() => parseHash(location.hash));
   const [today, setToday] = useState<Today | null>(null);
   const [sideOpen, setSideOpen] = useState(false);
@@ -118,12 +118,12 @@ export function App() {
     return () => ro?.disconnect();
   }, [route.view, ready]);
 
-  // Leaving the recall flow: the plan, the sidebar and the tabs pick up what the recall changed.
+  // Leaving the recall flow: every view, the sidebar's Today card and the tab badge pick up what the recall changed.
   const wasRecall = useRef(route.recall != null);
   useEffect(() => {
-    if (wasRecall.current && route.recall == null) void reload();
+    if (wasRecall.current && route.recall == null) void invalidate();
     wasRecall.current = route.recall != null;
-  }, [route.recall, reload]);
+  }, [route.recall, invalidate]);
 
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setSideOpen(false);

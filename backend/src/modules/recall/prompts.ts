@@ -6,7 +6,7 @@
  * characters are removed from them.
  */
 import { z } from "zod";
-import type { DraftPoint, GradeReply } from "./rules.js";
+import type { Depth, DraftPoint, GradeReply, SessionDiff } from "./rules.js";
 import { RULES } from "./rules.js";
 
 /**
@@ -251,7 +251,8 @@ export const confirmedMisconceptions = <M>(items: M[], reply: z.infer<typeof Mis
 
 export const PROBE_PROMPT_VERSION = "recall-probe-v1";
 export const VERDICT_PROMPT_VERSION = "recall-verdict-v1";
-export const NARRATIVE_PROMPT_VERSION = "recall-narrative-v2";
+/** v3 (21 Nov 2026): scores reach the note as percentages and points, depth as words (notes said "0 to 0.8"). */
+export const NARRATIVE_PROMPT_VERSION = "recall-narrative-v3";
 
 export interface Context { district: string; topic: string; subtopic: string; language: Language }
 const where = (c: Context) => [tag("district", clean(c.district)), tag("topic", clean(c.topic)), tag("subtopic", clean(c.subtopic))].join("\n");
@@ -326,14 +327,29 @@ export const narrativeJsonSchema = {
 } as const;
 export const NarrativeReply = z.object({ sentences: z.array(z.string().min(3).max(500)).min(1).max(4) });
 
+const DEPTH_WORD: Record<Depth, string> = { FOUNDATIONAL: "foundational", INTERMEDIATE: "intermediate", MASTERY: "mastery" };
+const percent = (x: number) => `${Math.round(x * 100)} %`;
+/**
+ * The facts as a learner reads them: scores as percentages ("80 %"), the change in points ("+80 points"), depth as a
+ * word. Raw 0–1 scores made notes say "jumped from 0 to 0.8 … from FOUNDATIONAL to INTERMEDIATE".
+ */
+export function noteFacts(diff: SessionDiff) {
+  return {
+    ...diff,
+    scoreDelta: diff.scoreDelta === null ? null : `${diff.scoreDelta >= 0 ? "+" : "−"}${Math.abs(Math.round(diff.scoreDelta * 100))} points`,
+    scoreTrajectory: diff.scoreTrajectory.map((h) => ({ attempt: h.attempt, date: h.date, score: percent(h.score), depth: DEPTH_WORD[h.depth] })),
+  };
+}
+
 /** The progress summary (§7): written only from the computed diff, never from transcripts. */
-export function narrativePrompt(c: Context, diff: unknown) {
+export function narrativePrompt(c: Context, diff: SessionDiff) {
   const system = [
     "You write a short progress note for a learner about one sub-topic they keep revising, from computed facts only: which points they newly remembered, kept, lost, or keep missing, any mistake that came back after it was corrected, and their score over time.",
-    "Write three or four plain sentences: the trend, what is now solid, what slipped, and the blind spot or returning mistake to work on. Use only the facts given; mention numbers only as they appear; no praise padding.",
+    "Write three or four plain sentences: the trend, what is now solid, what slipped, and the blind spot or returning mistake to work on. Use only the facts given; no praise padding.",
+    "Scores are percentages and changes are in points: write them exactly as given (for example 80 %, +80 points), never as decimals. Depth levels are plain words (foundational, intermediate, mastery), never in capitals.",
     `Write in ${LANGUAGE[c.language]}.`,
   ].join("\n");
-  const user = [tag("stage", "recall-narrative"), where(c), tag("diff", guard(JSON.stringify(diff))), "Write the progress note."].join("\n");
+  const user = [tag("stage", "recall-narrative"), where(c), tag("diff", guard(JSON.stringify(noteFacts(diff)))), "Write the progress note."].join("\n");
   return { system, user };
 }
 

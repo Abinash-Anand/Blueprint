@@ -119,7 +119,7 @@ export const api = {
   today: (date?: string) => request<Today>("GET", `/today${q({ date })}`),
   week: (date?: string) => request<Week>("GET", `/week${q({ date })}`),
   setSubtopic: (id: number, completed: boolean) =>
-    request<{ id: number; completedAt: string | null; recallDue: string | null }>("PATCH", `/subtopics/${id}`, { completed }),
+    request<{ id: number; completedAt: string | null; recallDue: string | null; studyTasksDone?: number }>("PATCH", `/subtopics/${id}`, { completed }),
   patchTopic: (id: string, body: { demonstrated?: boolean; demonstrationNote?: string; needsReview?: boolean }) =>
     request<Topic>("PATCH", `/topics/${encodeURIComponent(id)}`, body),
   createTask: (body: NewTask) => request<Task>("POST", "/tasks", body),

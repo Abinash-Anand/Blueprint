@@ -20,12 +20,11 @@ const TONE = { PASS: "ok", HOLD: "part", LAPSE: "miss" } as const;
 const OPEN = { DRAFT: "Started", WAITING: "Being checked", CHECKED: "Results ready", COMPLETE: "" } as const;
 
 export function RevisionView() {
-  const { version, reload, topicById, districtById } = useAppData();
+  const { version, invalidate, topicById, districtById } = useAppData();
   const [h, setH] = useState<RecallHome | null>(null);
   const [a, setA] = useState<RevisionArchive | null>(null);
   const [hist, setHist] = useState<RecallHistoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [n, setN] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -36,12 +35,11 @@ export function RevisionView() {
     return () => {
       live = false;
     };
-  }, [version, n]);
+  }, [version]);
 
   if (error) return <div className="view gl gl-bg"><div className="wrap"><p className="g-err">{error}</p></div></div>;
   if (!h || !a) return <div className="view gl gl-bg"><Loading /></div>;
 
-  const refresh = () => setN((x) => x + 1);
   const status = (s: RecallItem) => h.open.find((o) => o.subtopicId === s.subtopicId)?.status;
   const color = (s: RecallItem) => districtById?.get(topicById?.get(s.topicId)?.districtId ?? "")?.color;
   const next = h.due[0] ?? h.later[0] ?? null;
@@ -73,10 +71,10 @@ export function RevisionView() {
         <h2 className="g-lt">{h.due.length ? `${plural(h.due.length, "sub-topic")} to recall today` : "Nothing to recall today"}</h2>
         <p className="g-sub">
           Say or type everything you remember. The AI checks it against a checklist you see afterwards.
-          {" "}Up to {plural(h.limit, "review")} a day{h.doneToday ? ` · ${h.doneToday} done today` : ""}.
+          {" "}Up to {plural(h.limit, "review")} planned a day{h.doneToday ? ` · ${h.doneToday} done today${h.doneToday > h.limit ? `, ${h.doneToday - h.limit} extra` : ""}` : ""}.
         </p>
 
-        <AiNotice h={h} onAccepted={refresh} />
+        <AiNotice h={h} onAccepted={() => void invalidate()} />
 
         {next && (
           <section className="g-hero" aria-label="Up next">
@@ -85,7 +83,7 @@ export function RevisionView() {
               <div className="g-hero-name"><span className="g-dot" style={{ background: color(next) }} />{next.subtopic}</div>
               <p className="g-sub">{next.topic} · {next.district} · {next.lastReviewDate ? `last recalled ${dayMonth(next.lastReviewDate)}` : "first recall"}{status(next) ? ` · ${OPEN[status(next)!].toLowerCase()}` : ""}</p>
             </div>
-            <NotToday s={next} onDone={() => { refresh(); void reload(); }} />
+            <NotToday s={next} onDone={() => void invalidate()} />
             <button type="button" className="btn primary big" disabled={!can} onClick={() => openPage(recallHash(next.subtopicId))}>
               {status(next) === "CHECKED" ? "See results" : status(next) ? "Continue" : "Start recall"}
             </button>

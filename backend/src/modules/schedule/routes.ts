@@ -33,8 +33,8 @@ const settingsBody = z
     message: "Provide weeklyTargets, revisionDailyMinutes and/or revisionWeeklyOvertimeMinutes",
   });
 
-export function scheduleRoutes(_deps: Deps) {
-  const svc = (req: Request) => scheduleService(req.db);
+export function scheduleRoutes(deps: Deps) {
+  const svc = (req: Request) => scheduleService(req.db, () => deps.clock.today());
   const r = Router();
   r.get("/stages", async (req, res) => {
     res.json(await svc(req).listStages());
