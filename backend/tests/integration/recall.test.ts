@@ -133,7 +133,7 @@ suite("recall", () => {
     expect(r).toMatchObject({ status: "DRAFT", attempt: 1, spokenParts: [], typed: "", result: null });
     expect(JSON.stringify(r)).not.toMatch(/definition|mechanism|pitfalls/i);
     const c = await prisma.recallChecklist.findFirstOrThrow({ where: { subtopicId: subA }, include: { points: { orderBy: { position: "asc" } } } });
-    expect(c).toMatchObject({ version: 1, provider: "fake", language: "en", promptVersion: "recall-checklist-v2" });
+    expect(c).toMatchObject({ version: 1, provider: "fake", language: "en", promptVersion: "recall-checklist-v3" });
     expect(c.points.map((p) => [p.code, p.tier, p.weight])).toEqual([["c1", 1, 1], ["c2", 1, 1], ["c3", 2, 2], ["c4", 2, 2], ["c5", 2, 2], ["c6", 3, 3]]);
     // Starting again returns the same open review; no second checklist.
     expect((await asUser(app, H).post("/api/recall/reviews").send({ subtopicId: subA }).expect(201)).body.id).toBe(r.id);
