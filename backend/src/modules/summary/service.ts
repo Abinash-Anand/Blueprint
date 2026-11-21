@@ -12,7 +12,7 @@ import { interleave, isWeak, overTarget } from "../../domain/revision.js";
 import { d2i, i2d } from "../../db.js";
 import type { Clock } from "../../lib/clock.js";
 import { loadLearning } from "../learning.js";
-import { revisionPolicy } from "../revision/service.js";
+import { loadCoaching } from "../recall/coaching.js";
 import { loadSettings, loadTargets, stageDTO, stageInclude } from "../schedule/service.js";
 import { sessionDTO } from "../sessions/routes.js";
 import { taskDTO, taskInclude, taskOrder } from "../tasks/mapper.js";
@@ -21,7 +21,8 @@ const MAIN_WEEKDAYS = [1, 2, 3, 4, 5, 6];
 const PARALLEL_WEEKDAYS = [6]; // the parallel architecture track uses Saturdays (SRS §6)
 
 const sum = <T>(xs: T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
-const isRevision = (t: { revisionScheduleId: number | null }) => t.revisionScheduleId !== null;
+/** Revision tasks: the earlier sub-topic revisions and recall tasks (docs/Recall-Plan.md); never learning. */
+const isRevision = (t: { source: string }) => t.source === "REVISION";
 
 export function summaryService(prisma: PrismaClient, clock: Clock) {
   async function stagesWithRules() {
@@ -43,24 +44,18 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
       const [settings, targets, learning, stages] = await Promise.all([
         loadSettings(prisma), loadTargets(prisma), loadLearning(prisma), stagesWithRules(),
       ]);
-      const revisionDue = { status: "TODO" as const, revisionScheduleId: { not: null }, originalDate: { lte: i2d(day) }, scheduledDate: { gt: i2d(day) } };
-      const dayWs = weekStart(day);
-      const [tasks, carried, sessions, reviews, schedules, optional, backlogCount, policy, weekTasks] = await Promise.all([
+      const recallOpen = { recallStateId: { not: null }, status: "TODO" as const };
+      const [tasks, carried, sessions, reviews, recallDue, recallOverdue, recallTomorrow] = await Promise.all([
         prisma.task.findMany({ where: { scheduledDate: i2d(day) }, include: taskInclude, orderBy: taskOrder }),
         day === today
           ? prisma.task.findMany({ where: { status: "TODO", scheduledDate: { lt: i2d(today) } }, include: taskInclude, orderBy: taskOrder })
           : Promise.resolve([]),
         prisma.studySession.findMany({ where: { date: i2d(day) }, orderBy: { id: "asc" } }),
         prisma.topic.findMany({ where: { needsReview: true }, select: { id: true, name: true, districtId: true }, orderBy: { id: "asc" } }),
-        prisma.revisionSchedule.findMany({ where: { suspendedAt: null }, select: { nextDueDate: true, correctionPending: true, consecutiveFailures: true } }),
-        // Revisions already due but placed on a later day: offered now, optional (spec 8.4, 10).
-        prisma.task.findMany({ where: revisionDue, include: taskInclude, orderBy: [{ originalDate: "asc" }, { id: "asc" }], take: 20 }),
-        prisma.task.count({ where: revisionDue }),
-        revisionPolicy(prisma),
-        prisma.task.findMany({
-          where: { status: { not: "SKIPPED" }, scheduledDate: { gte: i2d(dayWs), lte: i2d(addDays(dayWs, 6)) } },
-          select: { scheduledDate: true, estimatedMinutes: true },
-        }),
+        // Recall (docs/Recall-Plan.md): always as of the real today, for the sidebar, the tab badge and Today.
+        prisma.task.count({ where: { ...recallOpen, scheduledDate: { lte: i2d(today) } } }),
+        prisma.task.count({ where: { ...recallOpen, scheduledDate: { lt: i2d(today) } } }),
+        prisma.task.count({ where: { ...recallOpen, scheduledDate: i2d(addDays(today, 1)) } }),
       ]);
 
       const inJourney = day >= settings.journeyStart && day <= settings.journeyEnd;
@@ -99,41 +94,12 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         current: { districtId: currentDistrictId, topicId },
         next: topicId ? { topicId, subtopic: nextSub?.name ?? null } : null,
         reviewTopics: reviews,
-        revision: (() => {
-          const rev = live.filter(isRevision);
-          const planned = sum(live, (t) => t.estimatedMinutes);
-          const revMinutes = sum(rev, (t) => t.estimatedMinutes);
-          const due = schedules.filter((s) => s.nextDueDate && d2i(s.nextDueDate) <= day);
-          // Session order: overdue weak units first, then oldest due date; interleaved across topics (spec 11).
-          const open = [...carried, ...tasks].filter((t) => isRevision(t) && t.status === "TODO");
-          const rank = (t: (typeof open)[number]) => (t.revisionSchedule && isWeak(t.revisionSchedule, policy) && d2i(t.originalDate) < day ? 0 : 1);
-          open.sort((a, b) => rank(a) - rank(b) || d2i(a.originalDate).localeCompare(d2i(b.originalDate)) || a.id - b.id);
-          // Week over-target minutes (journey days only), the quantity the weekly cap limits (BR-18).
-          let weekOver = 0;
-          for (const d of eachDay(dayWs, addDays(dayWs, 6))) {
-            if (d < settings.journeyStart || d > settings.journeyEnd) continue;
-            const load = sum(weekTasks.filter((t) => d2i(t.scheduledDate) === d), (t) => t.estimatedMinutes);
-            weekOver += overTarget(load, 0, targets[isoWeekday(d)] ?? 0);
-          }
-          return {
-            plannedMinutes: revMinutes,
-            learningMinutes: planned - revMinutes,
-            dailyAllowanceMinutes: policy.dailyBudgetMinutes,
-            weeklyOvertimeMinutes: policy.weeklyOvertimeMinutes,
-            overTargetMinutes: target > 0 ? overTarget(planned, 0, target) : 0,
-            weekOverTargetMinutes: weekOver,
-            // Visible when revision pushes the day past its target (spec 8.5).
-            competing: target > 0 && revMinutes > 0 && planned > target,
-            dueCount: due.length,
-            overdueCount: due.filter((s) => d2i(s.nextDueDate!) < day).length,
-            attention: attentionPresentation(due.length, due.filter((s) => d2i(s.nextDueDate!) < day).length),
-            weakCount: schedules.filter((s) => isWeak(s, policy)).length,
-            awaitingCorrection: schedules.filter((s) => s.correctionPending).length,
-            backlog: { count: backlogCount, oldestDue: optional[0] ? d2i(optional[0].originalDate) : null },
-            optional: optional.map((t) => taskDTO(t, today)),
-            sessionTaskIds: interleave(open, (t) => t.topicId ?? "task-" + t.id).map((t) => t.id),
-          };
-        })(),
+        recall: {
+          dueCount: recallDue,
+          overdueCount: recallOverdue,
+          tomorrowCount: recallTomorrow,
+          plannedMinutes: sum(live.filter(isRevision), (t) => t.estimatedMinutes),
+        },
       };
     },
 
@@ -141,16 +107,23 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
       const today = clock.today();
       const ws = weekStart(date ?? today);
       const we = addDays(ws, 6);
-      const [settings, targets, tasks, sessions, stages, revDueInWeek, revOverdue, policy] = await Promise.all([
+      const [settings, targets, tasks, sessions, stages, recalls] = await Promise.all([
         loadSettings(prisma),
         loadTargets(prisma),
         prisma.task.findMany({ where: { scheduledDate: { gte: i2d(ws), lte: i2d(we) } }, include: taskInclude, orderBy: taskOrder }),
         prisma.studySession.findMany({ where: { date: { gte: i2d(ws), lte: i2d(we) } } }),
         stagesWithRules(),
-        prisma.task.count({ where: { revisionScheduleId: { not: null }, status: { not: "SKIPPED" }, originalDate: { gte: i2d(ws), lte: i2d(we) } } }),
-        prisma.task.count({ where: { revisionScheduleId: { not: null }, status: "TODO", originalDate: { lt: i2d(today) } } }),
-        revisionPolicy(prisma),
+        // Recall (docs/Recall-Plan.md §3.1): sub-topics due this week; anything already overdue is shown on today.
+        prisma.recallState.findMany({
+          where: { nextDueDate: { not: null, lte: i2d(we) } },
+          select: { nextDueDate: true, subtopic: { select: { name: true } } },
+          orderBy: [{ nextDueDate: "asc" }, { subtopicId: "asc" }],
+        }),
       ]);
+      const recallDay = (r: (typeof recalls)[number]) => {
+        const due = d2i(r.nextDueDate!);
+        return due < today ? today : due;
+      };
       const live = tasks.filter((t) => t.status !== "SKIPPED");
       const days = eachDay(ws, we).map((d) => {
         const dt = live.filter((t) => d2i(t.scheduledDate) === d);
@@ -167,6 +140,8 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           tasksTotal: dt.length,
           tasksDone: dt.filter((t) => t.status === "DONE").length,
           revisionTasks: dt.filter(isRevision).length,
+          /** Sub-topics due for recall on this day (names). */
+          recall: recalls.filter((r) => recallDay(r) === d).map((r) => r.subtopic.name),
           revisionPlannedMinutes: sum(dt.filter(isRevision), (t) => t.estimatedMinutes),
           revisionDoneMinutes: sum(dt.filter((t) => isRevision(t) && t.status === "DONE"), (t) => t.estimatedMinutes),
           // Planned beyond the day's target (learning + revision); Sunday and days outside the journey have no target.
@@ -213,18 +188,6 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
           tasksRemaining: todo.length,
           remainingMinutes: sum(todo, (t) => t.estimatedMinutes),
         },
-        revision: {
-          plannedMinutes: sum(days, (d) => d.revisionPlannedMinutes),
-          doneMinutes: sum(days, (d) => d.revisionDoneMinutes),
-          // Still to do this week, from today on.
-          upcomingMinutes: sum(live.filter((t) => isRevision(t) && t.status === "TODO" && d2i(t.scheduledDate) >= today), (t) => t.estimatedMinutes),
-          dueThisWeek: revDueInWeek,
-          overdue: revOverdue,
-          attention: attentionPresentation(0, revOverdue), // overdue across all weeks
-          overTargetMinutes: sum(days, (d) => d.overTargetMinutes),
-          dailyAllowanceMinutes: policy.dailyBudgetMinutes,
-          weeklyOvertimeMinutes: policy.weeklyOvertimeMinutes,
-        },
         milestones,
         tasks: tasks.map((t) => taskDTO(t, today)),
       };
@@ -242,16 +205,13 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         prisma.studySession.findMany({ select: { date: true, minutes: true, topicId: true } }),
         prisma.task.findMany({ where: { scheduledDate: i2d(today), status: "TODO" }, select: { topicId: true }, orderBy: taskOrder }),
       ]);
-      const [targets, attempts, schedules, checkpoints, policy] = await Promise.all([
+      const [targets, recalls, inRecall, recallDue, coaching] = await Promise.all([
         loadTargets(prisma),
-        prisma.revisionAttempt.findMany({ select: { score: true, attemptDate: true, selfScore: true, inputMode: true, evaluation: { select: { suggestedScore: true } } } }),
-        prisma.revisionSchedule.findMany({
-          where: { suspendedAt: null },
-          include: { topic: { select: { name: true } }, subtopic: { select: { name: true } } },
-          orderBy: { id: "asc" },
-        }),
-        prisma.learningCheckpoint.count(),
-        revisionPolicy(prisma),
+        // Recall (docs/Recall-Plan.md): measurements only, no streaks or points.
+        prisma.recallReview.findMany({ where: { status: { in: ["CHECKED", "COMPLETE"] } }, select: { date: true, score: true, depth: true, outcome: true } }),
+        prisma.recallState.count({ where: { nextDueDate: { not: null } } }),
+        prisma.task.count({ where: { recallStateId: { not: null }, status: "TODO", scheduledDate: { lte: i2d(today) } } }),
+        loadCoaching(prisma),
       ]);
       const live = tasks.filter((t) => t.status !== "SKIPPED");
       const orig = (t: { originalDate: Date }) => d2i(t.originalDate);
@@ -350,30 +310,21 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
         practice: { total: practice.length, done: practice.filter((t) => t.status === "DONE").length },
         road: { ...road, currentTopicId: currentTopicId(learning.districts, todayOpen.map((t) => t.topicId)) },
         stages: stageStatus,
-        // Learning behaviour, not a score to chase (spec 14.4): no streaks, no XP.
-        revision: {
-          attempts: attempts.length,
-          successful: attempts.filter((a) => a.score >= 2).length,
-          distribution: [0, 1, 2, 3].map((s) => attempts.filter((a) => a.score === s).length),
-          checkpoints,
-          activeUnits: schedules.length,
-          dueToday: schedules.filter((s) => s.nextDueDate && d2i(s.nextDueDate) === today).length,
-          overdue: schedules.filter((s) => s.nextDueDate && d2i(s.nextDueDate) < today).length,
-          awaitingCorrection: schedules.filter((s) => s.correctionPending).length,
-          dailyAllowanceMinutes: policy.dailyBudgetMinutes,
-          monthly: months.map((m) => {
-            const xs = attempts.filter((a) => monthKey(d2i(a.attemptDate)) === m);
-            return { month: m, attempts: xs.length, successful: xs.filter((a) => a.score >= 2).length, averageScore: xs.length ? sum(xs, (a) => a.score) / xs.length : null };
-          }),
-          ai: aiAnalytics(attempts),
-          weakUnits: schedules
-            .filter((s) => isWeak(s, policy))
-            .map((s) => ({
-              scheduleId: s.id, topicId: s.topicId, subtopicId: s.subtopicId, scope: s.scope,
-              label: s.scope === "TOPIC" ? s.topic.name + " (whole topic)" : (s.subtopic?.name ?? "") + " · " + s.topic.name,
-              lastScore: s.lastScore, consecutiveFailures: s.consecutiveFailures,
-              nextDueDate: s.nextDueDate ? d2i(s.nextDueDate) : null,
-            })),
+        recall: {
+          inRecall,
+          dueNow: recallDue,
+          reviews: recalls.length,
+          averageScore: recalls.length ? sum(recalls, (r) => r.score ?? 0) / recalls.length : null,
+          depth: { FOUNDATIONAL: recalls.filter((r) => r.depth === "FOUNDATIONAL").length, INTERMEDIATE: recalls.filter((r) => r.depth === "INTERMEDIATE").length, MASTERY: recalls.filter((r) => r.depth === "MASTERY").length },
+          outcomes: { PASS: recalls.filter((r) => r.outcome === "PASS").length, HOLD: recalls.filter((r) => r.outcome === "HOLD").length, LAPSE: recalls.filter((r) => r.outcome === "LAPSE").length },
+          monthly: months
+            .map((m) => {
+              const xs = recalls.filter((r) => monthKey(d2i(r.date)) === m);
+              return { month: m, reviews: xs.length, averageScore: xs.length ? sum(xs, (r) => r.score ?? 0) / xs.length : null };
+            })
+            .filter((m) => m.reviews > 0),
+          /** Per sub-topic progress and blind spots across sub-topics, computed in code (docs/Recall-Plan.md §3.5, §7). */
+          coaching,
         },
       };
     },

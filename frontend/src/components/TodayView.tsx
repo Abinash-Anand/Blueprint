@@ -2,9 +2,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { Today } from "../api/types";
-import { addDays, dayMonth, hm, longDate, plural } from "../lib/format";
+import { addDays, hm, longDate, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { RevisionToday } from "./revision/RevisionToday";
+import { RecallToday } from "./recall/RecallToday";
 import { TaskRow } from "./TaskRow";
 import { Bar, Loading } from "./ui";
 
@@ -22,7 +22,6 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ title: "", minutes: 60, topicId: "" });
   const [logForm, setLogForm] = useState<number | null>(null);
-  const [showBacklog, setShowBacklog] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -48,8 +47,6 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
   const sideStage = data.stages.find((s) => s.kind === "PARALLEL");
   const sessions = data.sessions;
   const allTopics = [...topicById.values()];
-  const rv = data.revision;
-  const revToday = live.filter((t) => t.revision);
 
   const addTask = async () => {
     const r = await mutate(() =>
@@ -91,7 +88,7 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
           </div>
         </div>
 
-        {isToday && <RevisionToday onOpen={onOpenRevision} />}
+        {isToday && <RecallToday onOpen={onOpenRevision} />}
 
         <div className="grid3">
           <div className="card focus">
@@ -191,62 +188,12 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
           ) : data.isBufferDay ? (
             <div className="card rest">
               <h3>Buffer day</h3>
-              <p>No new material is planned today. This day exists to absorb delays: use it for carried-over work, then revision.</p>
+              <p>No new material is planned today. This day exists to absorb delays: use it for carried-over work.</p>
             </div>
           ) : (
             <div className="card empty">No tasks on this day.</div>
           )}
         </div>
-
-        {(revToday.length > 0 || rv.optional.length > 0 || rv.awaitingCorrection > 0) && (
-          <div className="section">
-            <h3>
-              Revision{revToday.length > 0 && ` · ${plural(revToday.length, "unit")} · ${hm(rv.plannedMinutes)}`}
-              {onOpenRevision && <button className="btn" onClick={onOpenRevision}>All revisions</button>}
-            </h3>
-            <div className="card soft rvcard">
-              {revToday.length > 0 && (
-                <p>
-                  Retrieve from memory first, then check. {rv.overdueCount > 0 && <b>{plural(rv.overdueCount, "unit")} overdue. </b>}
-                  {rv.weakCount > 0 && `${plural(rv.weakCount, "weak unit")} get priority. `}
-                  Revision now works per topic: <b>Revise</b> asks once what you studied and builds the topic's revision pack; after that the topic is revised in sessions.
-                </p>
-              )}
-              {rv.competing && (
-                <p>
-                  <b>Revision is competing with new learning today:</b> {hm(rv.learningMinutes)} of learning plus {hm(rv.plannedMinutes)} of revision against a{" "}
-                  {hm(data.targetMinutes)} target ({hm(rv.overTargetMinutes)} over). Learning tasks are not moved. Over-target revision is capped at{" "}
-                  {hm(rv.dailyAllowanceMinutes)} a day and {hm(rv.weeklyOvertimeMinutes)} a week; this week uses {hm(rv.weekOverTargetMinutes)}.
-                </p>
-              )}
-              {rv.awaitingCorrection > 0 && (
-                <p>
-                  {plural(rv.awaitingCorrection, "unit")} {rv.awaitingCorrection === 1 ? "needs" : "need"} a correction before the next attempt can be
-                  recorded. Confirm it in the topic panel once you've gone back to the material.
-                </p>
-              )}
-              {rv.optional.length > 0 && (
-                <>
-                  <p>
-                    {data.isRestDay
-                      ? `Optional today: ${plural(rv.backlog.count, "revision")} already due. Sunday has no target and no shortfall; anything you leave stays due.`
-                      : `${plural(rv.backlog.count, "revision")} already due but planned for later days because of the daily revision allowance (oldest due ${dayMonth(rv.backlog.oldestDue!)}). Do them early if you have time.`}{" "}
-                    {!data.isRestDay && (
-                      <button className="btn" style={{ padding: "2px 9px", fontSize: 12.5 }} onClick={() => setShowBacklog((x) => !x)} aria-expanded={showBacklog}>
-                        {showBacklog ? "Hide" : "Show"}
-                      </button>
-                    )}
-                  </p>
-                  {(data.isRestDay || showBacklog) && (
-                    <ul className="tasks" style={{ marginTop: 8 }}>
-                      {rv.optional.map((t) => <TaskRow key={t.id} task={t} today={data.today} onOpenTopic={onOpenTopic} compact />)}
-                    </ul>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        )}
 
         {(data.isRestDay || data.isBufferDay) && data.reviewTopics.length > 0 && (
           <div className="section">

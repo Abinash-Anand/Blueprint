@@ -1,0 +1,196 @@
+/** Recall rules in code (docs/Recall-Plan.md §4.2, §5.4, §6): score, depth, result, stages, limit, quote checks. */
+import { describe, expect, it } from "vitest";
+import {
+  type PointStatus, type ScoredPoint, GradeError, RULES, checklistProblems, dailyLimit, depthOf, gapFor, nextSchedule, outcomeOf, recallScore,
+  quoteMatches, tierShares, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
+} from "../../src/modules/recall/rules.js";
+
+const pts = (...xs: [number, PointStatus][]): ScoredPoint[] => xs.map(([tier, status]) => ({ tier, weight: tier, status }));
+
+describe("score", () => {
+  it("weights tier 1 and 2 points, gives half for partial, and takes 15 % per misconception, never below 0", () => {
+    const p = pts([1, "ACCURATE"], [1, "ACCURATE"], [2, "PARTIAL"], [2, "ACCURATE"], [3, "MISSED"], [3, "ACCURATE"]);
+    expect(recallScore(p, 0)).toBeCloseTo((1 + 1 + 1 + 2) / 6, 3); // 5 of 6: tier 3 is left to depth
+    expect(recallScore(p, 1)).toBeCloseTo(5 / 6 - 0.15, 3);
+    expect(recallScore(pts([1, "MISSED"], [2, "PARTIAL"]), 3)).toBe(0);
+    expect(recallScore([], 0)).toBe(0);
+  });
+
+  it("never lets the edge cases hold back a strong explanation of the core; they decide Mastery instead", () => {
+    // A strong explanation that skips both edge cases (the Subjects case of the consistency test).
+    const p = pts([1, "ACCURATE"], [1, "ACCURATE"], [2, "ACCURATE"], [2, "ACCURATE"], [2, "ACCURATE"], [3, "MISSED"], [3, "MISSED"]);
+    expect(recallScore(p, 0)).toBe(1);
+    expect(outcomeOf(recallScore(p, 0), 0)).toBe("PASS");
+    expect(depthOf(p)).toBe("INTERMEDIATE");
+    // Only edge-case points left on a checklist: scored on those.
+    expect(recallScore(pts([3, "ACCURATE"], [3, "MISSED"]), 0)).toBeCloseTo(0.5, 3);
+  });
+});
+
+describe("depth", () => {
+  it("counts a tier when 70 % of its weight is earned; Mastery needs all three, Intermediate tiers 1 and 2", () => {
+    expect(depthOf(pts([1, "ACCURATE"], [1, "ACCURATE"], [2, "ACCURATE"], [2, "ACCURATE"], [3, "ACCURATE"], [3, "PARTIAL"]))).toBe("MASTERY");
+    expect(depthOf(pts([1, "ACCURATE"], [1, "ACCURATE"], [2, "ACCURATE"], [2, "PARTIAL"], [3, "MISSED"], [3, "MISSED"]))).toBe("INTERMEDIATE");
+    expect(depthOf(pts([1, "ACCURATE"], [1, "PARTIAL"], [2, "ACCURATE"], [2, "ACCURATE"], [3, "MISSED"]))).toBe("INTERMEDIATE"); // tier 1 at 75 % counts
+    expect(depthOf(pts([1, "ACCURATE"], [1, "MISSED"], [2, "ACCURATE"], [2, "ACCURATE"], [3, "ACCURATE"]))).toBe("FOUNDATIONAL"); // tier 1 at 50 %
+    // A checklist without tier 3 can still reach Mastery: a missing tier counts as met.
+    expect(depthOf(pts([1, "ACCURATE"], [2, "ACCURATE"]))).toBe("MASTERY");
+    expect(tierShares(pts([1, "PARTIAL"], [2, "ACCURATE"]))).toEqual([0.5, 1, null]);
+  });
+});
+
+describe("result, stages and dates", () => {
+  it("passes at 75 % with no misconception, holds at 50–74 % or with a misconception, lapses below 50 %", () => {
+    expect(outcomeOf(0.75, 0)).toBe("PASS");
+    expect(outcomeOf(0.9, 1)).toBe("HOLD");
+    expect(outcomeOf(0.74, 0)).toBe("HOLD");
+    expect(outcomeOf(0.5, 0)).toBe("HOLD");
+    expect(outcomeOf(0.49, 0)).toBe("LAPSE");
+  });
+
+  it("gaps grow 1, 2, 4, 7, 15, then × 2.2, at most 180 days", () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(gapFor)).toEqual([1, 2, 4, 7, 15, 33, 73, 160, 180, 180]);
+    expect(gapFor(0)).toBe(1);
+    expect(RULES.maxGap).toBe(180);
+  });
+
+  it("moves the stage: pass +1, hold stays (at least 1), lapse back two (at least 1); the date counts from the review day", () => {
+    expect(nextSchedule(0, "PASS", "2026-11-21")).toEqual({ stage: 1, gap: 1, nextDueDate: "2026-11-22" });
+    expect(nextSchedule(0, "HOLD", "2026-11-21")).toEqual({ stage: 1, gap: 1, nextDueDate: "2026-11-22" });
+    expect(nextSchedule(3, "PASS", "2026-11-21")).toEqual({ stage: 4, gap: 7, nextDueDate: "2026-11-28" });
+    expect(nextSchedule(3, "HOLD", "2026-11-21")).toEqual({ stage: 3, gap: 4, nextDueDate: "2026-11-25" });
+    expect(nextSchedule(7, "LAPSE", "2026-11-21")).toEqual({ stage: 5, gap: 15, nextDueDate: "2026-12-06" });
+    expect(nextSchedule(2, "LAPSE", "2026-11-21").stage).toBe(1);
+  });
+
+  it("fits the daily revision minutes ÷ 8 reviews into a day, at least one", () => {
+    expect([30, 60, 5, 0].map(dailyLimit)).toEqual([3, 7, 1, 1]);
+  });
+});
+
+describe("checking the grader's reply", () => {
+  const explanation = "Routing maps URLs to components through the router outlet. Guards like canActivate can block a navigation.";
+  const codes = ["c1", "c2", "c3"];
+
+  it("keeps quotes that are the learner's words, and turns invented ones into missed", () => {
+    const r = verifyGrade({
+      points: [
+        { code: "c1", status: "ACCURATE", evidence: "routing maps urls to components" }, // case and punctuation ignored
+        { code: "c2", status: "PARTIAL", evidence: "guards protect every route automatically" }, // not said
+        { code: "c3", status: "MISSED", evidence: "something" },
+      ],
+      misconceptions: [
+        { claim: "Guards like canActivate can block a navigation", correction: "…" },
+        { claim: "lazy loading uses web workers", correction: "It loads chunks on demand." }, // not said: dropped
+      ],
+    }, codes, explanation);
+    expect(r.points).toEqual([
+      { code: "c1", status: "ACCURATE", evidence: "routing maps urls to components" },
+      { code: "c2", status: "MISSED", evidence: null },
+      { code: "c3", status: "MISSED", evidence: null },
+    ]);
+    expect(r.rejectedQuotes).toBe(1);
+    expect(r.misconceptions.map((m) => m.claim)).toEqual(["Guards like canActivate can block a navigation"]);
+  });
+
+  it("refuses a reply that skips, repeats or invents points", () => {
+    const one = (code: string) => ({ code, status: "MISSED" as const, evidence: null });
+    expect(() => verifyGrade({ points: [one("c1"), one("c2")], misconceptions: [] }, codes, explanation)).toThrow(GradeError);
+    expect(() => verifyGrade({ points: [one("c1"), one("c1"), one("c3")], misconceptions: [] }, codes, explanation)).toThrow(/twice/);
+    expect(() => verifyGrade({ points: [one("c1"), one("c2"), one("c9")], misconceptions: [] }, codes, explanation)).toThrow(/Unknown/);
+  });
+});
+
+describe("is this quote the learner's own words?", () => {
+  const said = "When it runs? Once, right after Angular initializes the component and sets its input properties for the very first time. Primary use case. This is your default start here method for component initialization. 3. ngOnDestroy, cleanup before death. Unsubscribing from long-lived RxJS observables like WebSocket streams.";
+
+  it("accepts exact quotes whatever the case and punctuation", () => {
+    expect(quoteMatches("ngOnDestroy — cleanup before death", said)).toBe(true);
+    expect(quoteMatches("once right after angular initializes the component", said)).toBe(true);
+  });
+
+  it("accepts a quote shortened with an ellipsis when every part is there, in order", () => {
+    expect(quoteMatches("When it runs? Once, right after Angular initializes the component... This is your default start here method", said)).toBe(true);
+    expect(quoteMatches("This is your default start here method … When it runs? Once", said)).toBe(false); // wrong order
+  });
+
+  it("forgives a slip of a word in a longer quote, not a different sentence", () => {
+    expect(quoteMatches("unsubscribing from the long-lived RxJS observables like WebSocket streams", said)).toBe(true); // one word added
+    expect(quoteMatches("unsubscribing from long lived observables like websocket", said)).toBe(true); // a word left out
+    expect(quoteMatches("ngOnDestroy removes every subscription automatically for you", said)).toBe(false); // invented
+    expect(quoteMatches("once component observables streams method", said)).toBe(false); // the learner's words, but scattered
+  });
+
+  it("needs one- and two-word quotes to be exact", () => {
+    expect(quoteMatches("ngOnDestroy", said)).toBe(true);
+    expect(quoteMatches("ngOnDestry", said)).toBe(false);
+    expect(quoteMatches("", said)).toBe(false);
+  });
+});
+
+describe("checking a drafted checklist", () => {
+  const p = (tier: number, label: string) => ({ tier, label, description: `${label}, explained` });
+  const good = [p(1, "What routing is"), p(1, "Why a SPA needs it"), p(2, "Route config"), p(2, "Router outlet"), p(2, "Route parameters"), p(3, "Lazy loading")];
+
+  it("accepts 6–8 points with tiers 1 and 2 in order and distinct labels", () => {
+    expect(checklistProblems(good, ["Guards and resolvers"])).toEqual([]);
+  });
+
+  it("names every problem: size, missing tiers, order, duplicates, and another sub-topic's name", () => {
+    expect(checklistProblems(good.slice(0, 4), [])).toEqual(["write 6–8 points (wrote 4)"]);
+    expect(checklistProblems([...good.slice(2), p(1, "Late basics")], [])).toEqual(expect.arrayContaining(["order the points by tier: 1, then 2, then 3"]));
+    expect(checklistProblems(good.map((x) => ({ ...x, tier: 1 })), [])).toContain("include tier 2 points (how it works and is used)");
+    expect(checklistProblems([...good.slice(0, 5), p(2, "Router  outlet!")], [])).toContain("every label must be different");
+    expect(checklistProblems([...good.slice(0, 5), p(3, "Guards and resolvers")], ["Guards and resolvers"])).toContain('"Guards and resolvers" is another sub-topic of this topic');
+    expect(checklistProblems([...good.slice(0, 4), p(3, "Pitfall one"), p(3, "Pitfall two"), p(3, "Internals")], [])).toContain("write at most 2 tier 3 points");
+  });
+});
+
+describe("phase 2: cued reasoning and progress over time", () => {
+  it("rates reasoning when asked from the share of missed points explained, never without an answer", () => {
+    expect(cuedRating(3, 2, true)).toBe("Strong");
+    expect(cuedRating(3, 1, true)).toBe("Developing");
+    expect(cuedRating(3, 0, true)).toBe("Needs Work");
+    expect(cuedRating(3, 3, false)).toBeNull(); // skipped
+    expect(cuedRating(0, 0, true)).toBeNull(); // nothing was missed
+  });
+
+  const view = (attempt: number, score: number, statuses: Record<number, PointStatus>): AttemptView => ({
+    attempt, date: `2026-11-${20 + attempt}`, score, depth: "FOUNDATIONAL",
+    points: Object.fromEntries(Object.entries(statuses).map(([id, status]) => [Number(id), { status, recalledWhenAsked: false }])),
+  });
+  const labels = new Map([[1, "Purpose"], [2, "Syntax"], [3, "Guards"], [4, "Pitfall"]]);
+
+  it("classifies each point against the previous review and finds blind spots missed in a row", () => {
+    const d = computeSessionDiff([
+      view(1, 0.3, { 1: "ACCURATE", 2: "MISSED", 3: "MISSED", 4: "PARTIAL" }),
+      view(2, 0.4, { 1: "ACCURATE", 2: "PARTIAL", 3: "MISSED", 4: "ACCURATE" }),
+      view(3, 0.6, { 1: "PARTIAL", 2: "ACCURATE", 3: "MISSED", 4: "ACCURATE" }),
+    ], labels);
+    expect(d).toMatchObject({ attempt: 3, previousAttempt: 2, scoreDelta: 0.2 });
+    expect(d.newlyMastered.map((x) => x.label)).toEqual(["Syntax"]);
+    expect(d.retained.map((x) => x.label)).toEqual(["Pitfall"]);
+    expect(d.regressed).toEqual([{ pointId: 1, label: "Purpose", from: "ACCURATE", to: "PARTIAL" }]);
+    expect(d.persistentBlindSpots).toEqual([{ pointId: 3, label: "Guards", missedInARow: 3 }]);
+    expect(d.scoreTrajectory.map((x) => x.score)).toEqual([0.3, 0.4, 0.6]);
+  });
+
+  it("has nothing to compare on the first review, and ignores points no longer on the checklist", () => {
+    const d = computeSessionDiff([view(1, 0.5, { 1: "MISSED", 9: "ACCURATE" })], labels);
+    expect(d).toMatchObject({ previousAttempt: null, scoreDelta: null, newlyMastered: [], regressed: [], persistentBlindSpots: [], recurringMisconceptions: [] });
+  });
+
+  it("notices a corrected mistake that came back, and not a different one about the same idea", () => {
+    const replay = { claim: "a Subject replays old values to new subscribers", correction: "Only a ReplaySubject or BehaviorSubject replays values; a plain Subject does not." };
+    const again = { claim: "new subscribers get the old values from a Subject", correction: "A plain Subject does not replay values; use a ReplaySubject or BehaviorSubject." };
+    const other = { claim: "a Subject completes when one subscriber unsubscribes", correction: "Unsubscribing one observer does not complete the Subject." };
+    expect(sameMisconception(replay, again)).toBe(true);
+    expect(sameMisconception(replay, other)).toBe(false);
+    const d = computeSessionDiff([
+      { ...view(1, 0.3, { 1: "MISSED" }), misconceptions: [replay] },
+      { ...view(2, 0.5, { 1: "PARTIAL" }), misconceptions: [] },
+      { ...view(3, 0.6, { 1: "ACCURATE" }), misconceptions: [again, other] },
+    ], labels);
+    expect(d.recurringMisconceptions).toEqual([{ claim: again.claim, correction: again.correction, seenBefore: 1 }]);
+  });
+});

@@ -67,7 +67,7 @@ suite("presentation metadata", () => {
   });
 
   it("adds valid semantic presentation to every view, with no colour values", async () => {
-    for (const path of ["/api/curriculum", "/api/today", "/api/week", "/api/progress", "/api/revision/overview"]) {
+    for (const path of ["/api/curriculum", "/api/today", "/api/week", "/api/progress"]) {
       const body = (await asUser(app, H).get(path).expect(200)).body;
       const all = collect(body);
       expect(all.length, path).toBeGreaterThan(0);
@@ -76,7 +76,7 @@ suite("presentation metadata", () => {
     }
   });
 
-  it("presents states consistently across endpoints, and changes nothing else", async () => {
+  it("presents states consistently, and changes nothing else", async () => {
     const progressBefore = (await asUser(app, H).get("/api/progress").expect(200)).body;
     const cur = (await asUser(app, H).get("/api/curriculum").expect(200)).body;
     const ts = cur.districts.flatMap((d: { topics: { id: string; status: string; presentation: P; subtopics: { presentation: P }[] }[] }) => d.topics);
@@ -87,34 +87,12 @@ suite("presentation metadata", () => {
     expect(progressBefore.districts[1].presentation.state).toBe("district.ahead");
     for (const s of progressBefore.stages) expect(s.presentation.state).toBe(`stage.${s.status.toLowerCase().replace("_", "-")}`);
 
-    // Learn a sub-topic: its revision appears with the same presentation in the topic view, the overview and the task.
+    // Learning a sub-topic changes its own presentation and nothing about the road.
     const sub = await prisma.subtopic.findFirstOrThrow({ where: { topicId: "fe.ts", position: 0 } });
     await asUser(app, H).patch(`/api/subtopics/${sub.id}`).send({ completed: true }).expect(200);
-    clock.date = "2026-11-19";
-    const topicRev = (await asUser(app, H).get("/api/topics/fe.ts/revision").expect(200)).body;
-    const unit = topicRev.units.find((u: { subtopicId: number | null }) => u.subtopicId === sub.id);
-    expect(unit.schedule.presentation).toMatchObject({ state: "revision.due", tone: "info", label: "Due today" });
-    const overview = (await asUser(app, H).get("/api/revision/overview").expect(200)).body;
-    expect(overview.due[0].presentation).toEqual(unit.schedule.presentation);
-    expect(overview.attention).toMatchObject({ state: "attention.due", label: "1 due" });
-    const today = (await asUser(app, H).get("/api/today").expect(200)).body;
-    const task = today.tasks.find((t: { revision: { scheduleId: number } | null }) => t.revision?.scheduleId === unit.schedule.id);
-    expect(task.revision.presentation).toEqual(unit.schedule.presentation);
-    expect(today.revision.attention).toMatchObject({ state: "attention.due", tone: "info" });
-
-    // A day later it is overdue everywhere.
-    clock.date = "2026-11-20";
-    const late = (await asUser(app, H).get("/api/revision/overview").expect(200)).body;
-    expect(late.overdue[0].presentation).toMatchObject({ state: "revision.overdue", tone: "danger", label: "1 day overdue" });
-    expect(late.attention).toMatchObject({ state: "attention.overdue", tone: "danger" });
-
-    // A recall outcome is presented by the score the learner chose.
-    const a = (await asUser(app, H).post("/api/revision/attempts")
-      .send({ topicId: "fe.ts", subtopicId: sub.id, templateKey: "explain", retrievalMethod: "CONCEPTUAL", score: 1, usedHints: false, usedNotes: false, mistakes: "forgot constraints" })
-      .expect(201)).body;
-    expect(a.attempt.presentation).toMatchObject({ state: "outcome.struggled", tone: "warning", label: "Struggled" });
-    const after = (await asUser(app, H).get("/api/revision/overview").expect(200)).body;
-    expect(after.awaitingCorrection[0].presentation).toMatchObject({ state: "revision.correction", tone: "warning" });
+    const learned = (await asUser(app, H).get("/api/curriculum").expect(200)).body;
+    const t0 = learned.districts.flatMap((d: { topics: { id: string; subtopics: { id: number; presentation: P }[] }[] }) => d.topics).find((t: { id: string }) => t.id === "fe.ts");
+    expect(t0.subtopics.find((x: { id: number }) => x.id === sub.id).presentation.state).toBe("subtopic.learned");
 
     // Presentation is derived only: progress numbers are what they were apart from the sub-topic just learned.
     const progressAfter = (await asUser(app, H).get("/api/progress").expect(200)).body;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Today } from "../api/types";
 import { INK, mix } from "../lib/color";
-import { hm, pct, shortDate, plural } from "../lib/format";
+import { hm, pct, plural, shortDate } from "../lib/format";
 import { LAYERS, LAYER_SUB } from "../lib/layers";
 import { useAppData } from "../state/AppData";
 import { Bar } from "./ui";
@@ -73,7 +73,7 @@ export function Sidebar({ today, selectedId, open, onOpenTopic, onOpenDistrict, 
         <div className="next">
           <div className="k">Today · {shortDate(today.date)}</div>
           {today.isRestDay ? (
-            <div className="t">Rest day. Optional revision only.</div>
+            <div className="t">Rest day.</div>
           ) : (
             <>
               <div className="t">
@@ -87,13 +87,13 @@ export function Sidebar({ today, selectedId, open, onOpenTopic, onOpenDistrict, 
               <Bar value={today.targetMinutes ? today.actualMinutes / today.targetMinutes : 0} />
             </>
           )}
-          {today.revision.dueCount > 0 && (
+          {today.recall.dueCount > 0 ? (
             <button className="link revdue" onClick={onOpenRevision}>
-              ↻ {plural(today.revision.dueCount, "revision")} due
-              {today.revision.overdueCount > 0 ? ` · ${today.revision.overdueCount} overdue` : ""}
-              {today.isRestDay ? " (optional)" : ""}
+              ↻ {plural(today.recall.dueCount, "sub-topic")} to recall{today.recall.overdueCount > 0 ? ` · ${today.recall.overdueCount} overdue` : ""}
             </button>
-          )}
+          ) : today.recall.tomorrowCount > 0 ? (
+            <button className="link revdue" onClick={onOpenRevision}>↻ {plural(today.recall.tomorrowCount, "recall")} tomorrow</button>
+          ) : null}
           <div style={{ marginTop: 10 }}>
             <button className="btn primary" onClick={onOpenToday}>
               Open today

@@ -1,14 +1,23 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { d2i } from "../../db.js";
 import { subtopicPresentation, topicPresentation } from "../../domain/presentation.js";
 import { topicStatus } from "../../domain/progress.js";
 import type { Clock } from "../../lib/clock.js";
 import { notFound } from "../../lib/http.js";
 import { type TopicAggregates, topicAggregates } from "../learning.js";
-import { planOpenRevisions, syncTopic } from "../revision/service.js";
+import { syncRecallState } from "../recall/service.js";
+import { syncRecallTasks } from "../recall/tasks.js";
 import { stageDTO, stageInclude } from "../schedule/service.js";
 
 const topicInclude = {
-  subtopics: { orderBy: { position: "asc" as const } },
+  subtopics: {
+    orderBy: { position: "asc" as const },
+    // Recall (docs/Recall-Plan.md): when it is next due, and how the last check went.
+    include: {
+      recallState: { select: { nextDueDate: true, stage: true } },
+      recallReviews: { where: { status: { in: ["CHECKED" as const, "COMPLETE" as const] } }, orderBy: [{ date: "desc" as const }, { id: "desc" as const }], take: 1, select: { date: true, score: true, depth: true } },
+    },
+  },
   resources: { orderBy: { position: "asc" as const } },
   dependsOn: { select: { dependsOnId: true } },
 } satisfies Prisma.TopicInclude;
@@ -38,6 +47,13 @@ export function topicDTO(t: TopicRow, agg?: TopicAggregates) {
     needsReview: t.needsReview,
     subtopics: t.subtopics.map((s) => ({
       id: s.id, position: s.position, name: s.name, completedAt: s.completedAt?.toISOString() ?? null, presentation: subtopicPresentation(!!s.completedAt),
+      recall: s.recallState?.nextDueDate || s.recallReviews[0]
+        ? {
+            nextDueDate: s.recallState?.nextDueDate ? d2i(s.recallState.nextDueDate) : null,
+            stage: s.recallState?.stage ?? 0,
+            last: s.recallReviews[0] ? { date: d2i(s.recallReviews[0].date), score: s.recallReviews[0].score!, depth: s.recallReviews[0].depth! } : null,
+          }
+        : null,
     })),
     resources: t.resources.map((r) => ({ label: r.label, url: r.url, kind: r.kind })),
     dependsOn: t.dependsOn.map((d) => d.dependsOnId),
@@ -80,14 +96,16 @@ export function curriculumService(prisma: PrismaClient, clock: Clock) {
       if (!s) throw notFound("Subtopic");
       // Keep the original timestamp when ticking an already-ticked sub-topic.
       const completedAt = completed ? (s.completedAt ?? clock.now()) : null;
-      // Learned status is the learner's explicit action; revision eligibility follows it (REV-02).
+      // Learned status is the learner's explicit action; recall follows it (docs/Recall-Plan.md §3.1).
       const u = await prisma.$transaction(async (tx) => {
         const row = await tx.subtopic.update({ where: { id }, data: { completedAt } });
-        await syncTopic(tx, row.topicId, clock.now());
-        await planOpenRevisions(tx, clock.today());
-        return row;
+        await syncRecallState(tx, id, completedAt !== null, clock.today());
+        await syncRecallTasks(tx, clock.today());
+        const recall = await tx.recallState.findUnique({ where: { subtopicId: id }, select: { nextDueDate: true } });
+        return { row, recallDue: recall?.nextDueDate ? d2i(recall.nextDueDate) : null };
       });
-      return { id: u.id, topicId: u.topicId, completedAt: u.completedAt?.toISOString() ?? null };
+      // When the sub-topic is next due for recall, so the learner sees it was scheduled.
+      return { id: u.row.id, topicId: u.row.topicId, completedAt: u.row.completedAt?.toISOString() ?? null, recallDue: u.recallDue };
     },
 
     async patchTopic(id: string, body: { demonstrated?: boolean; demonstrationNote?: string; needsReview?: boolean }) {
@@ -100,13 +118,7 @@ export function curriculumService(prisma: PrismaClient, clock: Clock) {
       }
       if (body.demonstrationNote !== undefined) data.demonstrationNote = body.demonstrationNote.trim() || null;
       if (body.needsReview !== undefined) data.needsReview = body.needsReview;
-      await prisma.$transaction(async (tx) => {
-        await tx.topic.update({ where: { id }, data });
-        if (body.demonstrated !== undefined) {
-          await syncTopic(tx, id, clock.now());
-          await planOpenRevisions(tx, clock.today());
-        }
-      });
+      await prisma.topic.update({ where: { id }, data });
       return this.getTopic(id);
     },
   };

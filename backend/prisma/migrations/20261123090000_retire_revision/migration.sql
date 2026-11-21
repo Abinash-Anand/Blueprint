@@ -1,0 +1,11 @@
+-- Retire the earlier revision systems (docs/Recall-Plan.md §9).
+--
+-- Removes the open sub-topic revision tasks (status TODO, created by the old revision scheduler); the planner no longer
+-- creates them. Done revision tasks, schedules, attempts, checks, evaluations and every revision v2 table stay as
+-- read-only history. Study sessions and attempts that point at a task keep their rows (their foreign keys are
+-- ON DELETE SET NULL); open revision tasks never have any.
+--
+-- Data change, not reversible by SQL. Before deploying: a pg_dump backup. Rollback: restore the deleted rows from that
+-- backup, e.g. pg_restore --data-only into a scratch database, then
+--   INSERT INTO "Task" SELECT * FROM scratch."Task" WHERE "revisionScheduleId" IS NOT NULL AND "status" = 'TODO';
+DELETE FROM "Task" WHERE "revisionScheduleId" IS NOT NULL AND "status" = 'TODO';

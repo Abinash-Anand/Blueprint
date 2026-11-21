@@ -11,7 +11,7 @@ import { FeedbackMessage, LoadingState, StatusBadge } from "../Status";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong.");
 const PURPOSE: Record<string, string> = {
-  TERMS: "Terms of use", PRIVACY_NOTICE: "Privacy notice", AI_PROCESSING: "AI check of revision answers and revision packs from your material",
+  TERMS: "Terms of use", PRIVACY_NOTICE: "Privacy notice", AI_PROCESSING: "AI check of your recall in revision",
   AI_CURRICULUM: "Building new cities with AI (your goal, plan files and voice)",
 };
 

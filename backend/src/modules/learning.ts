@@ -19,12 +19,12 @@ export async function topicAggregates(prisma: PrismaClient): Promise<Map<string,
     prisma.task.groupBy({
       by: ["topicId"],
       // Revision tasks are excluded: they never change a topic's plan, estimate or status (REV-16).
-      where: { status: { not: "SKIPPED" }, topicId: { not: null }, revisionScheduleId: null },
+      where: { status: { not: "SKIPPED" }, topicId: { not: null }, source: { not: "REVISION" } },
       _sum: { estimatedMinutes: true },
       _min: { scheduledDate: true },
       _max: { scheduledDate: true },
     }),
-    prisma.task.groupBy({ by: ["topicId"], where: { status: "DONE", topicId: { not: null }, revisionScheduleId: null }, _count: { _all: true } }),
+    prisma.task.groupBy({ by: ["topicId"], where: { status: "DONE", topicId: { not: null }, source: { not: "REVISION" } }, _count: { _all: true } }),
     prisma.studySession.groupBy({ by: ["topicId"], where: { topicId: { not: null } }, _sum: { minutes: true } }),
   ]);
   const m = new Map<string, TopicAggregates>();

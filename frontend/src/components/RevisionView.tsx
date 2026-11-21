@@ -1,262 +1,293 @@
 /**
- * Revision section (Revision enhancement, SRS FR-REV-19 to FR-REV-22): what to retrieve now, what is weak, what is
- * coming, the history, and recall analytics, kept apart from learning and demonstration progress.
- * Read-only over the one revision schedule; every action goes through the existing recall dialog and APIs.
+ * The Revision tab (docs/Recall-Plan.md §3.1) in glass (DESIGN.md §10): the one recall to do next, then grouped lists
+ * of what is due today within the daily limit, what waits for a free day, the next two weeks, recent recalls (each
+ * opens its history over time) and the earlier revision systems' history, read-only.
  */
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
-import type { RevisionOverview, RevisionUnitRow } from "../api/types";
-import { CHECKPOINT_RESULTS, METHOD_LABEL, SCORES, dayMonth, hm, monthName, pct, plural, scoreLabel, shortDate } from "../lib/format";
+import { ApiError, api } from "../api/client";
+import type { RecallHistoryRow, RecallHome, RecallItem, RevisionArchive } from "../api/types";
+import { CHECKPOINT_RESULTS, METHOD_LABEL, dayMonth, plural, scoreLabel } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { PackDialog } from "./revision/PackDialog";
-import { RevisionHome } from "./revision/RevisionHome";
-import { StatusBadge, StatusIndicator } from "./Status";
-import { Loading, Stat } from "./ui";
+import { Chevron, ChevronDown, Spark } from "./recall/icons";
+import { MatrixDialog } from "./recall/MatrixDialog";
+import { RecallPage } from "./recall/RecallPage";
+import { Sheet } from "./recall/Sheet";
+import { Loading } from "./ui";
 
-function UnitRow({ u, today, onRevise, onOpenTopic }: { u: RevisionUnitRow; today: string; onRevise: (u: RevisionUnitRow) => void; onOpenTopic: (id: string) => void }) {
-  const { mutate } = useAppData();
-  return (
-    <li className="rv-row">
-      <div className="rl-main">
-        <span className="rl-name">
-          {u.label}{" "}
-          <button className="link" onClick={() => onOpenTopic(u.topicId)} aria-label={`Open topic ${u.topicName}`}>{u.scope === "TOPIC" ? "open" : u.topicName}</button>
-        </span>
-        <StatusIndicator
-          p={u.presentation}
-          fallback={u.status.toLowerCase()}
-          detail={[
-            u.overdueDays > 0 ? `due ${shortDate(u.nextDueDate!)}` : "",
-            u.lastAttemptDate ? `last ${dayMonth(u.lastAttemptDate)}: ${scoreLabel(u.lastScore)}` : "",
-          ].filter(Boolean).join(" · ") || undefined}
-        />
-      </div>
-      <div className="rl-acts">
-        {u.correctionPending && u.pendingAttemptId ? (
-          <button className="btn" onClick={() => void mutate(() => api.correctAttempt(u.pendingAttemptId!))} aria-label={`Confirm correction: ${u.label}`}>Corrected</button>
-        ) : u.lastAttemptDate === today ? null : (
-          // One attempt per unit per day: nothing to start for a unit already revised today.
-          <button className={`btn${u.status === "SCHEDULED" ? "" : " primary"}`} onClick={() => onRevise(u)} aria-label={`Revise: ${u.label}`}>
-            {u.status === "SCHEDULED" ? "Revise early" : "Revise"}
-          </button>
-        )}
-      </div>
-    </li>
-  );
-}
+const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
+const DEPTH = { FOUNDATIONAL: "Foundational", INTERMEDIATE: "Intermediate", MASTERY: "Mastery" } as const;
+const OUTCOME = { PASS: "remembered well", HOLD: "partly remembered", LAPSE: "mostly forgotten" } as const;
+const TONE = { PASS: "ok", HOLD: "part", LAPSE: "miss" } as const;
+const OPEN = { DRAFT: "Started", WAITING: "Being checked", CHECKED: "Results ready", COMPLETE: "" } as const;
 
-export function RevisionView({ onOpenTopic }: { onOpenTopic: (id: string) => void }) {
-  const { version, progress, reload } = useAppData();
-  const [o, setO] = useState<RevisionOverview | null>(null);
+export function RevisionView() {
+  const { version, reload, topicById, districtById } = useAppData();
+  const [h, setH] = useState<RecallHome | null>(null);
+  const [a, setA] = useState<RevisionArchive | null>(null);
+  const [hist, setHist] = useState<RecallHistoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [pack, setPack] = useState<{ topicId: string; name: string } | null>(null);
-  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [open, setOpen] = useState<number | null>(null);
+  const [grid, setGrid] = useState<number | null>(null);
+  const [n, setN] = useState(0);
 
   useEffect(() => {
     let live = true;
-    api.revisionOverview().then(
-      (d) => live && (setO(d), setError(null)),
-      (e) => live && setError(e.message),
+    Promise.all([api.recallHome(), api.revisionArchive(), api.recallHistory()]).then(
+      ([x, y, z]) => live && (setH(x), setA(y), setHist(z), setError(null)),
+      (e) => live && setError(errText(e)),
     );
     return () => {
       live = false;
     };
-  }, [version]);
+  }, [version, n]);
 
-  if (error) return <div className="view"><div className="wrap"><div className="card empty">{error}</div></div></div>;
-  if (!o) return <div className="view"><Loading /></div>;
+  if (error) return <div className="view gl gl-bg"><div className="wrap"><p className="g-err">{error}</p></div></div>;
+  if (!h || !a) return <div className="view gl gl-bg"><Loading /></div>;
 
-  const c = o.counts;
-  const now = c.due + c.overdue;
-  const isSunday = new Date(`${o.today}T12:00:00Z`).getUTCDay() === 0;
-  // Revision v2: an old unit is revised through its topic's pack (asked once: what did you study?).
-  const revise = (u: RevisionUnitRow) => setPack({ topicId: u.topicId, name: u.topicName });
-  const history = [
-    ...o.history.map((a) => ({ key: `a${a.id}`, date: a.attemptDate, at: a.attemptedAt, kind: "attempt" as const, a })),
-    ...o.checkpoints.map((k) => ({ key: `c${k.id}`, date: k.date, at: k.date, kind: "check" as const, k })),
-  ].sort((x, y) => y.at.localeCompare(x.at));
-  const shownHistory = showAllHistory ? history : history.slice(0, 8);
-  const list = (title: string, rows: RevisionUnitRow[], note?: string) =>
-    rows.length > 0 && (
-      <div className="section">
-        <h3>{title} · {rows.length}</h3>
-        <div className="card">
-          {note && <div className="sub" style={{ marginTop: 0, marginBottom: 6 }}>{note}</div>}
-          <ul className="rlist">{rows.map((u) => <UnitRow key={u.scheduleId} u={u} today={o.today} onRevise={revise} onOpenTopic={onOpenTopic} />)}</ul>
-        </div>
-      </div>
-    );
+  const refresh = () => setN((x) => x + 1);
+  const status = (s: RecallItem) => h.open.find((o) => o.subtopicId === s.subtopicId)?.status;
+  const color = (s: RecallItem) => districtById?.get(topicById?.get(s.topicId)?.districtId ?? "")?.color;
+  const close = () => {
+    setOpen(null);
+    refresh();
+    void reload();
+  };
+  const next = h.due[0] ?? h.later[0] ?? null;
+  const can = h.ai.available;
 
   return (
-    <div className="view">
+    <div className="view gl gl-bg">
       <div className="wrap">
-        <RevisionHome />
-        <div className="vhead rv-v1">
+        <div className="kick">Revision · active recall</div>
+        <h2 className="g-lt">{h.due.length ? `${plural(h.due.length, "sub-topic")} to recall today` : "Nothing to recall today"}</h2>
+        <p className="g-sub">
+          Say or type everything you remember. The AI checks it against a checklist you see afterwards.
+          {" "}Up to {plural(h.limit, "review")} a day{h.doneToday ? ` · ${h.doneToday} done today` : ""}.
+        </p>
+
+        <AiNotice h={h} onAccepted={refresh} />
+
+        {next && (
+          <section className="g-hero" aria-label="Up next">
+            <div className="g-grow">
+              <div className="kick">Up next</div>
+              <div className="g-hero-name"><span className="g-dot" style={{ background: color(next) }} />{next.subtopic}</div>
+              <p className="g-sub">{next.topic} · {next.district} · {next.lastReviewDate ? `last recalled ${dayMonth(next.lastReviewDate)}` : "first recall"}{status(next) ? ` · ${OPEN[status(next)!].toLowerCase()}` : ""}</p>
+            </div>
+            <NotToday s={next} onDone={() => { refresh(); void reload(); }} />
+            <button type="button" className="btn primary big" disabled={!can} onClick={() => setOpen(next.subtopicId)}>
+              {status(next) === "CHECKED" ? "See results" : status(next) ? "Continue" : "Start recall"}
+            </button>
+          </section>
+        )}
+
+        <div className="g-cols">
           <div>
-            <div className="kick">Sub-topic revision · as of {shortDate(o.today)}</div>
-            <h2>{now ? `${plural(now, "revision")} due now` : c.active ? "Nothing due right now" : "Revision hasn't started yet"}</h2>
-            <div className="sub">
-              Retrieve from memory, check, correct. Tracked separately from learning (floors) and demonstration (roofs): it never moves the car.
-              {" "}<b>Revise</b> now prepares the topic's revision pack (what did you study?); once it is ready, the topic is revised in the sessions above and its units leave this list. Their history stays here.
-              {isSunday && " Sunday: everything here is optional."}
-            </div>
+            {h.due.length > 0 && (
+              <>
+                <h3 className="g-cap">Due today <span className="g-r">{h.due.length}</span></h3>
+                <ul className="g-group">
+                  {h.due.map((s) => (
+                    <li key={s.subtopicId}>
+                      <button type="button" className="g-row" disabled={!can} onClick={() => setOpen(s.subtopicId)} aria-label={`Revise ${s.subtopic}`}>
+                        <span className="g-dot" style={{ background: color(s) }} />
+                        <span className="g-lbl">
+                          {s.subtopic}
+                          <small>
+                            {s.topic} · {s.overdueDays > 0 ? <b className="rc-late">{plural(s.overdueDays, "day")} overdue · </b> : null}
+                            {s.lastReviewDate ? `last recalled ${dayMonth(s.lastReviewDate)}` : "first recall"}
+                          </small>
+                        </span>
+                        {status(s) && OPEN[status(s)!] && <span className="g-sb info">{OPEN[status(s)!]}</span>}
+                        <Chevron />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {h.later.length > 0 && (
+              <>
+                <h3 className="g-cap">Waiting for a free day <span className="g-r">{h.later.length}</span></h3>
+                <ul className="g-group">
+                  {h.later.map((s) => (
+                    <li key={s.subtopicId}>
+                      <button type="button" className="g-row" disabled={!can} onClick={() => setOpen(s.subtopicId)} aria-label={`Revise ${s.subtopic} now`}>
+                        <span className="g-lbl">{s.subtopic}<small>{s.topic}</small></span>
+                        <span className="g-val">since {dayMonth(s.nextDueDate!)}</span>
+                        <Chevron />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="g-foot">Today's limit is {plural(h.limit, "recall")}, so these wait for a lighter day. Open one to recall it now.</p>
+              </>
+            )}
+
+            {!h.due.length && !h.later.length && !h.upcoming.length && (
+              <>
+                <h3 className="g-cap">How revision starts</h3>
+                <div className="g-group"><p className="g-row" style={{ margin: 0 }}>When you tick a sub-topic as learned, its first recall is due the next day and shows up here and on Today.</p></div>
+              </>
+            )}
+          </div>
+
+          <div>
+            {h.upcoming.length > 0 && (
+              <>
+                <h3 className="g-cap">Next two weeks <span className="g-r">{h.upcoming.length}</span></h3>
+                <ul className="g-group">
+                  {h.upcoming.map((s) => (
+                    <li key={s.subtopicId}>
+                      <button type="button" className="g-row" disabled={!can} onClick={() => setOpen(s.subtopicId)} aria-label={`Revise ${s.subtopic} early`}>
+                        <span className="g-lbl">{s.subtopic}<small>{s.topic}</small></span>
+                        <span className="g-val">{dayMonth(s.scheduledDate)}</span>
+                        <Chevron />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {hist.length > 0 && (
+              <>
+                <h3 className="g-cap">Recent recalls <span className="g-r">{hist.length}</span></h3>
+                <ul className="g-group">
+                  {hist.map((r) => (
+                    <li key={r.reviewId}>
+                      <button type="button" className="g-row" onClick={() => setGrid(r.subtopicId)} aria-label={`Recall over time: ${r.subtopic}`}>
+                        <span className="g-lbl">
+                          {r.subtopic}
+                          <small>{dayMonth(r.date)} · {DEPTH[r.depth]} · {OUTCOME[r.outcome]}{r.nextDueDate ? ` · next ${dayMonth(r.nextDueDate)}` : ""}</small>
+                        </span>
+                        <span className={`g-sb ${TONE[r.outcome]}`}>{Math.round(r.score * 100)} %</span>
+                        <Chevron />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="g-foot">Open one to see every point across your recalls.</p>
+              </>
+            )}
+
+            <Archive a={a} />
           </div>
         </div>
-
-        <div className="grid4">
-          <Stat label="Due now" value={now} detail={c.overdue ? <StatusBadge p={o.attention} fallback={`${c.overdue} overdue`} /> : "none overdue"} />
-          <Stat label="Weak" value={c.weak} detail="failed twice or more in a row" />
-          <Stat label="Next 14 days" value={c.upcoming} detail={c.later ? `${c.later} later` : "nothing later yet"} />
-          <Stat label="In revision" value={c.active} detail={c.paused ? `${c.paused} paused (unticked)` : `${c.awaitingCorrection} awaiting correction`} />
-        </div>
-
-        {c.active === 0 && (
-          <div className="card rest" style={{ marginTop: 16 }}>
-            <h3>How revision starts</h3>
-            <p>While you study, press <b>Check</b> next to a sub-topic in the topic panel to test yourself. When you tick a sub-topic as learned, its first revision is due the next day and shows up here and on Today.</p>
-          </div>
-        )}
-
-        {list("Needs a correction", o.awaitingCorrection, "Go back to the material for the gap you noted, then confirm. The next attempt is blocked until then.")}
-        {list("Overdue", o.overdue, "Weak units first, then the oldest due date.")}
-        {list("Due today", o.due)}
-        {list("Weak concepts", o.weak.filter((u) => u.status === "SCHEDULED"), "Weak units that aren't due yet. Revisiting the original material helps more than another question.")}
-        {list(`Upcoming · next ${o.upcomingDays} days`, o.upcoming.filter((u) => !u.weak), o.upcoming.some((u) => u.weak) ? "Weak units are listed above." : undefined)}
-
-        {history.length > 0 && (
-          <div className="section">
-            <h3>
-              History
-              {history.length > 8 && <button className="btn" onClick={() => setShowAllHistory((x) => !x)}>{showAllHistory ? "Show fewer" : `Show all ${history.length}`}</button>}
-            </h3>
-            <div className="card">
-              <ul className="rhist">
-                {shownHistory.map((h) =>
-                  h.kind === "attempt" ? (
-                    <li key={h.key}>
-                      <div>
-                        <b>{dayMonth(h.date)}</b> · {h.a.label} <span className="m">({h.a.topicName})</span> ·{" "}
-                        <StatusBadge p={h.a.presentation} fallback={`${h.a.score} ${scoreLabel(h.a.score)}`} />
-                        <span className="m"> · {METHOD_LABEL[h.a.retrievalMethod]}{h.a.usedHints || h.a.usedNotes ? " · with help" : ""}</span>
-                      </div>
-                      {h.a.mistakes && <div className="m">Gap: {h.a.mistakes}{h.a.score <= 1 ? (h.a.correctionCompleted ? " · corrected" : " · not corrected yet") : ""}</div>}
-                    </li>
-                  ) : (
-                    <li key={h.key}>
-                      <div>
-                        <b>{dayMonth(h.date)}</b> · {h.k.label} <span className="m">({h.k.topicName})</span> · check: {CHECKPOINT_RESULTS.find((x) => x.result === h.k.result)?.label}
-                      </div>
-                      {h.k.gaps && <div className="m">Gap: {h.k.gaps}</div>}
-                    </li>
-                  ),
-                )}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {progress && <RevisionAnalytics r={progress.revision} weekly={o.weeklyOvertimeMinutes} />}
       </div>
-      {pack && <PackDialog topicId={pack.topicId} topicName={pack.name} onClose={() => { setPack(null); void reload(); }} />}
+      {open !== null && <RecallPage subtopicId={open} onClose={close} />}
+      {grid !== null && <MatrixDialog subtopicId={grid} onClose={() => setGrid(null)} />}
     </div>
   );
 }
 
-/** Recall behaviour over time (spec §14.4): descriptive only, no streaks or points. */
-function RevisionAnalytics({ r, weekly }: { r: NonNullable<ReturnType<typeof useAppData>["progress"]>["revision"]; weekly: number }) {
-  const { mutate } = useAppData();
-  const [caps, setCaps] = useState<{ daily: number; weekly: number } | null>(null);
-  const valid = (n: number, max: number) => Number.isInteger(n) && n >= 0 && n <= max && n % 5 === 0;
-  const maxDist = Math.max(1, ...r.distribution);
-  const months = r.monthly.filter((m) => m.attempts > 0);
+/** "Not today" on the next recall: moves it to the next free day. */
+function NotToday({ s, onDone }: { s: RecallItem; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
   return (
-    <div className="section">
-      <h3>Recall analytics</h3>
-      <div className="card">
-        <div className="sub" style={{ marginTop: 0, marginBottom: 8 }}>
-          {r.attempts ? `${plural(r.attempts, "attempt")}, ${pct(r.successful / r.attempts)} recalled (score 2–3) · ` : "No attempts yet · "}
-          {plural(r.checkpoints, "recall check")} during initial study
-        </div>
-        <div className="kick" style={{ marginBottom: 6 }}>Scores</div>
-        <ul className="list scores">
-          {SCORES.map((s) => (
-            <li key={s.score}>
-              <span>{s.score} · {s.label}</span>
-              <span className="sbar"><i style={{ width: `${(r.distribution[s.score] / maxDist) * 100}%` }} /></span>
-              <span className="m">{r.distribution[s.score]}</span>
-            </li>
-          ))}
-        </ul>
-        {months.length > 0 && (
-          <>
-            <div className="kick" style={{ margin: "12px 0 6px" }}>By month</div>
-            <ul className="list">
-              {months.map((m) => (
-                <li key={m.month}>
-                  <span>{monthName(m.month)}</span>
-                  <span className="m">{plural(m.attempts, "attempt")} · {m.successful} recalled · average {m.averageScore!.toFixed(1)}</span>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {r.ai && (r.ai.selfScored > 0 || r.ai.checked > 0 || r.ai.spoken.attempts > 0) && (
-          <>
-            <div className="kick" style={{ margin: "12px 0 6px" }}>Self-assessment and AI check</div>
-            <ul className="list">
-              {r.ai.selfScored > 0 && (
-                <li>
-                  <span>Your first guess matched your final score</span>
-                  <span className="m">
-                    {r.ai.selfMatches} of {r.ai.selfScored}
-                    {r.ai.selfMeanDifference !== null && Math.abs(r.ai.selfMeanDifference) >= 0.05 &&
-                      ` · guesses ${r.ai.selfMeanDifference > 0 ? "higher" : "lower"} by ${Math.abs(r.ai.selfMeanDifference).toFixed(1)} on average`}
-                  </span>
-                </li>
-              )}
-              {r.ai.checked > 0 && (
-                <li>
-                  <span>Final score matched the AI suggestion</span>
-                  <span className="m">{r.ai.agreed} of {r.ai.checked} · you scored higher {r.ai.savedHigher}×, lower {r.ai.savedLower}×</span>
-                </li>
-              )}
-              {r.ai.spoken.attempts > 0 && (
-                <li>
-                  <span>Spoken vs typed answers</span>
-                  <span className="m">
-                    {plural(r.ai.spoken.attempts, "spoken")} · average {r.ai.spoken.averageScore!.toFixed(1)} · {r.ai.typed.attempts} typed
-                    {r.ai.typed.averageScore !== null && ` · average ${r.ai.typed.averageScore.toFixed(1)}`}
-                  </span>
-                </li>
-              )}
-            </ul>
-          </>
-        )}
-        <div className="sub" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
-          Over-target revision allowed: <b style={{ color: "var(--ink)" }}>{hm(r.dailyAllowanceMinutes)}</b> a day,{" "}
-          <b style={{ color: "var(--ink)" }}>{hm(weekly)}</b> a week
-          {caps === null ? (
-            <button className="btn" style={{ padding: "2px 8px", fontSize: 12 }} onClick={() => setCaps({ daily: r.dailyAllowanceMinutes, weekly })}>Change</button>
-          ) : (
-            <>
-              <input className="inp" type="number" aria-label="Daily over-target revision minutes" min={0} max={240} step={5} value={caps.daily} style={{ width: 74 }} onChange={(e) => setCaps({ ...caps, daily: Number(e.target.value) })} />
-              <input className="inp" type="number" aria-label="Weekly over-target revision minutes" min={0} max={720} step={5} value={caps.weekly} style={{ width: 74 }} onChange={(e) => setCaps({ ...caps, weekly: Number(e.target.value) })} />
-              <button
-                className="btn primary"
-                style={{ padding: "2px 8px", fontSize: 12 }}
-                disabled={!valid(caps.daily, 240) || !valid(caps.weekly, 720)}
-                onClick={async () => {
-                  const ok = await mutate(() => api.patchSettings({ revisionDailyMinutes: caps.daily, revisionWeeklyOvertimeMinutes: caps.weekly }));
-                  if (ok) setCaps(null);
-                }}
-              >
-                Save
-              </button>
-            </>
-          )}
-          <span>Revision uses free time first. Set both to 0 for a strict 4 h day (revision then waits for free time). New placements use the values; planned revisions stay where they are.</span>
-        </div>
+    <button type="button" className="btn quiet big" disabled={busy} aria-label={`Not today: ${s.subtopic}`}
+      onClick={() => {
+        setBusy(true);
+        void api.postponeRecall(s.subtopicId).then(onDone, () => undefined).finally(() => setBusy(false));
+      }}>
+      Not today
+    </button>
+  );
+}
+
+/** The AI notice for recall (§11): a sheet on the first visit; recall needs it. "Not now" leaves a short reminder. */
+function AiNotice({ h, onAccepted }: { h: RecallHome; onAccepted: () => void }) {
+  const [shown, setShown] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (h.ai.reason === "AI_DISABLED" || h.ai.reason === "NO_PROVIDER") {
+    return <div className="g-callout info" style={{ marginTop: 14 }}><span>Recall needs the AI check, which is switched off on this server.</span></div>;
+  }
+  if (h.ai.reason !== "CONSENT_REQUIRED") return null;
+  const accept = async () => {
+    setBusy(true);
+    try {
+      await api.aiConsent();
+      setShown(false);
+      onAccepted();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const provider = h.ai.provider === "gwdg" ? "GWDG Academic Cloud" : h.ai.provider;
+  return (
+    <>
+      <div className="g-callout info" style={{ marginTop: 14 }}>
+        <span style={{ flex: 1 }}><span className="h">Recall needs your OK to use AI</span>Nothing is sent until you accept.</span>
+        <button type="button" className="btn" onClick={() => setShown(true)}>Review</button>
       </div>
-    </div>
+      {shown && (
+        <Sheet labelledBy="ai-notice-title" onClose={() => setShown(false)}>
+          <Spark />
+          <h2 id="ai-notice-title" className="g-t2" style={{ margin: "14px 0 6px" }}>Recall uses AI</h2>
+          <p className="g-sub" style={{ color: "var(--ink)" }}>
+            To check your recall, Blueprint sends a few things to {provider}, which checks them against the sub-topic's checklist.
+            {h.ai.provider === "gwdg" && " GWDG runs the models itself in Germany and states that it does not store what you send."}
+          </p>
+          <h3 className="g-cap" style={{ marginTop: 18 }}>What is sent</h3>
+          <ul className="g-group" aria-label="What is sent">
+            <li className="g-row"><span className="g-lbl">Your recording<small>To write it down; never stored</small></span></li>
+            <li className="g-row"><span className="g-lbl">What you said or typed</span></li>
+            <li className="g-row"><span className="g-lbl">Photos of sketches you add<small>Described once; never stored</small></span></li>
+            <li className="g-row"><span className="g-lbl">Your answer to a follow-up question</span></li>
+            <li className="g-row"><span className="g-lbl">The sub-topic's names</span></li>
+          </ul>
+          <p className="g-foot">Nothing else is sent: no history, no other sub-topics, nothing that identifies you. You can withdraw this in Account at any time.</p>
+          {error && <p className="g-err" role="alert">{error}</p>}
+          <div className="g-sheet-acts">
+            <button type="button" className="btn quiet big" onClick={() => setShown(false)}>Not now</button>
+            <button type="button" className="btn primary big" disabled={busy} onClick={() => void accept()}>Accept</button>
+          </div>
+        </Sheet>
+      )}
+    </>
+  );
+}
+
+/** The retired revision systems' history (§9), read-only, folded into one row. */
+function Archive({ a }: { a: RevisionArchive }) {
+  const [open, setOpen] = useState(false);
+  const rows = [
+    ...a.attempts.map((x) => ({ key: `a${x.id}`, date: x.date, kind: "attempt" as const, x })),
+    ...a.checkpoints.map((x) => ({ key: `c${x.id}`, date: x.date, kind: "check" as const, x })),
+  ].sort((p, q) => q.date.localeCompare(p.date));
+  if (!rows.length) return null;
+  return (
+    <>
+      <h3 className="g-cap">Earlier</h3>
+      <div className="g-group">
+        <button type="button" className="g-row" aria-expanded={open} onClick={() => setOpen((x) => !x)}>
+          <span className="g-lbl">Earlier revision<small>From the revision systems before recall, kept as history</small></span>
+          <span className="g-val">{rows.length}</span>
+          {open ? <ChevronDown /> : <Chevron />}
+        </button>
+        {open && (
+          <ul className="g-hist" aria-label="Earlier revision">
+            {rows.map((r) =>
+              r.kind === "attempt" ? (
+                <li key={r.key}>
+                  <b>{dayMonth(r.date)}</b> · {r.x.label} <span className="g-small">({r.x.topicName})</span> · {r.x.score} {scoreLabel(r.x.score)}
+                  <span className="g-small"> · {METHOD_LABEL[r.x.method as keyof typeof METHOD_LABEL] ?? r.x.method}{r.x.withHelp ? " · with help" : ""}</span>
+                  {r.x.gap && <div className="g-small">Gap: {r.x.gap}</div>}
+                </li>
+              ) : (
+                <li key={r.key}>
+                  <b>{dayMonth(r.date)}</b> · {r.x.label} <span className="g-small">({r.x.topicName})</span> · check: {CHECKPOINT_RESULTS.find((c) => c.result === r.x.result)?.label ?? r.x.result}
+                  {r.x.gaps && <div className="g-small">Gap: {r.x.gaps}</div>}
+                </li>
+              ),
+            )}
+          </ul>
+        )}
+      </div>
+    </>
   );
 }

@@ -1,15 +1,16 @@
 /** Progress and timeline (SRS §3.6–§3.7): only measurements that support a learning decision. */
 import { useState } from "react";
 import { api } from "../api/client";
-import type { Progress } from "../api/types";
+import type { Progress, RecallCoaching } from "../api/types";
 import { INK, mix } from "../lib/color";
 import { dayMonth, hours1, monthName, pct, plural, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
+import { MatrixDialog } from "./recall/MatrixDialog";
 import { Loading, Stat } from "./ui";
 import { StatusBadge } from "./Status";
 
 
-export function ProgressView({ onOpenDistrict, onOpenRevision }: { onOpenDistrict: (idx: number) => void; onOpenRevision: () => void }) {
+export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number) => void }) {
   const { progress: p, curriculum, districtById } = useAppData();
   if (!p || !curriculum) return <div className="view"><Loading /></div>;
 
@@ -135,26 +136,82 @@ export function ProgressView({ onOpenDistrict, onOpenRevision }: { onOpenDistric
         </div>
 
         <div className="section">
-          <h3>Recall and revision</h3>
+          <h3>Recall</h3>
           <div className="grid4">
-            <Stat label="Attempts" value={p.revision.attempts} detail={p.revision.attempts ? `${pct(p.revision.successful / p.revision.attempts)} recalled (score 2–3)` : "none yet"} />
+            <Stat label="In recall" value={p.recall.inRecall} detail={p.recall.dueNow ? `${p.recall.dueNow} to recall now` : "nothing due now"} />
+            <Stat label="Recalls done" value={p.recall.reviews} detail={p.recall.reviews ? `${p.recall.outcomes.PASS} remembered well · ${p.recall.outcomes.LAPSE} mostly forgotten` : "none yet"} />
+            <Stat label="Average score" value={p.recall.averageScore === null ? "—" : pct(p.recall.averageScore)} detail="share of each checklist recalled" />
             <Stat
-              label="Scores 0 · 1 · 2 · 3"
-              value={<span style={{ fontSize: 17 }}>{p.revision.distribution.join(" · ")}</span>}
-              detail="Forgot · Struggled · Recalled · Strong recall"
+              label="Depth"
+              value={<span style={{ fontSize: 17 }}>{p.recall.depth.FOUNDATIONAL} · {p.recall.depth.INTERMEDIATE} · {p.recall.depth.MASTERY}</span>}
+              detail="Foundational · Intermediate · Mastery"
             />
-            <Stat label="Weak units" value={p.revision.weakUnits.length} detail="failed twice or more in a row" />
-            <Stat label="Overdue" value={p.revision.overdue} detail={p.revision.awaitingCorrection ? `${p.revision.awaitingCorrection} awaiting correction` : "none awaiting correction"} />
           </div>
-          <div className="sub">
-            Remembering is tracked separately: it never changes floors, demonstrations, districts or the road above.{" "}
-            <button className="btn" style={{ padding: "2px 9px", fontSize: 12.5 }} onClick={onOpenRevision}>Open Revision</button>
-          </div>
+          {p.recall.monthly.length > 0 && (
+            <ul className="list" style={{ marginTop: 10 }}>
+              {p.recall.monthly.map((m) => (
+                <li key={m.month}><span>{monthName(m.month)}</span><span className="m">{m.reviews} recalled · average {m.averageScore === null ? "—" : pct(m.averageScore)}</span></li>
+              ))}
+            </ul>
+          )}
+          {p.recall.coaching && <RecallCoachingView c={p.recall.coaching} />}
+          <div className="sub">Remembering is tracked separately: it never changes floors, demonstrations, districts or the road above.</div>
         </div>
 
         <Timeline p={p} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Recall coaching (Recall-Plan §3.5, §7): blind spots across sub-topics, then each recalled sub-topic with what is
+ * newly locked in, what slipped and mistakes that came back, and the note written after its last review. Each opens
+ * the sub-topic's recall over time.
+ */
+export function RecallCoachingView({ c }: { c: RecallCoaching }) {
+  const [grid, setGrid] = useState<number | null>(null);
+  if (!c.subtopics.length) return null;
+  const delta = (d: number | null) => (d === null ? "first recall" : d === 0 ? "same as last time" : `${d > 0 ? "+" : "−"}${Math.round(Math.abs(d) * 100)} points since last time`);
+  return (
+    <>
+      {c.blindSpots.length > 0 && (
+        <>
+          <h4 className="pg-h4">Blind spots · missed in a row</h4>
+          <ul className="list card" aria-label="Blind spots">
+            {c.blindSpots.map((b) => (
+              <li key={`${b.subtopicId}-${b.label}`}>
+                <span><b>{b.label}</b> <span className="m">({b.subtopic})</span></span>
+                <span className="m">missed {b.missedInARow}× · <button type="button" className="pg-link" onClick={() => setGrid(b.subtopicId)} aria-label={`Recall over time: ${b.subtopic}`}>over time</button></span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <h4 className="pg-h4">By sub-topic</h4>
+      <ul className="list card pg-coach" aria-label="Recall by sub-topic">
+        {c.subtopics.map((s) => (
+          <li key={s.subtopicId}>
+            <div style={{ minWidth: 0 }}>
+              <b>{s.subtopic}</b> <span className="m">({s.topic}) · {plural(s.reviews, "recall")} · last {dayMonth(s.lastDate)}</span>
+              {s.narrative && <p className="pg-note">{s.narrative}</p>}
+              <div className="pg-tags">
+                {s.newlyMastered.length > 0 && <span className="sb v-soft t-success">Newly remembered: {s.newlyMastered.join(", ")}</span>}
+                {s.slipped.length > 0 && <span className="sb v-soft t-warning">Slipped: {s.slipped.join(", ")}</span>}
+                {s.blindSpots.length > 0 && <span className="sb v-soft t-danger">Keeps missing: {s.blindSpots.map((b) => b.label).join(", ")}</span>}
+                {s.recurringMisconceptions.length > 0 && <span className="sb v-soft t-danger">A corrected mistake came back: “{s.recurringMisconceptions[0].claim}”</span>}
+              </div>
+            </div>
+            <span className="pg-score">
+              <b>{pct(s.lastScore)}</b>
+              <span className="m">{delta(s.scoreDelta)}</span>
+              <button type="button" className="pg-link" onClick={() => setGrid(s.subtopicId)} aria-label={`Recall over time: ${s.subtopic}`}>Over time</button>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {grid !== null && <MatrixDialog subtopicId={grid} onClose={() => setGrid(null)} />}
+    </>
   );
 }
 

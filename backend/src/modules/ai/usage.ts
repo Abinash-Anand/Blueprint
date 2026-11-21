@@ -39,11 +39,11 @@ export function usageService(prisma: PrismaClient, config: AiConfig, now: () => 
       const xs = (recent.get(op) ?? []).filter((x) => t - x < HOUR);
       recent.set(op, xs);
       // Reading a new city's goal is a short structured call like an answer check, so it shares that hourly limit.
-      const perHour = op === "EVALUATE" || op === "UNDERSTAND" ? config.maxEvaluationsPerHour : op === "GENERATE" ? config.maxGenerationsPerHour : op === "REVISION_PACK" ? config.maxPacksPerHour : config.maxTranscriptionsPerHour;
+      const perHour = op === "EVALUATE" || op === "UNDERSTAND" ? config.maxEvaluationsPerHour : op === "GENERATE" ? config.maxGenerationsPerHour : op === "RECALL" ? config.maxRecallPerHour : config.maxTranscriptionsPerHour;
       if (xs.length >= perHour)
-        throw new HttpError(429, "AI_RATE_LIMITED", op === "GENERATE" ? `Curriculum generation is limited to ${perHour} an hour. Try again later.` : op === "REVISION_PACK" ? `Revision packs can be built ${perHour} times an hour on this server. Try again later.` : `AI checks are limited to ${perHour} an hour. Carry on without AI, or try again later.`);
+        throw new HttpError(429, "AI_RATE_LIMITED", op === "GENERATE" ? `Curriculum generation is limited to ${perHour} an hour. Try again later.` : op === "RECALL" ? `Recall checks are limited to ${perHour} an hour on this server. Try again later.` : `AI checks are limited to ${perHour} an hour. Carry on without AI, or try again later.`);
       if (dailyLimit > 0 && (await usedLast24h(provider)) + reserve > dailyLimit)
-        throw new HttpError(429, "AI_RATE_LIMITED", op === "GENERATE" ? "Today's AI allowance is too small for a whole curriculum. Try again tomorrow." : op === "REVISION_PACK" ? "Today's AI allowance is too small for a revision pack. Try again tomorrow." : "Today's AI allowance is used up. Carry on without AI; it is available again tomorrow.");
+        throw new HttpError(429, "AI_RATE_LIMITED", op === "GENERATE" ? "Today's AI allowance is too small for a whole curriculum. Try again tomorrow." : op === "RECALL" ? "Today's AI allowance is used up. Recall checks are available again tomorrow." : "Today's AI allowance is used up. Carry on without AI; it is available again tomorrow.");
       const spent = await spentThisMonthMicro();
       if (spent > 0 && spent >= config.monthlyBudgetEur * 1_000_000)
         throw new HttpError(429, "AI_BUDGET_REACHED", "This month's AI budget is used up. Carry on without AI; it resets next month.");

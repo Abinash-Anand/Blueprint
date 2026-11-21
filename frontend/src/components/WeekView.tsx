@@ -101,30 +101,12 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
                       {d.revisionPlannedMinutes > 0 && <div>incl. {hm(d.revisionPlannedMinutes)} revision</div>}
                     </>
                   )}
+                  {d.recall.length > 0 && <div className="wk-recall" title={d.recall.join(", ")}>↻ {plural(d.recall.length, "recall")}</div>}
                 </div>
               </button>
             ))}
           </div>
         </div>
-
-        {(w.revision.plannedMinutes > 0 || w.revision.overdue > 0 || w.revision.overTargetMinutes > 0) && (
-          <div className="section">
-            <h3>Revision</h3>
-            <div className="card">
-              <ul className="list">
-                <li><span>Planned this week</span><span className="m">{hm(w.revision.plannedMinutes)} · {plural(w.revision.dueThisWeek, "unit")} due</span></li>
-                <li><span>Done</span><span className="m">{hm(w.revision.doneMinutes)}</span></li>
-                <li><span>Still to do this week</span><span className="m">{hm(w.revision.upcomingMinutes)}</span></li>
-                {w.revision.overdue > 0 && <li><span>Overdue (all weeks)</span><StatusBadge p={w.revision.attention} fallback={`${plural(w.revision.overdue, "unit")} overdue`} /></li>}
-                <li>
-                  <span>Over the 4 h days (learning + revision)</span>
-                  <span className="m">{hm(w.revision.overTargetMinutes)} of {hm(w.revision.weeklyOvertimeMinutes)} allowed</span>
-                </li>
-              </ul>
-              <div className="sub">Revision counts in the planned week. It uses free time first; only what doesn't fit goes over a day's target, at most {hm(w.revision.dailyAllowanceMinutes)} a day and {hm(w.revision.weeklyOvertimeMinutes)} a week. Sunday stays optional and never counts against the target.</div>
-            </div>
-          </div>
-        )}
 
         <div className="section">
           <h3>Milestones · this week and the next</h3>

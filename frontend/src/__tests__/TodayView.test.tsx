@@ -30,10 +30,7 @@ const today: Today = {
   current: { districtId: "fe", topicId: "fe.ts" },
   next: { topicId: "fe.ts", subtopic: "Utility types" },
   reviewTopics: [],
-  revision: {
-    plannedMinutes: 0, learningMinutes: 240, dailyAllowanceMinutes: 30, weeklyOvertimeMinutes: 120, overTargetMinutes: 0, weekOverTargetMinutes: 0, competing: false, dueCount: 0, overdueCount: 0,
-    weakCount: 0, awaitingCorrection: 0, backlog: { count: 0, oldestDue: null }, optional: [], sessionTaskIds: [],
-  },
+  recall: { dueCount: 0, overdueCount: 0, tomorrowCount: 0, plannedMinutes: 0 },
 };
 
 const withRevision: Today = {
@@ -49,7 +46,6 @@ const withRevision: Today = {
     }),
     revisionTask(4, "Async programming with promises"),
   ],
-  revision: { ...today.revision, plannedMinutes: 20, overTargetMinutes: 20, weekOverTargetMinutes: 20, competing: true, dueCount: 2, overdueCount: 1, weakCount: 1, sessionTaskIds: [3, 4] },
 };
 let current = today;
 
@@ -82,22 +78,31 @@ describe("TodayView (Mission Control)", () => {
     expect(screen.getByRole("checkbox", { name: /Utility types.*as done/ })).not.toBeChecked();
   });
 
-  it("shows revision tasks without a tick box, flags weak and overdue units, and revises them through the topic's pack", async () => {
+  it("shows a recall task with Revise and no tick box; it is done only by its recall", async () => {
+    current = {
+      ...today,
+      tasks: [...today.tasks, task({
+        id: 9, title: "Recall: Generics", kind: "REVISION", source: "REVISION", estimatedMinutes: 8, stageId: null, subtopic: { id: 19, name: "Generics", completed: true },
+        recall: { stateId: 3, stage: 1, lastReviewDate: "2026-11-15", dueDate: "2026-11-15", overdueDays: 2, presentation: pres("revision.overdue", "danger", "2 days overdue") },
+      })],
+    };
+    render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
+    expect(await screen.findByRole("button", { name: "Revise: Generics" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Recall: Generics.*done/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /done when you recall it/ })).toBeInTheDocument();
+    expect(screen.getByText("2 days overdue")).toBeInTheDocument();
+    current = today;
+  });
+
+  it("shows an earlier revision task as history only: no Revise, no tick box, no revision section", async () => {
     current = withRevision;
     render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
-    await waitFor(() => expect(screen.getByText(/asks once what you studied/)).toBeInTheDocument());
-    expect(screen.queryByText(/Start revision session/)).not.toBeInTheDocument();
-    // Completed only by an attempt: a "Revise" action instead of a checkbox.
-    expect(screen.getByRole("button", { name: "Start revision: Generics" })).toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: /Generics.*as done/ })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("img", { name: /complete it by recording an attempt/ })).toHaveLength(2);
-    expect(screen.getByText("Weak")).toBeInTheDocument();
-    expect(screen.getByText("2 days overdue")).toBeInTheDocument();
-    expect(screen.getByText(/due 15 Nov/)).toBeInTheDocument();
-    // Study, practice and revision are told apart by a kind tag.
-    expect(screen.getAllByText("Revision").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText("Study").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Revision is competing with new learning today/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Async programming with promises")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Start revision/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Async programming.*done/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Start revision session|All revisions|competing with new learning/)).not.toBeInTheDocument();
+    // Study and revision are still told apart by a kind tag.
+    expect(screen.getAllByText("Revision").length).toBeGreaterThanOrEqual(1);
     current = today;
   });
 });

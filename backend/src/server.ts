@@ -7,8 +7,8 @@ import { createProviders } from "./modules/ai/providers/factory.js";
 import { aiService } from "./modules/ai/service.js";
 import { createMailer } from "./modules/auth/mailer.js";
 import { recoverGenerations } from "./modules/ai/curriculum/service.js";
-import { recoverPacks } from "./modules/revision/packService.js";
 import { authService } from "./modules/auth/service.js";
+import type { RecallService } from "./modules/recall/service.js";
 
 const config = loadConfig();
 const prisma = createPrisma();
@@ -16,6 +16,8 @@ const clock = systemClock(config.appToday);
 const aiConfig = loadAiConfig();
 const providers = createProviders(aiConfig);
 const app = createApp({ prisma, clock, ai: { config: aiConfig, providers }, authConfig: config.auth });
+void (app.locals.recall as RecallService).planAll().then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall tasks planned", count: n })));
+void (app.locals.recall as RecallService).resumeWaiting().then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall grading resumed", count: n })));
 
 // Sessions and one-time tokens that have expired are removed on start (they are rejected anyway when used).
 void authService(prisma, config.auth, { send: async () => {} })
@@ -28,7 +30,6 @@ console.log(JSON.stringify({
 }));
 // Curriculum generations interrupted by the restart are marked failed, so the learner can start them again.
 void recoverGenerations(prisma).then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Interrupted curriculum generations marked failed", count: n })));
-void recoverPacks(prisma).then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Interrupted revision pack builds marked failed", count: n })));
 
 // Check the mail server once at start-up, so a wrong password shows in the log before anyone registers.
 const startupMailer = createMailer(config.auth.mail);
