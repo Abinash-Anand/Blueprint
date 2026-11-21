@@ -22,7 +22,8 @@ import type { UsageService } from "../ai/usage.js";
 import type { AuthService } from "../auth/service.js";
 import {
   CHECKLIST_PROMPT_VERSION, ChecklistReply, type Context, GRADE_PROMPT_VERSION, GradeReplySchema, type Language, NarrativeReply,
-  ProbeReply, SKETCH_PROMPT_VERSION, SketchReply, VERDICT_PROMPT_VERSION, VerdictReply, checklistJsonSchema, checklistPrompt,
+  MisconceptionCheckReply, ProbeReply, SKETCH_PROMPT_VERSION, SketchReply, VERDICT_PROMPT_VERSION, VerdictReply, checklistJsonSchema, checklistPrompt,
+  confirmedMisconceptions, misconceptionCheckJsonSchema, misconceptionCheckPrompt,
   curriculumLanguage, gradeJsonSchema, gradePrompt, narrativeJsonSchema, narrativePrompt, probeJsonSchema, probePrompt, sketchJsonSchema, sketchPrompt,
   toDraft, toGradeReply, verdictJsonSchema, verdictPrompt,
 } from "./prompts.js";
@@ -145,35 +146,54 @@ export function recallService(d: RecallDeps) {
 
   /* ---------------- grading ---------------- */
 
-  /** One grading call with the pinned model at temperature 0; usage recorded. Never another model. */
-  async function gradeOnce(checklist: RecallChecklist & { points: RecallPoint[] }, subtopic: string, topic: string, explanation: string, only?: RecallPoint[]) {
-    const scored = only ?? checklist.points.filter((p) => !p.leftOutAt);
-    const prompt = gradePrompt({ subtopic, topic, explanation, language: checklist.language as Language, points: scored.map((p) => ({ code: p.code, label: p.label, description: p.description })) });
+  /** One call to the checklist's pinned grading model at temperature 0, usage recorded. Never another model. */
+  async function callGrader(model: string, name: string, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number) {
     await d.usage.check("RECALL", providers.generation!.name, config.generationDailyLimit, 1);
     const t0 = performance.now();
-    let output: unknown;
     try {
       const r = await providers.generation!.generate({
-        ...prompt, jsonSchema: gradeJsonSchema, model: checklist.gradingModel, name: "recall_grade", maxTokens: 4000, temperature: 0,
-        signal: AbortSignal.timeout(config.generationTimeoutMs),
+        ...prompt, jsonSchema, model, name, maxTokens, temperature: 0, signal: AbortSignal.timeout(config.generationTimeoutMs),
       });
-      await d.usage.record("RECALL", providers.generation!.name, checklist.gradingModel, r.usage, performance.now() - t0, "OK");
-      output = r.output;
+      await d.usage.record("RECALL", providers.generation!.name, model, r.usage, performance.now() - t0, "OK");
+      return r.output as unknown;
     } catch (e) {
       const err = asProviderError(e);
-      await d.usage.record("RECALL", providers.generation!.name, checklist.gradingModel, {}, performance.now() - t0, err.kind);
-      console.warn(JSON.stringify({ level: "warn", msg: "AI provider error", op: "RECALL", model: checklist.gradingModel, kind: err.kind, status: err.status ?? null }));
+      await d.usage.record("RECALL", providers.generation!.name, model, {}, performance.now() - t0, err.kind);
+      console.warn(JSON.stringify({ level: "warn", msg: "AI provider error", op: "RECALL", model, kind: err.kind, status: err.status ?? null }));
       throw err;
     }
+  }
+
+  /**
+   * Grades an explanation with the pinned model at temperature 0. When the first recall's grade (not the follow-up,
+   * which never counts) flags misconceptions, a second call confirms each one; only confirmed ones reach the score.
+   */
+  async function gradeOnce(checklist: RecallChecklist & { points: RecallPoint[] }, subtopic: string, topic: string, explanation: string, only?: RecallPoint[]) {
+    const scored = only ?? checklist.points.filter((p) => !p.leftOutAt);
+    const language = checklist.language as Language;
+    const prompt = gradePrompt({ subtopic, topic, explanation, language, points: scored.map((p) => ({ code: p.code, label: p.label, description: p.description })) });
+    const output = await callGrader(checklist.gradingModel, "recall_grade", prompt, gradeJsonSchema, 4000);
     // The checks in code (§5.4): a reply that fails them counts as invalid output.
     const parsed = GradeReplySchema.safeParse(output);
     if (!parsed.success) throw new ProviderError("INVALID_OUTPUT", "The grading reply did not match its shape");
+    let graded;
     try {
-      return verifyGrade(toGradeReply(parsed.data), scored.map((p) => p.code), explanation);
+      graded = verifyGrade(toGradeReply(parsed.data), scored.map((p) => p.code), explanation);
     } catch (e) {
       if (e instanceof GradeError) throw new ProviderError("INVALID_OUTPUT", e.message);
       throw e;
     }
+    if (only || !graded.misconceptions.length) return graded;
+    const check = MisconceptionCheckReply.safeParse(await callGrader(
+      checklist.gradingModel, "recall_misconception_check",
+      misconceptionCheckPrompt({ subtopic, topic, explanation, language, items: graded.misconceptions }), misconceptionCheckJsonSchema, 1500,
+    ));
+    if (!check.success) throw new ProviderError("INVALID_OUTPUT", "The misconception check did not match its shape");
+    const confirmed = confirmedMisconceptions(graded.misconceptions, check.data);
+    if (confirmed.length !== graded.misconceptions.length) {
+      console.log(JSON.stringify({ level: "info", msg: "Recall misconceptions not confirmed", flagged: graded.misconceptions.length, confirmed: confirmed.length }));
+    }
+    return { ...graded, misconceptions: confirmed };
   }
 
   /** Applies a verified grade to the review and the schedule (§6), in one transaction. */

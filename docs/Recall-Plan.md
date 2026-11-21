@@ -195,7 +195,7 @@ All three phases are built, tested and live. Where the build differs from the pl
 
 | Phase | Status |
 |---|---|
-| 1. Recall core | Live since 20 Nov. Grader pinned to Qwen 3.5 397B at temperature 0, never a fallback model. Prompts: checklist `recall-checklist-v4` (core points only, at most two tier-3 points; v3: distinct points, never an umbrella point over parts already listed; v4: a last self-check, and code sends back a draft with an umbrella point, `umbrellaPoints` in rules.ts), grading `recall-grade-v3` (generous with paraphrase; casing, spelling and speech-to-text formatting are never misconceptions). |
+| 1. Recall core | Live since 20 Nov. Grader pinned to Qwen 3.5 397B at temperature 0, never a fallback model. Prompts: checklist `recall-checklist-v4` (core points only, at most two tier-3 points; v3: distinct points, never an umbrella point over parts already listed; v4: a last self-check, and code sends back a draft with an umbrella point, `umbrellaPoints` in rules.ts), grading `recall-grade-v4` (generous with paraphrase; casing, spelling and speech-to-text formatting are never misconceptions; v4: code keeps its `<` `>`, only the prompt's own tags are neutralised) with `recall-misconception-check-v1` (a second call confirms each flagged misconception; unconfirmed ones are dropped, after a live trial flagged true statements). |
 | 2. Senior engineer and progress | Live since 21 Nov. Follow-up (`POST /probe`, `/followup`), verdict (`/complete`), comparison and progress note (`RecallAnalysis`), grid (`GET /subtopics/:id/matrix`). |
 | 3. Sketches | Live since 21 Nov. Up to 3 photos (PNG, JPEG, WebP, 5 MB); only the literal description is kept and graded as `[SKETCH n]`. |
 

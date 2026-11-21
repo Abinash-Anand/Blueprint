@@ -40,6 +40,15 @@ function fakeGenerate(i: GenerateInput): { output: unknown; usage: { inputTokens
   const stage = tag(i.user, "stage");
   if (stage === "recall-checklist") return { usage, output: fakeChecklist(i.user) };
   if (stage === "recall-grade") return { usage, output: fakeGrade(i.user) };
+  // Confirms every flagged claim except one that says it is "actually true" (so tests can see a false flag dropped).
+  if (stage === "recall-misconception-check") {
+    const claims = tag(i.user, "claims").split("\n").filter(Boolean).map((l) => {
+      const n = Number(l.match(/^(\d+)\./)?.[1] ?? 0);
+      const wrong = !/actually true/i.test(l);
+      return { index: n, wrong, reason: wrong ? "It is false." : "It is true." };
+    });
+    return { usage, output: { claims } };
+  }
   // Recall phase 2: a probe naming the first gap's aspect, a verdict from the lists it was given, a progress note.
   if (stage === "recall-probe") {
     const first = tag(i.user, "gaps").split("\n")[0] ?? "";
