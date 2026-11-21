@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { Task } from "../api/types";
 import { KIND_LABEL, dayMonth, hm, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { RecallPage } from "./recall/RecallPage";
+import { openPage, recallHash } from "../lib/nav";
 import { StatusBadge, StatusIndicator } from "./Status";
 
 interface Props {
@@ -16,7 +16,7 @@ interface Props {
 type Mode = null | "log" | "edit" | "move";
 
 export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
-  const { mutate, toggleSubtopic, reload } = useAppData();
+  const { mutate, toggleSubtopic } = useAppData();
   const [mode, setMode] = useState<Mode>(null);
   const [minutes, setMinutes] = useState(0);
   const [date, setDate] = useState(t.scheduledDate);
@@ -42,7 +42,6 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
   const label = `${t.title}${t.topic ? ` (${t.topic.name})` : ""}`;
   // Earlier revision tasks and recall tasks (docs/Recall-Plan.md) look alike: done by their recall, never by a tick.
   const rv = t.revision ?? t.recall ?? null;
-  const [recallOpen, setRecallOpen] = useState(false);
   // The default "to do" state needs no badge; every other task state is shown as the backend presents it.
   const taskState = t.presentation && t.presentation.state !== "task.todo" ? t.presentation : null;
 
@@ -93,7 +92,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
           {t.notes && !compact && <div className="notes">{t.notes}</div>}
           {!(rv && done) && <div className="acts">
             {t.recall && !done && t.subtopic && (
-              <button className="btn primary" onClick={() => setRecallOpen(true)} aria-label={`Revise: ${t.subtopic.name}`}>Revise</button>
+              <button className="btn primary" onClick={() => openPage(recallHash(t.subtopic!.id))} aria-label={`Revise: ${t.subtopic.name}`}>Revise</button>
             )}
             {!rv && <button className="btn" onClick={() => open("log")} aria-expanded={mode === "log"}>Log time</button>}
             <button className="btn" onClick={() => open("move")} aria-expanded={mode === "move"}>Reschedule</button>
@@ -158,7 +157,6 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
         </div>
         <div className="est">{hm(t.estimatedMinutes)}</div>
       </div>
-      {recallOpen && t.subtopic && <RecallPage subtopicId={t.subtopic.id} onClose={() => { setRecallOpen(false); void reload(); }} />}
     </li>
   );
 }

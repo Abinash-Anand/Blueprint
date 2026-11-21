@@ -30,8 +30,9 @@ describe("recall coaching", () => {
     expect(rows[0].textContent).toMatch(/Newly remembered: Late subscribers.*Slipped: Multicasting.*Keeps missing: Unsubscribing.*A corrected mistake came back/);
     expect(rows[0].textContent).toMatch(/62%.*\+14 points since last time/);
     expect(rows[1].textContent).toMatch(/Guards.*40%.*first recall/);
+    // Recall over time is a page of its own inside Progress, with an address.
     fireEvent.click(within(rows[1]).getByRole("button", { name: "Recall over time: Guards" }));
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(location.hash).toBe(`#/progress/history/${c.subtopics[1].subtopicId}`);
   });
 
   it("shows nothing before the first checked recall", () => {

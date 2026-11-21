@@ -7,9 +7,12 @@ import { RevisionView } from "./components/RevisionView";
 import { Sidebar } from "./components/Sidebar";
 import { TodayView } from "./components/TodayView";
 import { WeekView } from "./components/WeekView";
+import { RecallHistory } from "./components/recall/RecallHistory";
+import { RecallPage } from "./components/recall/RecallPage";
 import { Loading } from "./components/ui";
 import { TopBar } from "./Root";
 import { shortDate } from "./lib/format";
+import { backName, closePage } from "./lib/nav";
 import type { View as MapView } from "./map/camera";
 import { layout } from "./map/geometry";
 import { useAppData } from "./state/AppData";
@@ -24,16 +27,22 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "progress", label: "Progress" },
 ];
 
-interface Route { view: View; param: string | null }
+interface Route { view: View; param: string | null; sub?: string | null; recall?: number | null }
 
-/** Hash routing without a router library: #/today[/date], #/week[/date], #/revision, #/city[/topic], #/progress */
+/**
+ * Hash routing without a router library: #/today[/date], #/week[/date], #/revision, #/city[/topic], #/progress,
+ * #/recall/<sub-topic> (the recall flow, a page of its own) and #/revision/history/<sub-topic> or
+ * #/progress/history/<sub-topic> (recall over time, inside its tab).
+ */
 export function parseHash(hash: string): Route {
-  const [, v, p] = hash.replace(/^#/, "").split("/");
+  const [, v, p, q] = hash.replace(/^#/, "").split("?")[0].split("/");
+  if (v === "recall" && /^\d+$/.test(p ?? "")) return { view: "revision", param: null, recall: Number(p) };
   const known = VIEWS.find((x) => x.id === v);
   // An unknown view falls back to Today and drops its parameter (it isn't a date).
-  return { view: (known?.id ?? "today") as View, param: known && p ? decodeURIComponent(p) : null };
+  return { view: (known?.id ?? "today") as View, param: known && p ? decodeURIComponent(p) : null, sub: known && p && q ? decodeURIComponent(q) : null };
 }
-const toHash = (r: Route) => `#/${r.view}${r.param ? `/${encodeURIComponent(r.param)}` : ""}`;
+const toHash = (r: Route) =>
+  r.recall != null ? `#/recall/${r.recall}` : `#/${r.view}${r.param ? `/${encodeURIComponent(r.param)}` : ""}${r.param && r.sub ? `/${encodeURIComponent(r.sub)}` : ""}`;
 
 export function App() {
   const { curriculum, progress, loadError, reload, version, notice, setNotice } = useAppData();
@@ -109,6 +118,13 @@ export function App() {
     return () => ro?.disconnect();
   }, [route.view, ready]);
 
+  // Leaving the recall flow: the plan, the sidebar and the tabs pick up what the recall changed.
+  const wasRecall = useRef(route.recall != null);
+  useEffect(() => {
+    if (wasRecall.current && route.recall == null) void reload();
+    wasRecall.current = route.recall != null;
+  }, [route.recall, reload]);
+
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setSideOpen(false);
     addEventListener("keydown", esc);
@@ -129,6 +145,9 @@ export function App() {
   if (!curriculum || !progress || !L) return <Loading text="Loading your city…" />;
 
   const { view, param } = route;
+  // The recall flow is a focused page of its own, without the tabs and the districts.
+  if (route.recall != null) return <RecallPage subtopicId={route.recall} backLabel={backName("#/revision")} onClose={() => closePage("#/revision")} />;
+  const historyId = (view === "revision" || view === "progress") && param === "history" && /^\d+$/.test(route.sub ?? "") ? Number(route.sub) : null;
   return (
     <div className="app">
       <Sidebar
@@ -163,7 +182,8 @@ export function App() {
           <TopBar />
         </header>
         {view === "today" && <TodayView date={param} onDate={(d) => go({ view: "today", param: d }, true)} onOpenTopic={openTopic} onOpenRevision={() => go({ view: "revision", param: null })} />}
-        {view === "revision" && <RevisionView />}
+        {historyId !== null && <RecallHistory subtopicId={historyId} backLabel={backName(`#/${view}`)} onBack={() => closePage(`#/${view}`)} />}
+        {view === "revision" && historyId === null && <RevisionView />}
         {view === "week" && (
           <WeekView date={param} onDate={(d) => go({ view: "week", param: d }, true)} onOpenDay={(d) => go({ view: "today", param: d === today?.today ? null : d })} onOpenTopic={openTopic} />
         )}
@@ -182,7 +202,7 @@ export function App() {
             onClose={() => go({ view: "city", param: null }, true)}
           />
         )}
-        {view === "progress" && <ProgressView onOpenDistrict={openDistrict} />}
+        {view === "progress" && historyId === null && <ProgressView onOpenDistrict={openDistrict} />}
       </div>
       <div className={`scrim${sideOpen ? " on" : ""}`} onClick={() => setSideOpen(false)} />
       {notice && (

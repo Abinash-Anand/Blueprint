@@ -22,9 +22,13 @@ describe("format", () => {
   });
 
   it("parses hash routes", () => {
-    expect(parseHash("")).toEqual({ view: "today", param: null });
-    expect(parseHash("#/city/be.api")).toEqual({ view: "city", param: "be.api" });
-    expect(parseHash("#/week/2026-11-23")).toEqual({ view: "week", param: "2026-11-23" });
-    expect(parseHash("#/nonsense")).toEqual({ view: "today", param: null });
+    expect(parseHash("")).toMatchObject({ view: "today", param: null });
+    expect(parseHash("#/city/be.api")).toMatchObject({ view: "city", param: "be.api" });
+    expect(parseHash("#/week/2026-11-23")).toMatchObject({ view: "week", param: "2026-11-23" });
+    expect(parseHash("#/nonsense")).toMatchObject({ view: "today", param: null });
+    // The recall flow and recall over time have addresses of their own.
+    expect(parseHash("#/recall/42")).toMatchObject({ recall: 42 });
+    expect(parseHash("#/recall/x").recall).toBeUndefined();
+    expect(parseHash("#/progress/history/7")).toMatchObject({ view: "progress", param: "history", sub: "7" });
   });
 });
