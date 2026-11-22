@@ -31,7 +31,7 @@ import {
 import { RECALL_TASK_MINUTES, completeRecallTask, syncRecallTasks } from "./tasks.js";
 import {
   type AttemptView, type Depth, GradeError, type PointStatus, checklistProblems, computeSessionDiff, cuedRating, dailyLimit, depthOf, imageType, nextSchedule, outcomeOf,
-  recallScore, tierShares, verifyGrade,
+  answerSpans, recallScore, tierShares, verifyGrade,
 } from "./rules.js";
 
 export const RECALL = {
@@ -388,6 +388,7 @@ export function recallService(d: RecallDeps) {
     const checked = r.status === "CHECKED" || r.status === "COMPLETE";
     const byPoint = new Map(r.results.map((x) => [x.pointId, x]));
     const scored = r.checklist.points.filter((p) => byPoint.has(p.id)).map((p) => ({ tier: p.tier, weight: p.weight, status: byPoint.get(p.id)!.status }));
+    const misconceptions = misconceptionsOf(r.misconceptions);
     return {
       id: r.id, subtopicId: r.subtopicId, subtopic: r.subtopic.name, topicId: r.subtopic.topic.id, topic: r.subtopic.topic.name, attempt: r.attempt, status: r.status,
       date: d2i(r.date), spokenParts: parts(r.spokenParts), typed: r.typed, sketches: sketchesOf(r.sketchParts), waitReason: r.waitReason, language: r.checklist.language,
@@ -398,15 +399,34 @@ export function recallService(d: RecallDeps) {
       seniorVerdict: checked ? (r.seniorVerdict as unknown as SeniorVerdict | null) : null,
       // The checklist is the answer: it is shown only once the review is checked.
       result: checked ? {
-        score: r.score!, depth: r.depth!, outcome: r.outcome!, misconceptions: misconceptionsOf(r.misconceptions),
+        score: r.score!, depth: r.depth!, outcome: r.outcome!, misconceptions,
         stageBefore: r.stageBefore!, stageAfter: r.stageAfter!, nextDueDate: r.nextDueDate ? d2i(r.nextDueDate) : null,
         tierShares: tierShares(scored), gradingModel: r.gradingModel,
         points: r.checklist.points.map((p) => {
           const x = byPoint.get(p.id);
           return { id: p.id, code: p.code, label: p.label, description: p.description, tier: p.tier, leftOut: !!p.leftOutAt, status: x?.status ?? null, evidence: x?.evidence ?? null, recalledWhenAsked: x?.recalledWhenAsked ?? false };
         }),
+        answer: answerOf(r, misconceptions),
       } : null,
     };
+  }
+
+  /**
+   * The graded text with where its quoted words are, for showing the learner's answer next to the checklist: never
+   * used for grading. Worked out on every read, so reviews graded before it existed get it too.
+   */
+  function answerOf(r: ReviewRow, misconceptions: { claim: string }[]) {
+    const text = r.explanation || explanationOf(parts(r.spokenParts), r.typed, sketchesOf(r.sketchParts));
+    const withEvidence = r.checklist.points.flatMap((p) => {
+      const evidence = r.results.find((x) => x.pointId === p.id)?.evidence;
+      return evidence ? [{ pointId: p.id, evidence }] : [];
+    });
+    const found = answerSpans(text, [...withEvidence.map((x) => x.evidence), ...misconceptions.map((m) => m.claim)]);
+    const spans = [
+      ...withEvidence.flatMap((x, i) => found.quotes[i].map((at) => ({ kind: "point" as const, pointId: x.pointId, ...at }))),
+      ...misconceptions.flatMap((_, i) => found.quotes[withEvidence.length + i].map((at) => ({ kind: "claim" as const, index: i, ...at }))),
+    ].sort((a, b) => a.start - b.start || b.end - a.end);
+    return { text, spans, uncovered: found.uncovered };
   }
 
   async function loadReview(db: PrismaClient, id: number) {

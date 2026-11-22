@@ -32,6 +32,7 @@ type Review = {
     score: number; depth: string; outcome: string; stageBefore: number; stageAfter: number; nextDueDate: string;
     misconceptions: { claim: string; correction: string }[];
     points: { id: number; code: string; label: string; tier: number; status: string | null; evidence: string | null; leftOut: boolean }[];
+    answer: { text: string; spans: (({ kind: "point"; pointId: number } | { kind: "claim"; index: number }) & { start: number; end: number })[]; uncovered: { start: number; end: number }[] };
   };
 };
 
@@ -163,6 +164,15 @@ suite("recall", () => {
     expect(status).toEqual({ c1: "ACCURATE", c2: "ACCURATE", c3: "ACCURATE", c4: "MISSED", c5: "MISSED", c6: "MISSED" });
     expect(r.result!.points.find((p) => p.code === "c1")!.evidence).toBe("Definition");
     expect(r.result!.misconceptions).toEqual([{ claim: "Wrong: it runs on a web worker.", correction: "That is not right." }]);
+    // The graded text comes along with where each quote is in it, so the answer can be shown next to the checklist.
+    const answer = r.result!.answer;
+    const text = (x: { start: number; end: number }) => answer.text.slice(x.start, x.end);
+    expect(answer.text).toContain("The mechanism is the core.");
+    const c1 = r.result!.points.find((p) => p.code === "c1")!;
+    expect(answer.spans).toContainEqual(expect.objectContaining({ kind: "point", pointId: c1.id }));
+    expect(answer.spans.filter((x) => x.kind === "point" && x.pointId === c1.id).map(text)).toEqual(["Definition"]);
+    expect(answer.spans.filter((x) => x.kind === "claim").map(text)).toEqual(["Wrong: it runs on a web worker"]);
+    expect(answer.spans.map((x) => x.start)).toEqual([...answer.spans.map((x) => x.start)].sort((a, b) => a - b));
     // Tiers 1–2 only (tier 3 decides depth): 4 of 8 weight = 0.5, minus 0.15 for the misconception: a lapse; stage 0 → 1, due the next day.
     expect(r.result!.score).toBeCloseTo(4 / 8 - 0.15, 3);
     expect(r.result).toMatchObject({ depth: "FOUNDATIONAL", outcome: "LAPSE", stageBefore: 0, stageAfter: 1, nextDueDate: "2026-11-22" });
