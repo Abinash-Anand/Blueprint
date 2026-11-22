@@ -230,6 +230,28 @@ The options as they were put:
 - **Tests:** backend 356, including a scoped transaction seeing one city, re-planning one city leaving another
   untouched, and two first requests at once re-planning once.
 
+## 5c. Step 4 results: the screens (22 Nov 2026)
+
+- **Today:**
+  - after a re-plan that moved tasks, one line says what moved, why, and what it did to the projected finish, for
+    example "The plan moved 456 tasks to fit your new study times. Projected finish 18 Aug (6 days later).";
+  - it stays until "Got it", and which change was seen is kept per city in the browser only;
+  - "Move all forward" is gone, because the plan does it each day. What stays carried over says why: pinned, or no
+    room yet;
+  - a study day with nothing planned says "Nothing planned today: you're ahead".
+- **Task rows:** a pinned task shows "Pinned" and an Unpin button, and moving a task says that moving pins it.
+- **Revision:** "Today has time for N recalls", from the day's time rather than a fixed limit.
+- **Progress:** the forecast explains its finish, and names the last change.
+- **Found in the browser check, fixed:**
+  - **Start-up recall planning took the first re-plan silently.** It re-planned every city under RECALL, which is
+    not recorded, so the day's re-plan found nothing to move and no notice showed. Recall syncing now re-plans only
+    when a recall task came or went.
+  - **A recall due today could stick on a rest day.** A new recall task due today or earlier was parked on today, and
+    today's open tasks never move. It is now parked on the day before, so it joins today only if today has time.
+  - **A failing start-up job stopped the server.** It is now logged instead.
+- **Tests:** backend 356, frontend 264. Checked in the dev app at desktop and phone width: the notice, a pin and
+  unpin, a study-time change and back (456 moved out, 455 back, finish +6 then −6 days), and the forecast line.
+
 ## 6. Testing
 
 - **Unit (pure):**

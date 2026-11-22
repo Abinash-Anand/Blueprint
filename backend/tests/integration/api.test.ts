@@ -147,6 +147,10 @@ suite("Engineering City API", () => {
     const missed = ((await asUser(app, H).get("/api/tasks?from=2026-11-17&to=2026-11-18")).body as T[]).filter((x) => x.status === "TODO");
     expect(missed.length).toBeGreaterThan(0);
     clock.date = "2026-11-19"; // two days later; 17–18 Nov mostly unfinished
+    // A server start plans recalls first; with no recall task coming or going, it leaves the missed work to the day's
+    // own re-plan, which records what it moved.
+    await (app.locals.recall as { planAll: () => Promise<number> }).planAll();
+    expect((await prisma.task.count({ where: { id: { in: missed.map((m) => m.id) }, scheduledDate: { lt: new Date("2026-11-19T00:00:00Z") } } }))).toBe(missed.length);
 
     // The first request of the day re-plans: nothing is left carried over, and every missed task keeps its original date.
     expect((await asUser(app, H).get("/api/today")).body.carriedOver).toEqual([]);

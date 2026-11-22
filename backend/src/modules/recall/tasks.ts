@@ -6,7 +6,7 @@
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { d2i, i2d } from "../../db.js";
-import type { ISODate } from "../../domain/dates.js";
+import { type ISODate, addDays } from "../../domain/dates.js";
 import { BULK_TX, replanIn } from "../schedule/replan.js";
 import { RULES } from "./rules.js";
 
@@ -19,9 +19,9 @@ const POSITION = 1000;
 
 /**
  * Brings the plan in line with the recall schedule (city-scoped client). Idempotent. Drops open tasks whose due date no
- * longer matches, adds one for each sub-topic now due without one, then re-plans from tomorrow (today's tasks stay), so
- * recalls and the new material they borrow time from fit together. Returns how many tasks it added. Works in the
- * caller's transaction, or its own.
+ * longer matches, adds one for each sub-topic now due without one, and when any came or went, re-plans from tomorrow
+ * (today's tasks stay), so recalls and the new material they borrow time from fit together. Returns how many tasks it
+ * added. Works in the caller's transaction, or its own.
  */
 export async function syncRecallTasks(db: Db, today: ISODate): Promise<number> {
   if ("$transaction" in db) return db.$transaction((tx) => syncRecallTasks(tx, today), BULK_TX);
@@ -33,23 +33,28 @@ export async function syncRecallTasks(db: Db, today: ISODate): Promise<number> {
     orderBy: [{ nextDueDate: "asc" }, { subtopicId: "asc" }],
   });
   let added = 0;
+  let dropped = 0;
   for (const s of states) {
     const due = s.nextDueDate ? d2i(s.nextDueDate) : null;
     const keep = s.tasks.find((t) => due !== null && d2i(t.originalDate) === due);
     const stale = s.tasks.filter((t) => t !== keep).map((t) => t.id);
-    if (stale.length) await tx.task.deleteMany({ where: { id: { in: stale } } });
+    if (stale.length) dropped += (await tx.task.deleteMany({ where: { id: { in: stale } } })).count;
     if (due === null || keep) continue;
     await tx.task.create({
       data: {
         title: `Recall: ${s.subtopic.name}`, kind: "REVISION", source: "REVISION", estimatedMinutes: RECALL_TASK_MINUTES,
         topicId: s.subtopic.topicId, subtopicId: s.subtopic.id, recallStateId: s.id,
-        // On its due date for now (today when overdue); the scheduler below gives it its day.
-        originalDate: i2d(due), scheduledDate: i2d(due < today ? today : due), position: POSITION,
+        // Due today or earlier: on the day before today until the scheduler below places it, as carried-over work that
+        // joins today only if today has time (today's own open tasks never move, so parking it on today would keep it
+        // there, even on a rest day). Due later: on its due date, which the scheduler may move later still.
+        originalDate: i2d(due), scheduledDate: i2d(due <= today ? addDays(today, -1) : due), position: POSITION,
       },
     });
     added++;
   }
-  await replanIn(tx, settings.cityId, today, "RECALL");
+  // Only when a recall task came or went: otherwise there is nothing new to fit, and the day's own re-plan (which tells
+  // the learner what moved) is left to place missed work. A silent re-plan here on start-up used to pre-empt it.
+  if (added || dropped) await replanIn(tx, settings.cityId, today, "RECALL");
   return added;
 }
 

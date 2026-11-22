@@ -226,6 +226,12 @@ textarea.inp{resize:vertical;min-height:54px;width:100%}
 .stage .st{justify-self:end;text-align:right}
 .stage .edit{grid-column:1/-1}
 
+/* A re-plan moved tasks (Today): one line, until dismissed */
+.plan-note{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:0 10px 10px 0;background:var(--paper);font-size:13.5px;line-height:1.5}
+.plan-note b{font-weight:600}
+.tag.pin{color:var(--ink);border-color:#bdb7ab}
+.task .form .hint{flex-basis:100%;font-size:12px;color:var(--muted)}
+
 .notice{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:#f6f4ef;font-size:13px;padding:9px 14px;border-radius:9px;z-index:40;box-shadow:0 10px 30px rgba(40,40,35,.18);display:flex;gap:10px;align-items:center}
 .notice button{border:0;background:none;color:#f6f4ef;opacity:.7;cursor:pointer;font-size:15px}
 .loading{display:grid;place-items:center;height:100%;color:var(--muted);font-size:14px;text-align:center;padding:20px}

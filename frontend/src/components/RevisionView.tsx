@@ -71,7 +71,7 @@ export function RevisionView() {
         <h2 className="g-lt">{h.due.length ? `${plural(h.due.length, "sub-topic")} to recall today` : "Nothing to recall today"}</h2>
         <p className="g-sub">
           Say or type everything you remember. The AI checks it against a checklist you see afterwards.
-          {" "}Up to {plural(h.limit, "review")} planned a day{h.doneToday ? ` · ${h.doneToday} done today${h.doneToday > h.limit ? `, ${h.doneToday - h.limit} extra` : ""}` : ""}.
+          {" "}Today has time for {plural(h.limit, "recall")}{h.doneToday ? ` · ${h.doneToday} done today${h.doneToday > h.limit ? `, ${h.doneToday - h.limit} extra` : ""}` : ""}.
         </p>
 
         <AiNotice h={h} onAccepted={() => void invalidate()} />
@@ -141,7 +141,7 @@ export function RevisionView() {
                     </li>
                   ))}
                 </ul>
-                <p className="g-foot">Today's limit is {plural(h.limit, "recall")}, so these wait for a lighter day. Open one to recall it now.</p>
+                <p className="g-foot">Today's time holds {plural(h.limit, "recall")}, so these wait for a day with room. Open one to recall it now.</p>
               </>
             )}
 

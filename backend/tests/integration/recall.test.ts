@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../../prisma/seed.js";
 import { createApp } from "../../src/app.js";
 import { cityScoped } from "../../src/lib/cityScope.js";
+import { syncRecallTasks } from "../../src/modules/recall/tasks.js";
 import { loadAuthConfig } from "../../src/config.js";
 import { TestClock } from "../../src/lib/clock.js";
 import { loadAiConfig } from "../../src/modules/ai/config.js";
@@ -354,6 +355,11 @@ suite("recall", () => {
     const prev = (await asUser(app, H).get("/api/week?date=2026-11-29").expect(200)).body.days as { date: string; recall: string[] }[];
     expect(prev.find((d) => d.date === "2026-11-29")!.recall).not.toContain(sub);
     expect(days.find((d) => d.date === "2026-11-30")!.recall).toContain(sub);
+    // Due on the rest day itself: a new task is not parked on the rest day, it goes to the next study day.
+    await prisma.task.deleteMany({ where: { subtopicId: subD, recallStateId: { not: null } } });
+    await syncRecallTasks(cityScoped(prisma, "engineering"), "2026-11-29");
+    const sunday = await prisma.task.findFirstOrThrow({ where: { subtopicId: subD, status: "TODO", recallStateId: { not: null } } });
+    expect([sunday.originalDate.toISOString().slice(0, 10), sunday.scheduledDate.toISOString().slice(0, 10)]).toEqual(["2026-11-29", "2026-11-30"]);
     await asUser(app, H).patch(`/api/subtopics/${subD}`).send({ completed: false }).expect(200);
     clock.date = "2026-11-25";
   });

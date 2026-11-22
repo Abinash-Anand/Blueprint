@@ -35,7 +35,7 @@ describe("Revision tab", () => {
   it("puts the next recall first, then what is due today, what waits for a free day, and the next two weeks", async () => {
     render(<RevisionView />);
     expect(await screen.findByRole("heading", { name: "2 sub-topics to recall today" })).toBeTruthy();
-    expect(screen.getByText(/Up to 3 reviews planned a day · 1 done today\./)).toBeTruthy();
+    expect(screen.getByText(/Today has time for 3 recalls · 1 done today\./)).toBeTruthy();
     const next = screen.getByRole("region", { name: "Up next" });
     expect(next.textContent).toMatch(/Subjects.*RxJS · Frontend · first recall/);
     expect(within(next).getByRole("button", { name: "Start recall" })).toBeTruthy();
@@ -69,7 +69,7 @@ describe("Revision tab", () => {
     home = { ...home, doneToday: 4 };
     try {
       render(<RevisionView />);
-      expect(await screen.findByText(/Up to 3 reviews planned a day · 4 done today, 1 extra\./)).toBeTruthy();
+      expect(await screen.findByText(/Today has time for 3 recalls · 4 done today, 1 extra\./)).toBeTruthy();
     } finally {
       home = saved;
     }

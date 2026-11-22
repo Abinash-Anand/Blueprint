@@ -1,17 +1,26 @@
 /** Progress and timeline (SRS §3.6–§3.7): only measurements that support a learning decision. */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { Forecast, Progress, RecallCoaching } from "../api/types";
+import type { Forecast, PlanChange, Progress, RecallCoaching } from "../api/types";
 import { INK, mix } from "../lib/color";
 import { dayMonth, hours1, monthName, pct, plural, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
 import { historyHash, openPage } from "../lib/nav";
 import { Loading, Stat } from "./ui";
 import { StatusBadge } from "./Status";
+import { changeText, finishText } from "./PlanNotice";
 
 
 export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number) => void }) {
-  const { progress: p, curriculum, districtById } = useAppData();
+  const { progress: p, curriculum, districtById, version } = useAppData();
+  const [change, setChange] = useState<PlanChange | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.planChanges().then((xs) => live && setChange(xs[0] ?? null), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [version]);
   if (!p || !curriculum) return <div className="view"><Loading /></div>;
 
   const h = p.hours;
@@ -48,7 +57,7 @@ export function ProgressView({ onOpenDistrict }: { onOpenDistrict: (idx: number)
           />
         </div>
 
-        {p.forecast && <ForecastView f={p.forecast} />}
+        {p.forecast && <ForecastView f={p.forecast} change={change} />}
 
         <div className="section">
           <h3>Districts · learned vs demonstrated</h3>
@@ -184,7 +193,7 @@ const vsPlan = (days: number) => {
 const yearDate = (iso: string) => `${dayMonth(iso)} ${iso.slice(0, 4)}`;
 
 /** The forecast (Blueprint relationship model): what the learner's week realistically achieves. Reported only. */
-export function ForecastView({ f }: { f: Forecast }) {
+export function ForecastView({ f, change }: { f: Forecast; change?: PlanChange | null }) {
   const recalls = f.revisionLoad.reduce((a, w) => a + w.recalls, 0);
   return (
     <div className="section">
@@ -209,7 +218,12 @@ export function ForecastView({ f }: { f: Forecast }) {
           detail={`${f.revisionLoad.map((w) => w.recalls).join(" · ")} a week, from the week of ${dayMonth(f.revisionLoad[0].weekStart)}`}
         />
       </div>
-      <div className="sub">Best case: every recall remembered; sub-topics not yet in recall add none. Due revision comes first in your week, and what does not fit in its revision time is taken from new material. Nothing is moved by this forecast.</div>
+      <div className="sub">
+        The projected finish is the last day of your plan as it stands: the plan is re-planned each day and whenever your
+        study time changes, and each stage keeps its start date. Due revision comes first in each day, and may take up to
+        half of its new-material time. Revision load is the best case: every recall remembered.
+        {change && <> Last change, {dayMonth(change.at.slice(0, 10))}: {changeText(change)} {finishText(change)}</>}
+      </div>
     </div>
   );
 }

@@ -16,8 +16,15 @@ const clock = systemClock(config.appToday);
 const aiConfig = loadAiConfig();
 const providers = createProviders(aiConfig);
 const app = createApp({ prisma, clock, ai: { config: aiConfig, providers }, authConfig: config.auth, trustProxy: config.trustProxy });
-void (app.locals.recall as RecallService).planAll().then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall tasks planned", count: n })));
-void (app.locals.recall as RecallService).resumeWaiting().then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall grading resumed", count: n })));
+// Start-up jobs: a failure is logged and the API keeps serving (an unhandled rejection would stop the process).
+const startupFailed = (job: string) => (e: unknown) =>
+  console.error(JSON.stringify({ level: "error", msg: `Start-up job failed: ${job}`, error: String((e as Error)?.message ?? e).slice(0, 300) }));
+void (app.locals.recall as RecallService).planAll()
+  .then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall tasks planned", count: n })))
+  .catch(startupFailed("recall planning"));
+void (app.locals.recall as RecallService).resumeWaiting()
+  .then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall grading resumed", count: n })))
+  .catch(startupFailed("resuming grading"));
 
 // Sessions and one-time tokens that have expired are removed on start (they are rejected anyway when used).
 void authService(prisma, config.auth, { send: async () => {} })
