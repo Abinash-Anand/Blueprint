@@ -36,6 +36,11 @@ const settingsBody = z
 export function scheduleRoutes(deps: Deps) {
   const svc = (req: Request) => scheduleService(req.db, () => deps.clock.today());
   const r = Router();
+  // The latest re-plans that moved tasks (docs/Scheduler-Phase2-Plan.md), newest first.
+  r.get("/schedule/plan-changes", async (req, res) => {
+    res.json(await svc(req).planChanges());
+  });
+
   r.get("/stages", async (req, res) => {
     res.json(await svc(req).listStages());
   });

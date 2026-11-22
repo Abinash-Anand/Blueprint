@@ -79,7 +79,7 @@ These become tests (section 6):
 | **Availability or allocation changes** (hours, study days, new-material share) | Right after the change, in the same transaction |
 | **Start date changes** | Right after, from the new start |
 | **A curriculum version is approved** | Right after (see 2.5) |
-| **A recall is graded** (its due date moves) | Recall tasks only, within the day rules above. New material is not re-flowed until the next daily run, so Today doesn't reshuffle after every recall |
+| **A recall is graded** (its due date moves) | A full re-plan from tomorrow, with no notice. Today's tasks never move, so Today doesn't reshuffle. (A recalls-only run was tried in step 3: with new material held in place, a city without revision time had no time to borrow, and a recall due on 22 Nov landed on 24 Dec.) |
 | **A topic is mastered** (its intervals grow) | Nothing extra: the next daily run uses the freed time |
 
 "Move all forward" goes away: the daily run does it, within capacity. The "Carried over" section on Today then only
@@ -201,6 +201,34 @@ The options as they were put:
 2. **Let a stage start early when its earlier work is done.** The scheduler fills the empty days, so most plans
    finish weeks earlier, close to today's forecast. But nearly every open task moves on the first run, and stage dates
    stop meaning much.
+
+## 5b. Step 3 results: wired in (22 Nov 2026)
+
+- **Migration `20261129090000_scheduler`** (additive):
+  - `Task.pinnedAt`, `Settings.replannedFor`, `Stage.weekdays` and `Stage.queue`, and the `PlanChange` table;
+  - stage weekdays and queues are filled from each city's applied curriculum. Engineering City's come from its
+    template, on the start-up seed.
+- **`schedule/replan.ts`:**
+  - loads a city, runs the pure scheduler, and writes only the dates that change, grouped by day;
+  - holds a per-city advisory lock for the transaction, and records a `PlanChange` when anything moved.
+- **Triggers:**
+  - the first request of a city's day (`dailyReplan`, checked again under the lock);
+  - weekly study time (AVAILABILITY) and stage dates (STAGES);
+  - "Move all forward", which now runs the scheduler (OVERDUE);
+  - a recall's due date (RECALL): a full re-plan from tomorrow with no notice. A recalls-only run was tried first: it
+    left a recall due on 22 Nov on 24 Dec in a city without revision time;
+  - curriculum changes remain step 5.
+- **Hand moves** pin a task (`pinned` on each task); `PATCH { pinned: false }` unpins it.
+- **Recall home:** its limit is now what fits today (revision time plus what may be borrowed, ÷ 8 min), and
+  "overdue" counts from the due date.
+- **Forecast:** its finish is the plan's last day of open new material.
+- **Checked on a copy** of the local data, restored from the 22 Nov backup, migrated and seeded as on a deploy:
+  - each city's daily re-plan matches the step 2 dry run, taking 23–117 ms;
+  - a second run moves nothing, and syncing recalls changes nothing;
+  - no day is over its time.
+  - One fix came from this check: a stage whose weekdays are not recorded yet never claims days from the others.
+- **Tests:** backend 356, including a scoped transaction seeing one city, re-planning one city leaving another
+  untouched, and two first requests at once re-planning once.
 
 ## 6. Testing
 

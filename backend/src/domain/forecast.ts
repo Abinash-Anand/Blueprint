@@ -8,6 +8,9 @@
  * new-material time, and the rest waits for the next study day. New material then fills what is left of the day's
  * new-material target (allocation). Every recall is assumed remembered (its stage goes up), so the forecast is the
  * best case for revision; sub-topics that are not yet in recall add no recall demand.
+ *
+ * Its projected finish is the plan's (docs/Scheduler-Phase2-Plan.md, 5a): the last day of the re-planned open work, as
+ * stage start dates hold later work in place. Without a plan (`plannedFinish` not given), the walk's own finish.
  */
 import { type ISODate, addDays, diffDays, isoWeekday, weekStart } from "./dates.js";
 import { dayBudget, emptyUse, newRoom, takeRecall } from "./scheduler.js";
@@ -31,6 +34,8 @@ export interface ForecastInput {
   gapFor: (stage: number) => number;
   /** The forecast looks this far ahead at most (default three years). */
   horizonDays?: number;
+  /** The last day of open new material in the re-planned plan (null: none open). */
+  plannedFinish?: ISODate | null;
 }
 
 export interface Forecast {
@@ -96,6 +101,7 @@ export function forecast(i: ForecastInput): Forecast {
     }
   }
 
+  if (i.plannedFinish !== undefined) finish = i.remainingNewMinutes <= 0 ? i.today : i.plannedFinish;
   const target = i.targetDate;
   const weeksToTarget = target && target >= i.today ? (diffDays(i.today, target) + 1) / 7 : null;
   return {

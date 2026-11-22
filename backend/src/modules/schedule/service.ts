@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { d2i, i2d } from "../../db.js";
 import { HttpError, notFound } from "../../lib/http.js";
 import type { ISODate } from "../../domain/dates.js";
-import { syncRecallTasks } from "../recall/tasks.js";
+import { BULK_TX, replanIn } from "./replan.js";
 
 export const stageInclude = { districts: { select: { id: true } } } satisfies Prisma.StageInclude;
 type StageRow = Prisma.StageGetPayload<{ include: typeof stageInclude }>;
@@ -69,6 +69,15 @@ export async function loadSettings(prisma: Db) {
 
 export function scheduleService(prisma: PrismaClient, today?: () => ISODate) {
   return {
+    /** The latest re-plans that moved tasks, newest first. */
+    async planChanges(limit = 5) {
+      const rows = await prisma.planChange.findMany({ orderBy: { at: "desc" }, take: limit });
+      return rows.map((r) => ({
+        at: r.at.toISOString(), reason: r.reason, moved: r.moved,
+        finishBefore: r.finishBefore ? d2i(r.finishBefore) : null, finishAfter: r.finishAfter ? d2i(r.finishAfter) : null,
+      }));
+    },
+
     async listStages() {
       const rows = await prisma.stage.findMany({ orderBy: { position: "asc" }, include: stageInclude });
       return rows.map(stageDTO);
@@ -83,7 +92,12 @@ export function scheduleService(prisma: PrismaClient, today?: () => ISODate) {
       if (start > end) throw new HttpError(400, "VALIDATION_ERROR", "startDate must not be after endDate");
       if (start < settings.journeyStart || end > settings.journeyEnd)
         throw new HttpError(400, "VALIDATION_ERROR", `Stage dates must lie within ${settings.journeyStart} – ${settings.journeyEnd}`);
-      const u = await prisma.stage.update({ where: { id }, data: { startDate: i2d(start), endDate: i2d(end) }, include: stageInclude });
+      const u = await prisma.$transaction(async (tx) => {
+        const row = await tx.stage.update({ where: { id }, data: { startDate: i2d(start), endDate: i2d(end) }, include: stageInclude });
+        // The stage's work may start on other days now.
+        if (today) await replanIn(tx, s.cityId, today(), "STAGES");
+        return row;
+      }, BULK_TX);
       return stageDTO(u);
     },
 
@@ -110,12 +124,10 @@ export function scheduleService(prisma: PrismaClient, today?: () => ISODate) {
             })]
           : []),
       ]);
-      // Study days and the daily recall limit decide where recalls are planned: open recall tasks are planned again.
-      if (today) {
-        await prisma.$transaction(async (tx) => {
-          await tx.task.deleteMany({ where: { recallStateId: { not: null }, status: "TODO" } });
-          await syncRecallTasks(tx, today());
-        });
+      // Study time decides where new material and recalls go: the plan is re-planned from today.
+      if (today && body.weeklyTargets) {
+        const city = await prisma.settings.findFirst({ select: { cityId: true } });
+        if (city) await prisma.$transaction((tx) => replanIn(tx, city.cityId, today(), "AVAILABILITY"), BULK_TX);
       }
       return this.getSettings();
     },

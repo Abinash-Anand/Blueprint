@@ -1,9 +1,8 @@
 import type { Prisma, PrismaClient, TaskKind, TaskStatus } from "@prisma/client";
 import { d2i, i2d } from "../../db.js";
-import { placeOverdue } from "../../domain/reschedule.js";
 import type { Clock } from "../../lib/clock.js";
 import { HttpError, notFound } from "../../lib/http.js";
-import { loadTargets } from "../schedule/service.js";
+import { BULK_TX, replanIn } from "../schedule/replan.js";
 import { taskDTO, taskInclude, taskOrder } from "./mapper.js";
 
 export interface TaskFilter {
@@ -29,10 +28,10 @@ export interface TaskPatch {
   estimatedMinutes?: number;
   scheduledDate?: string;
   status?: TaskStatus;
+  /** false: the scheduler may move it again. A move by hand pins it. */
+  pinned?: boolean;
 }
 
-/** Bulk moves can touch hundreds of rows after a long break; allow more than Prisma's 5 s default. */
-const BULK_TX = { maxWait: 10_000, timeout: 60_000 };
 
 export function taskService(prisma: PrismaClient, clock: Clock) {
   const one = async (id: number) => {
@@ -92,7 +91,9 @@ export function taskService(prisma: PrismaClient, clock: Clock) {
         // FR-CAL-06: the original date is kept; only the scheduled date moves.
         data.scheduledDate = i2d(p.scheduledDate);
         data.rescheduleCount = { increment: 1 };
-      }
+        // Moved by hand: the scheduler leaves it there until it is unpinned.
+        data.pinnedAt = clock.now();
+      } else if (p.pinned === false) data.pinnedAt = null;
       // A revision task's status follows its recall (checked → done): it cannot be ticked, skipped or reopened by hand.
       if (t.source === "REVISION" && p.status !== undefined && p.status !== t.status) {
         if (p.status === "DONE")
@@ -119,37 +120,15 @@ export function taskService(prisma: PrismaClient, clock: Clock) {
       await prisma.task.delete({ where: { id } });
     },
 
-    /** FR-TODAY-10: move every overdue task forward, in one transaction. */
+    /**
+     * FR-TODAY-10, now the scheduler: overdue work (and everything after it) is placed again from today, within the
+     * learner's time. The same happens on its own at the start of each day.
+     */
     async rescheduleOverdue() {
-      const today = clock.today();
-      const targets = await loadTargets(prisma);
-      return prisma.$transaction(async (tx) => {
-        // Learning tasks, oldest first, within the daily target.
-        const overdue = await tx.task.findMany({
-          where: { status: "TODO", scheduledDate: { lt: i2d(today) }, source: { not: "REVISION" } },
-          select: { id: true, estimatedMinutes: true, scheduledDate: true, originalDate: true, position: true },
-        });
-        if (overdue.length === 0) return { moved: [] };
-        const future = await tx.task.groupBy({
-          by: ["scheduledDate"],
-          where: { status: { not: "SKIPPED" }, scheduledDate: { gte: i2d(today) } },
-          _sum: { estimatedMinutes: true },
-        });
-        const load = new Map(future.map((f) => [d2i(f.scheduledDate), f._sum.estimatedMinutes ?? 0]));
-        const moves = placeOverdue(
-          overdue.map((o) => ({
-            id: o.id, minutes: o.estimatedMinutes, scheduledDate: d2i(o.scheduledDate),
-            originalDate: d2i(o.originalDate), position: o.position,
-          })),
-          load,
-          targets,
-          today,
-        );
-        for (const m of moves) {
-          await tx.task.update({ where: { id: m.id }, data: { scheduledDate: i2d(m.to), rescheduleCount: { increment: 1 } } });
-        }
-        return { moved: moves };
-      }, BULK_TX);
+      const city = await prisma.settings.findFirst({ select: { cityId: true } });
+      if (!city) return { moved: [] };
+      const r = await prisma.$transaction((tx) => replanIn(tx, city.cityId, clock.today(), "OVERDUE"), BULK_TX);
+      return { moved: r.moves };
     },
   };
 }

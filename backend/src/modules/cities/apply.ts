@@ -82,8 +82,12 @@ export async function applyCurriculum(db: PrismaClient, doc: CurriculumDocument,
   for (const [i, s] of doc.stages.entries()) {
     await db.stage.upsert({
       where: { id: id(s.key) },
-      update: { name: s.name, kind: s.kind, position: i, districts: { set: s.districts.map((d) => ({ id: id(d) })) } },
-      create: { id: id(s.key), position: i, name: s.name, kind: s.kind, startDate: toDate(s.start), endDate: toDate(s.end), districts: { connect: s.districts.map((d) => ({ id: id(d) })) } },
+      // Study weekdays and queue are the curriculum's (the scheduler re-plans by them); dates stay as the learner set them.
+      update: { name: s.name, kind: s.kind, position: i, weekdays: s.weekdays, queue: s.queue, districts: { set: s.districts.map((d) => ({ id: id(d) })) } },
+      create: {
+        id: id(s.key), position: i, name: s.name, kind: s.kind, startDate: toDate(s.start), endDate: toDate(s.end), weekdays: s.weekdays, queue: s.queue,
+        districts: { connect: s.districts.map((d) => ({ id: id(d) })) },
+      },
     });
   }
   if (!(await db.settings.findFirst())) {

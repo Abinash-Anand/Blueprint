@@ -38,6 +38,8 @@ export function taskDTO(t: TaskRow, today: ISODate) {
     notes: t.notes,
     kind: t.kind,
     status: t.status,
+    /** Moved by hand: the scheduler leaves it where it is. */
+    pinned: t.pinnedAt !== null,
     source: t.source,
     estimatedMinutes: t.estimatedMinutes,
     loggedMinutes: t.sessions.reduce((a, s) => a + s.minutes, 0),

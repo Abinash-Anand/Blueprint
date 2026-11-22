@@ -4,6 +4,7 @@ import { type AuthConfig, loadAuthConfig } from "./config.js";
 import { presentationCatalog } from "./domain/presentation.js";
 import type { Clock } from "./lib/clock.js";
 import { authenticate, requireCity, requireUser } from "./lib/context.js";
+import { dailyReplan } from "./modules/schedule/replan.js";
 import { requestGuardFor } from "./lib/guard.js";
 import { errorHandler, notFoundRoute, requestLog } from "./lib/http.js";
 import { AI_DISABLED, type AiConfig } from "./modules/ai/config.js";
@@ -103,7 +104,7 @@ export function createApp(input: AppInput) {
 
   // Everything below works inside one of the signed-in user's cities (X-City-Id), through a city-scoped client.
   const city = Router();
-  city.use(requireUser, requireCity(deps.prisma));
+  city.use(requireUser, requireCity(deps.prisma), dailyReplan(deps.clock));
   city.use(curriculumRoutes(deps));
   city.use(taskRoutes(deps));
   city.use(sessionRoutes(deps));
