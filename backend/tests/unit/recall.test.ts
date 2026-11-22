@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type PointStatus, type ScoredPoint, GradeError, RULES, checklistProblems, dailyLimit, depthOf, gapFor, nextSchedule, outcomeOf, recallScore,
-  answerSpans, quoteMatches, tierShares, verifyStatements, umbrellaPoints, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
+  answerSpans, checkEvidence, codeOnly, quoteMatches, tierShares, verifyStatements, umbrellaPoints, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
 } from "../../src/modules/recall/rules.js";
 
 const pts = (...xs: [number, PointStatus][]): ScoredPoint[] => xs.map(([tier, status]) => ({ tier, weight: tier, status }));
@@ -301,6 +301,57 @@ describe("phase 2: cued reasoning and progress over time", () => {
   });
 });
 
+describe("evidence that does not show the point", () => {
+  // A real code-only recall (event and two-way binding): it said nothing about what binding is or why it exists.
+  const code = `<button (click)="save()">Save</button>
+<input [(ngModel)]="name">
+<input (keyup.enter)="search($event.target.value)">
+// component
+name = '';
+save() { console.log(this.name); }
+// imports: [FormsModule]`;
+  const p = (code: string, tier: number, status: PointStatus, evidence: string | null) => ({ code, tier, status, evidence });
+
+  it("tells code from an explanation", () => {
+    expect(codeOnly('<button (click)="save()">Save</button>')).toBe(true);
+    expect(codeOnly("// imports: [FormsModule]")).toBe(true);
+    expect(codeOnly("you bind (click) to a method so the template reacts to the user")).toBe(false);
+    expect(codeOnly("ngOnInit runs once after the inputs are set")).toBe(false);
+  });
+
+  it("counts a definition or purpose shown only by code, in an answer that is code, as partly shown", () => {
+    const { points, changed } = checkEvidence([
+      p("c1", 1, "ACCURATE", '<button (click)="save()">Save</button>'), // purpose: code shows how, not why
+      p("c3", 2, "ACCURATE", '<button (click)="save()">Save</button>'), // syntax: code shows it
+      p("c5", 2, "ACCURATE", "// imports: [FormsModule]"),
+    ], [], code);
+    expect(points.map((x) => x.status)).toEqual(["PARTIAL", "ACCURATE", "ACCURATE"]);
+    expect(changed).toBe(1);
+    // An answer that explains in words keeps a code quote's credit: the grader may quote code where the words also are.
+    const explained = `${code}\nEvent binding lets the template listen for user actions and call a method in the component, so the page reacts.`;
+    expect(checkEvidence([p("c1", 1, "ACCURATE", '<button (click)="save()">Save</button>')], [], explained).points[0].status).toBe("ACCURATE");
+  });
+
+  it("drops a point one step when its quote is a confirmed wrong statement", () => {
+    const said = "A Subject is both an observable and an observer. A Subject replays every old value to new subscribers. It multicasts to all subscribers at once.";
+    const wrong = [{ claim: "A Subject replays every old value to new subscribers." }];
+    const { points, changed } = checkEvidence([
+      p("c1", 1, "ACCURATE", "A Subject is both an observable and an observer"),
+      p("c2", 3, "PARTIAL", "replays every old value to new subscribers"), // the wrong claim was its only evidence
+      p("c3", 2, "ACCURATE", "Subject replays every old value to new subscribers. It multicasts to all subscribers"),
+      p("c4", 2, "MISSED", null),
+    ], wrong, said);
+    expect(points).toEqual([
+      { code: "c1", status: "ACCURATE", evidence: "A Subject is both an observable and an observer" },
+      { code: "c2", status: "MISSED", evidence: null },
+      { code: "c3", status: "PARTIAL", evidence: "Subject replays every old value to new subscribers. It multicasts to all subscribers" },
+      { code: "c4", status: "MISSED", evidence: null },
+    ]);
+    expect(changed).toBe(2);
+    expect(checkEvidence([p("c2", 3, "PARTIAL", "replays every old value to new subscribers")], [], said).points[0].status).toBe("PARTIAL");
+  });
+});
+
 describe("statements (shown, never graded)", () => {
   it("needs exactly one non-empty statement for every point", () => {
     expect([...verifyStatements([{ code: "c1", statement: "  A Subject is\n both. " }, { code: "c2", statement: "It multicasts." }], ["c1", "c2"])])
@@ -313,6 +364,18 @@ describe("statements (shown, never graded)", () => {
 });
 
 describe("prompts", () => {
+
+  it("asks the follow-up about basics before edge cases, and drills a blind spot", async () => {
+    const { probePrompt, PROBE_PROMPT_VERSION } = await import("../../src/modules/recall/prompts.js");
+    expect(PROBE_PROMPT_VERSION).toBe("recall-probe-v2");
+    const { system, user } = probePrompt({ district: "D", topic: "T", subtopic: "S", language: "en" }, [
+      { label: "Definition", description: "what it is", tier: 1, status: "MISSED", missedInARow: 3 },
+      { label: "Pitfalls", description: "late subscribers", tier: 3, status: "MISSED", missedInARow: 1 },
+    ], []);
+    expect(system).toContain("Never open with an edge case while a basic point is missing.");
+    expect(system).toContain("make one question a short, direct drill on exactly that point");
+    expect(user).toContain("MISSED, missed 3 reviews in a row (tier 1): Definition. what it is\nMISSED (tier 3): Pitfalls. late subscribers");
+  });
 
   it("keeps the grading prompt at v4: statements are a call of their own", async () => {
     const { gradeJsonSchema, GRADE_PROMPT_VERSION } = await import("../../src/modules/recall/prompts.js");

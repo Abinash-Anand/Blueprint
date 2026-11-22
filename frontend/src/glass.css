@@ -199,6 +199,8 @@ button.g-row:disabled{cursor:not-allowed;opacity:.6}
 .g-dots .g-c{min-width:24px;height:24px;padding:0;border-radius:7px}
 .g-only-phone{display:none}
 
+.rc-nopaste{margin:6px 4px 0}
+
 /* gap-first results: your words next to the checklist, one row per point; stacked in a narrow container */
 .cmp{container:cmp / inline-size}
 .cmp-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px}

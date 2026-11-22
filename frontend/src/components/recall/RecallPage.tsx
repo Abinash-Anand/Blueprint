@@ -5,7 +5,7 @@
  * (never changes the score). Then the verdict. The learner never grades themselves; the checklist appears only with
  * the results.
  */
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type ClipboardEvent, type DragEvent, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api/client";
 import type { AiStatus, RecallPointView, RecallReview } from "../../api/types";
 import { dayMonth, plural } from "../../lib/format";
@@ -122,6 +122,20 @@ export function RecallPage({ subtopicId, backLabel = "Revision", onClose }: { su
   );
 }
 
+/**
+ * Recall is from memory: text cannot be pasted or dropped into an answer (a pasted checklist from an earlier review
+ * scored 100 %). Typing, dictation and the recorder still work. Returns the handlers and the note to show once tried.
+ */
+function useNoPaste() {
+  const [tried, setTried] = useState(false);
+  const stop = (e: ClipboardEvent | DragEvent) => {
+    e.preventDefault();
+    setTried(true);
+  };
+  const note = tried ? <p className="g-small rc-nopaste" role="status">Recall is from memory, so pasting is off here. Type it, or speak instead.</p> : null;
+  return { handlers: { onPaste: stop, onDrop: stop }, note };
+}
+
 const Ring = ({ score, small }: { score: number; small?: boolean }) => (
   <div className={`g-ring${small ? " sm" : ""}`} style={{ "--p": `${Math.round(score * 100)}%` } as CSSProperties} role="img" aria-label={`${Math.round(score * 100)} percent recalled`}>
     <div><b>{Math.round(score * 100)} %</b>{!small && <span>recalled</span>}</div>
@@ -134,6 +148,7 @@ function BlankSlate({ r, ai, busy, run, error }: { r: RecallReview; ai: AiStatus
   const [typed, setTyped] = useState(r.typed);
   const [saving, setSaving] = useState(false);
   const [prompts, setPrompts] = useState(false);
+  const noPaste = useNoPaste();
   const last = useRef(r.typed);
   // Typing is saved as it goes, so nothing is lost if the page closes.
   useEffect(() => {
@@ -209,7 +224,8 @@ function BlankSlate({ r, ai, busy, run, error }: { r: RecallReview; ai: AiStatus
         )}
 
         <label className="g-cap" htmlFor="rc-typed">Type what you remember</label>
-        <textarea id="rc-typed" className="g-ta" maxLength={20000} placeholder="Start anywhere…" value={typed} onChange={(e) => setTyped(e.target.value)} />
+        <textarea id="rc-typed" className="g-ta" maxLength={20000} placeholder="Start anywhere…" value={typed} onChange={(e) => setTyped(e.target.value)} {...noPaste.handlers} />
+        {noPaste.note}
 
         {aiOn && (
           <div className="g-pills" style={{ marginTop: 10 }}>
@@ -389,6 +405,7 @@ function Results({ r, busy, run, error, onFollowup, onVerdict }: {
 function FollowUp({ r, ai, busy, run, error }: { r: RecallReview; ai: AiStatus | null; busy: boolean; run: Run; error: string | null }) {
   const res = r.result!;
   const [answer, setAnswer] = useState("");
+  const noPaste = useNoPaste();
   const missed = res.points.filter((p) => !p.leftOut && p.status === "MISSED");
   const gapPoints = res.points.filter((p) => !p.leftOut && (p.status === "MISSED" || p.status === "PARTIAL"));
   const recalled = res.points.filter((p) => p.recalledWhenAsked);
@@ -455,7 +472,8 @@ function FollowUp({ r, ai, busy, run, error }: { r: RecallReview; ai: AiStatus |
           <>
             <p className="g-sub">Answer the way you would in a design review. Take your time.</p>
             <label className="g-cap" htmlFor="rc-answer">Your answer to the follow-up</label>
-            <textarea id="rc-answer" className="g-ta short" maxLength={20000} placeholder="Think it through, then answer…" value={answer} onChange={(e) => setAnswer(e.target.value)} />
+            <textarea id="rc-answer" className="g-ta short" maxLength={20000} placeholder="Think it through, then answer…" value={answer} onChange={(e) => setAnswer(e.target.value)} {...noPaste.handlers} />
+            {noPaste.note}
             {ai?.enabled && ai.consented && canRecord() && (
               <div className="g-pills" style={{ marginTop: 10 }}>
                 <Recorder maxSeconds={ai.maxRecordingSeconds} maxBytes={ai.maxAudioBytes} label="Speak instead" workingText="Writing down your answer…"

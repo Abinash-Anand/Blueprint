@@ -294,7 +294,11 @@ export const confirmedMisconceptions = <M>(items: M[], reply: z.infer<typeof Mis
 
 /* ---------------- phase 2: the senior engineer ---------------- */
 
-export const PROBE_PROMPT_VERSION = "recall-probe-v1";
+/**
+ * v2 (28 Nov 2026): basics first (a follow-up opened with an edge case while the definition was missing), and a short,
+ * direct drill on a point missed several reviews in a row.
+ */
+export const PROBE_PROMPT_VERSION = "recall-probe-v2";
 export const VERDICT_PROMPT_VERSION = "recall-verdict-v1";
 /** v3 (21 Nov 2026): scores reach the note as percentages and points, depth as words (notes said "0 to 0.8"). */
 export const NARRATIVE_PROMPT_VERSION = "recall-narrative-v3";
@@ -309,18 +313,19 @@ export const probeJsonSchema = {
 export const ProbeReply = z.object({ questions: z.array(z.string().min(5).max(600)).min(1).max(2) });
 
 /** The follow-up probe (§3.4): 1–2 sharp questions about what the learner missed, never the answer itself. */
-export function probePrompt(c: Context, gaps: { label: string; description: string; tier: number; status: string }[], misconceptions: { claim: string; correction: string }[]) {
+export function probePrompt(c: Context, gaps: { label: string; description: string; tier: number; status: string; missedInARow?: number }[], misconceptions: { claim: string; correction: string }[]) {
   const system = [
     "You are a senior engineer in a design review, probing what a learner could not recall on their own about one sub-topic of their curriculum.",
     "Ask one or two sharp questions that make the learner reason their way to the missing ideas: a concrete scenario, a design decision, a bug to explain, or a trade-off to weigh, in the setting of the sub-topic, topic and district given.",
-    "Aim first at the missed points with the highest tier (pitfalls and how it works), then at the partly recalled ones, then at any misconception.",
+    "Aim first at the missed points with the lowest tier (tier 1: what it is and why it exists), then how it works (tier 2), then pitfalls and trade-offs (tier 3); then the partly recalled ones; then any misconception. Never open with an edge case while a basic point is missing.",
+    "A point missed several reviews in a row is a blind spot: make one question a short, direct drill on exactly that point, still without giving away the answer.",
     "Do not ask for textbook definitions, do not name or describe the missing points, and do not give away the answer in the question.",
     `Write in ${LANGUAGE[c.language]}. Each question on one line, at most two sentences.`,
   ].join("\n");
   const user = [
     tag("stage", "recall-probe"),
     where(c),
-    tag("gaps", gaps.map((g) => `${g.status} (tier ${g.tier}): ${clean(g.label)}. ${clean(g.description)}`).join("\n")),
+    tag("gaps", gaps.map((g) => `${g.status}${(g.missedInARow ?? 0) > 1 ? `, missed ${g.missedInARow} reviews in a row` : ""} (tier ${g.tier}): ${clean(g.label)}. ${clean(g.description)}`).join("\n")),
     tag("misconceptions", misconceptions.map((m) => `${clean(m.claim)} → ${clean(m.correction)}`).join("\n") || "(none)"),
     "Write the follow-up questions.",
   ].join("\n");
