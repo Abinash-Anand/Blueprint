@@ -252,6 +252,33 @@ The options as they were put:
 - **Tests:** backend 356, frontend 264. Checked in the dev app at desktop and phone width: the notice, a pin and
   unpin, a study-time change and back (456 moved out, 455 back, finish +6 then −6 days), and the forecast line.
 
+## 5d. Step 5 results: curriculum changes (22 Nov 2026)
+
+- **`domain/curriculumPlan.ts`** (pure) decides what an approved version does to an active city's plan tasks:
+  - a planned topic without tasks gets the planner's study and practice chunks, placed right after the previous
+    topic of its queue;
+  - a topic with new hours has its open work resized to the new total less what is done: excess comes off the end,
+    and more time becomes "(added time)" practice right after it;
+  - finished and skipped tasks never change.
+- **Order without renumbering:** new tasks take the original date and position of the task they follow, with higher
+  ids. The scheduler orders by (original date, position, id), so they land right after it, and no existing task's
+  history changes.
+- **`cities/planUpdate.ts`** applies the operations and re-plans in one transaction under the city's lock, recorded
+  as CURRICULUM. Today's notice reads "…to fit the curriculum changes you approved".
+- **Found and fixed:** a version that inserted a topic in the middle of a district failed with a conflict, because
+  topic and district positions are unique and were written in the new order over rows that had not moved yet. That
+  bug predates phase 2; versions had only ever removed topics. Existing positions are now parked before the new
+  ones are written.
+- **Checked on a copy** of the local data, migrated and seeded:
+  - re-approving each city's current curriculum creates, removes and resizes nothing (12 cities, 18–75 planned
+    topics each);
+  - the start-up seed keeps Engineering City's district and topic order exactly;
+  - no other city's positions change.
+- **Not covered:** changing a topic's sub-topics with the same hours keeps its tasks as they are, and moving a
+  topic to another queue does not move its tasks.
+- **Tests:** backend 364 (7 for the pure part; an approval that adds a topic, gives one more hours and one fewer),
+  frontend 264.
+
 ## 6. Testing
 
 - **Unit (pure):**

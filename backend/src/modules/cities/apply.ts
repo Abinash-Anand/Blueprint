@@ -34,6 +34,9 @@ export function engineeringTemplate(): CurriculumDocument {
   };
 }
 
+/** Added to (subtracted from) existing positions while a version is written, so no new position collides. */
+const PARKED = 1_000_000;
+
 export const TEMPLATES = {
   engineering: {
     id: "engineering",
@@ -50,7 +53,10 @@ export type TemplateId = keyof typeof TEMPLATES;
  */
 export async function applyCurriculum(db: PrismaClient, doc: CurriculumDocument, prefix: string, today: ISODate, log: (m: string) => void = () => {}) {
   const id = (k: string) => `${prefix}${k}`;
-  // 1. Curriculum
+  // 1. Curriculum. Positions are unique within the city (districts) and within a district (topics): existing rows move
+  // out of the way first, so a version that inserts or reorders never writes a position a row still holds.
+  await db.district.updateMany({ data: { position: { decrement: PARKED } } });
+  await db.topic.updateMany({ data: { position: { decrement: PARKED } } });
   for (const [di, d] of doc.districts.entries()) {
     const district = {
       position: di, name: d.name, subtitle: d.subtitle, layer: d.layer, color: d.color.toLowerCase(),

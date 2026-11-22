@@ -219,6 +219,55 @@ suite("multi-user foundation", () => {
       const versions = (await asUser(app, B).get(`/api/cities/${bCity}/curriculum/versions`).expect(200)).body;
       expect(versions.map((v: { version: number; status: string }) => [v.version, v.status])).toEqual([[3, "APPLIED"], [2, "REJECTED"], [1, "APPLIED"]]);
     }, 60_000);
+
+    it("makes the plan follow an approved version: a new topic in its place, more hours, fewer hours", async () => {
+      const own = bWith(bCity);
+      const applied = (await prisma.curriculumVersion.findFirstOrThrow({ where: { cityId: bCity, status: "APPLIED" }, orderBy: { version: "desc" } })).content as unknown as ReturnType<typeof engineeringTemplate>;
+      const queue = Object.entries(applied.queues).find(([, ks]) => ks.includes("fe.ts"))!;
+      const [qName, keys] = queue;
+      const at = keys.indexOf("fe.ts");
+      const grow = keys[at + 1];
+      const all = applied.districts.flatMap((d) => d.topics);
+      const shrink = keys.slice(at + 2).map((k) => all.find((t) => t.key === k)!).find((t) => t.hours >= 8)!;
+      const ts = all.find((t) => t.key === "fe.ts")!;
+      const extra = { ...ts, key: "fe.extra", name: "Extra TypeScript practice", hours: 3, subtopics: ["Extra one", "Extra two"], dependsOn: [] as string[], prompts: [] as typeof ts.prompts };
+      const next = {
+        ...applied,
+        districts: applied.districts.map((d) => ({
+          ...d,
+          topics: d.topics.flatMap((t) => t.key === "fe.ts" ? [t, extra]
+            : t.key === grow ? [{ ...t, hours: t.hours + 2 }] : t.key === shrink.key ? [{ ...t, hours: t.hours - 1 }] : [t]),
+        })),
+        queues: { ...applied.queues, [qName]: [...keys.slice(0, at + 1), "fe.extra", ...keys.slice(at + 1)] },
+      };
+      const p = await asUser(app, B).post(`/api/cities/${bCity}/curriculum/proposals`).send({ source: "IMPORT", document: next }).expect(201);
+      expect(p.body.changes.added.topics).toEqual(["fe.extra"]);
+      const ok = await asUser(app, B).post(`/api/cities/${bCity}/curriculum/versions/${p.body.version}/approve`).send({});
+      expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+
+      type Row = { id: number; topicId: string | null; status: string; title: string; estimatedMinutes: number; originalDate: Date; position: number; scheduledDate: Date };
+      const of = async (key: string) => (await prisma.task.findMany({ where: { cityId: bCity, topicId: `${bCity}.${key}`, source: "PLAN" } })) as Row[];
+      const key = (t: Row) => `${t.originalDate.toISOString().slice(0, 10)}|${String(t.position + 10_000).padStart(6, "0")}|${String(t.id).padStart(9, "0")}`;
+      const minutes = (xs: Row[]) => xs.filter((t) => t.status !== "SKIPPED").reduce((a, t) => a + t.estimatedMinutes, 0);
+      // The new topic: its 3 hours, ordered between TypeScript and the topic after it, and scheduled between them too.
+      const [extraTasks, tsTasks, growTasks] = [await of("fe.extra"), await of("fe.ts"), await of(grow)];
+      expect(minutes(extraTasks)).toBe(180);
+      expect(extraTasks.filter((t) => t.title.startsWith("Practice: ")).length).toBeGreaterThan(0);
+      const lastTs = [...tsTasks].sort((a, b) => key(a).localeCompare(key(b))).at(-1)!;
+      const firstGrow = [...growTasks].sort((a, b) => key(a).localeCompare(key(b)))[0];
+      for (const t of extraTasks) expect([key(t) > key(lastTs), key(t) < key(firstGrow)]).toEqual([true, true]);
+      const day = (t: Row) => t.scheduledDate.toISOString().slice(0, 10);
+      const open = (xs: Row[]) => xs.filter((t) => t.status === "TODO").map(day).sort();
+      expect(open(extraTasks)[0] >= open(tsTasks).at(-1)!).toBe(true);
+      expect(open(extraTasks).at(-1)! <= open(growTasks)[0]).toBe(true);
+      // The other two topics have their new hours.
+      const hours = (k: string) => next.districts.flatMap((d) => d.topics).find((t) => t.key === k)!.hours;
+      expect(minutes(growTasks)).toBe(Math.round(hours(grow) * 2) * 30);
+      expect(growTasks.some((t) => t.title.includes("(added time)"))).toBe(true);
+      expect(minutes(await of(shrink.key))).toBe(Math.round(hours(shrink.key) * 2) * 30);
+      // Recorded as a curriculum change.
+      expect((await asUser(app, own).get("/api/schedule/plan-changes").expect(200)).body[0]).toMatchObject({ reason: "CURRICULUM" });
+    }, 60_000);
   });
 
   describe("data rights", () => {

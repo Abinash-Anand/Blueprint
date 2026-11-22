@@ -255,7 +255,7 @@ export interface Session {
 /** A re-plan that moved tasks (docs/Scheduler-Phase2-Plan.md). */
 export interface PlanChange {
   at: string;
-  reason: "DAILY" | "AVAILABILITY" | "STAGES" | "OVERDUE";
+  reason: "DAILY" | "AVAILABILITY" | "STAGES" | "OVERDUE" | "CURRICULUM";
   moved: number;
   finishBefore: ISODate | null;
   finishAfter: ISODate | null;
