@@ -10,11 +10,11 @@ import { ApiError, api } from "../../api/client";
 import type { AiStatus, RecallPointView, RecallReview } from "../../api/types";
 import { dayMonth, plural } from "../../lib/format";
 import { Recorder, canRecord } from "../voice/Recorder";
-import { Back, Chevron, ChevronDown, Glyph, More, Person, Picture, Plus, Target } from "./icons";
+import { Comparison } from "./Comparison";
+import { Back, Chevron, ChevronDown, Glyph, Person, Picture, Plus, Target } from "./icons";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
 const DEPTH = { FOUNDATIONAL: "Foundational", INTERMEDIATE: "Intermediate", MASTERY: "Mastery" } as const;
-const TIER = ["", "Definition", "How it works", "Edge cases"];
 const STATUS = { ACCURATE: "Remembered", PARTIAL: "Partly", MISSED: "Missed" } as const;
 const GLYPH = { ACCURATE: "ok", PARTIAL: "part", MISSED: "miss" } as const;
 const OUTCOME = { PASS: "Remembered well", HOLD: "Partly remembered", LAPSE: "Mostly forgotten" } as const;
@@ -365,7 +365,7 @@ function Results({ r, busy, run, error, onFollowup, onVerdict }: {
 
       <div>
         <h1 className="g-title">How your recall compares</h1>
-        <p className="g-sub">The checklist for {r.subtopic}, with the words of yours that matched.</p>
+        <p className="g-sub">Your words next to the checklist for {r.subtopic}, point by point.</p>
         {res.misconceptions.length > 0 && (
           <div className="g-callout miss" role="group" aria-label="Misconceptions" style={{ marginTop: 16 }}>
             <Glyph kind="warn" />
@@ -377,53 +377,10 @@ function Results({ r, busy, run, error, onFollowup, onVerdict }: {
             </span>
           </div>
         )}
-        {(["ACCURATE", "PARTIAL", "MISSED"] as const).map((s) => group(s).length > 0 && (
-          <div key={s}>
-            <h3 className="g-cap">{STATUS[s]} · {group(s).length}</h3>
-            <ul className="g-group">{group(s).map((p) => <PointRow key={p.id} p={p} reviewId={r.id} busy={busy} run={run} />)}</ul>
-          </div>
-        ))}
-        {res.points.some((p) => p.leftOut) && (
-          <div>
-            <h3 className="g-cap">Left out · not counted</h3>
-            <ul className="g-group">{res.points.filter((p) => p.leftOut).map((p) => <PointRow key={p.id} p={p} reviewId={r.id} busy={busy} run={run} />)}</ul>
-          </div>
-        )}
-        <p className="g-foot">A point that isn't part of this sub-topic? Its ⋯ menu leaves it out of the score from now on.</p>
+        <Comparison r={r} busy={busy} run={run} />
         <p className="g-small" style={{ marginTop: 12 }}>Checked by {res.gradingModel ?? "the AI"} against {plural(counted.length, "point")}.</p>
       </div>
     </section>
-  );
-}
-
-function PointRow({ p, reviewId, busy, run }: { p: RecallPointView; reviewId: number; busy: boolean; run: Run }) {
-  const [menu, setMenu] = useState(false);
-  const toggle = () => {
-    setMenu(false);
-    void run(async () => (await api.leaveOutPoint(p.id, !p.leftOut)).review ?? api.recallReview(reviewId));
-  };
-  return (
-    <li className="g-row g-top" style={p.leftOut ? { opacity: 0.7 } : undefined}>
-      <Glyph kind={p.status ? GLYPH[p.status] : "dot"} />
-      <span className="g-lbl">
-        {p.label}
-        {p.evidence && <span className="g-quote">“{p.evidence}”</span>}
-        {p.status !== "ACCURATE" && <small>{p.status === "PARTIAL" ? "The full point: " : ""}{p.description}</small>}
-        {p.recalledWhenAsked && <span className="g-sb out" style={{ marginTop: 6 }}>↑ recalled when asked</span>}
-      </span>
-      <span className="g-tier g-only-wide">{TIER[p.tier]}</span>
-      <span className="g-menu-wrap">
-        <button type="button" className="g-link quiet" aria-label={`Options for ${p.label}`} aria-expanded={menu} onClick={() => setMenu((x) => !x)}><More /></button>
-        {menu && (
-          <div className="g-menu">
-            <button type="button" disabled={busy} onClick={toggle}>
-              {p.leftOut ? "Count it again" : "Not part of this sub-topic"}
-              <small>{p.leftOut ? "It counts in the score again." : "Leaves it out of the score from now on."}</small>
-            </button>
-          </div>
-        )}
-      </span>
-    </li>
   );
 }
 

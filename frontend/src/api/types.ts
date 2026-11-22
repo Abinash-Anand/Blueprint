@@ -732,8 +732,15 @@ export interface RecallReview {
     misconceptions: { claim: string; correction: string }[];
     stageBefore: number; stageAfter: number; nextDueDate: ISODate | null; tierShares: (number | null)[]; gradingModel: string | null;
     points: RecallPointView[];
+    /** The graded text and where its quoted words are (absent from responses before 23 Nov 2026). */
+    answer?: RecallAnswer;
   };
 }
+/** A stretch of the graded text, as character offsets: [start, end). */
+export interface TextRange { start: number; end: number }
+export type RecallAnswerSpan = TextRange & ({ kind: "point"; pointId: number } | { kind: "claim"; index: number });
+/** For showing the answer next to the checklist, never for grading: quotes found in `text`, and runs no quote covers. */
+export interface RecallAnswer { text: string; spans: RecallAnswerSpan[]; uncovered: TextRange[] }
 
 export interface SeniorVerdict {
   foundationsSummary: string; architectureAndEdgeCasesSummary: string; focusNext: string;

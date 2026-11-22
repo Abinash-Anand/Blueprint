@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type PointStatus, type ScoredPoint, GradeError, RULES, checklistProblems, dailyLimit, depthOf, gapFor, nextSchedule, outcomeOf, recallScore,
-  quoteMatches, tierShares, umbrellaPoints, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
+  answerSpans, quoteMatches, tierShares, umbrellaPoints, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
 } from "../../src/modules/recall/rules.js";
 
 const pts = (...xs: [number, PointStatus][]): ScoredPoint[] => xs.map(([tier, status]) => ({ tier, weight: tier, status }));
@@ -144,6 +144,46 @@ describe("is this quote the learner's own words?", () => {
     expect(quoteMatches("ngOnDestroy", said)).toBe(true);
     expect(quoteMatches("ngOnDestry", said)).toBe(false);
     expect(quoteMatches("", said)).toBe(false);
+  });
+});
+
+describe("where the quoted words are in the answer (for showing it, never for grading)", () => {
+  const said = "When it runs? Once, right after Angular initializes the component and sets its input properties for the very first time. Primary use case. This is your default start here method for component initialization. 3. ngOnDestroy, cleanup before death. Unsubscribing from long-lived RxJS observables like WebSocket streams.";
+  const at = (r: { start: number; end: number }) => said.slice(r.start, r.end);
+
+  it("finds a quote's stretch from its first to its last matched word, whatever the case and punctuation", () => {
+    const { quotes } = answerSpans(said, ["ngOnDestroy — cleanup before death", "once right after angular initializes the component"]);
+    expect(quotes[0].map(at)).toEqual(["ngOnDestroy, cleanup before death"]);
+    expect(quotes[1].map(at)).toEqual(["Once, right after Angular initializes the component"]);
+  });
+
+  it("gives an elided quote one stretch per part, and a slip of a word the stretch it was found in", () => {
+    const { quotes } = answerSpans(said, ["When it runs? Once... This is your default start here method", "unsubscribing from long lived observables like websocket"]);
+    expect(quotes[0].map(at)).toEqual(["When it runs? Once", "This is your default start here method"]);
+    expect(quotes[1].map(at)).toEqual(["Unsubscribing from long-lived RxJS observables like WebSocket"]);
+  });
+
+  it("finds nothing for a quote quoteMatches refuses, and the same for every quote it accepts", () => {
+    const qs = ["ngOnDestroy removes every subscription automatically for you", "ngOnDestry", "", "This is your default start here method … When it runs? Once", "ngOnDestroy", "Primary use case"];
+    const { quotes } = answerSpans(said, qs);
+    qs.forEach((q, i) => expect(quotes[i].length > 0).toBe(quoteMatches(q, said)));
+  });
+
+  it("lists the runs of six or more words no quote covers, and leaves out shorter ones", () => {
+    const { uncovered } = answerSpans(said, ["When it runs? Once, right after Angular initializes the component", "Primary use case", "ngOnDestroy, cleanup before death"]);
+    expect(uncovered.map(at)).toEqual([
+      "and sets its input properties for the very first time",
+      "This is your default start here method for component initialization. 3",
+      "Unsubscribing from long-lived RxJS observables like WebSocket streams",
+    ]);
+    expect(answerSpans(said, []).uncovered.map(at)).toEqual([said.slice(0, -1)]); // nothing quoted: all of it, without the final full stop
+    expect(answerSpans("", ["anything"])).toEqual({ quotes: [[]], uncovered: [] });
+  });
+
+  it("keeps offsets right after characters that normalising changes", () => {
+    const text = "Straße und Öl: ﬁnal value, then the ﬁnal answer.";
+    const { quotes } = answerSpans(text, ["final value", "the final answer"]);
+    expect(quotes.map((q) => q.map((r) => text.slice(r.start, r.end)))).toEqual([["ﬁnal value"], ["the ﬁnal answer"]]);
   });
 });
 

@@ -115,12 +115,12 @@ export class GradeError extends Error {}
 
 const words = (s: string) => normalise(s).split(" ").filter(Boolean);
 
-/** Where a quote part ends in the explanation's words (searching from `from`), or -1. */
-function findPart(part: string[], text: string[], from: number): number {
+/** Where a quote part sits in the explanation's words (searching from `from`): [first, end) word indexes, or null. */
+function findPart(part: string[], text: string[], from: number): [number, number] | null {
   // Short parts (one or two words) must be exact and contiguous.
   if (part.length < 3) {
-    for (let i = from; i + part.length <= text.length; i++) if (part.every((w, k) => text[i + k] === w)) return i + part.length;
-    return -1;
+    for (let i = from; i + part.length <= text.length; i++) if (part.every((w, k) => text[i + k] === w)) return [i, i + part.length];
+    return null;
   }
   // Longer parts: at least 80 % of their words, in order, within a window not much longer than the part.
   const need = Math.ceil(part.length * 0.8);
@@ -128,19 +128,35 @@ function findPart(part: string[], text: string[], from: number): number {
   for (let i = from; i < text.length; i++) {
     if (text[i] !== part[0] && text[i] !== part[1]) continue;
     const end = Math.min(text.length, i + span);
-    let at = i, matched = 0, last = i;
+    let at = i, matched = 0, first = -1, last = i;
     for (const w of part) {
       let j = at;
       while (j < end && text[j] !== w) j++;
       if (j < end) {
         matched++;
+        if (first < 0) first = j;
         at = j + 1;
         last = j + 1;
       }
     }
-    if (matched >= need) return last;
+    if (matched >= need) return [first, last];
   }
-  return -1;
+  return null;
+}
+
+/** Where each part of a quote sits in `text`'s words, in order, or null when it is not there (quoteMatches). */
+function quoteParts(quote: string, text: string[]): [number, number][] | null {
+  const parts = quote.split(/\.{3,}|…/).map(words).filter((p) => p.length);
+  if (!parts.length) return null;
+  const found: [number, number][] = [];
+  let from = 0;
+  for (const p of parts) {
+    const at = findPart(p, text, from);
+    if (!at) return null;
+    found.push(at);
+    from = at[1];
+  }
+  return found;
 }
 
 /**
@@ -150,16 +166,49 @@ function findPart(part: string[], text: string[], from: number): number {
  * explanation not much longer than the part; one- and two-word parts must be exact.
  */
 export function quoteMatches(quote: string, text: string): boolean {
-  const parts = quote.split(/\.{3,}|…/).map(words).filter((p) => p.length);
-  if (!parts.length) return false;
-  const t = words(text);
-  let from = 0;
-  for (const p of parts) {
-    const end = findPart(p, t, from);
-    if (end < 0) return false;
-    from = end;
+  return quoteParts(quote, words(text)) !== null;
+}
+
+/** A stretch of the graded text, as character offsets: [start, end). */
+export interface TextRange { start: number; end: number }
+
+/** The text's words with where each came from: every run of letters and digits, normalised like `words`. */
+function located(text: string) {
+  const ws: { w: string; start: number; end: number }[] = [];
+  for (const m of text.matchAll(/[\p{L}\p{N}]+/gu)) {
+    for (const w of normalise(m[0]).split(" ").filter(Boolean)) ws.push({ w, start: m.index, end: m.index + m[0].length });
   }
-  return true;
+  return ws;
+}
+
+/** Uncovered stretches shorter than this many words are not worth showing ("Also in your answer"). */
+export const UNCOVERED_MIN_WORDS = 6;
+
+/**
+ * Where the learner's quoted words are in the graded text, for showing them (never for grading): each quote's
+ * stretches, found the way quoteMatches finds them (a quote with an elision has one stretch per part; a quote
+ * that is not found has none), and the runs of at least UNCOVERED_MIN_WORDS words that no quote covers.
+ */
+export function answerSpans(text: string, quotes: string[]): { quotes: TextRange[][]; uncovered: TextRange[] } {
+  const ws = located(text);
+  const plain = ws.map((x) => x.w);
+  const covered = new Array<boolean>(ws.length).fill(false);
+  const found = quotes.map((q) => {
+    const parts = q.trim() ? quoteParts(q, plain) : null;
+    return (parts ?? []).map(([a, b]) => {
+      for (let i = a; i < b; i++) covered[i] = true;
+      return { start: ws[a].start, end: ws[b - 1].end };
+    });
+  });
+  const uncovered: TextRange[] = [];
+  for (let i = 0; i < ws.length; ) {
+    if (covered[i]) { i++; continue; }
+    let j = i;
+    while (j < ws.length && !covered[j]) j++;
+    if (j - i >= UNCOVERED_MIN_WORDS) uncovered.push({ start: ws[i].start, end: ws[j - 1].end });
+    i = j;
+  }
+  return { quotes: found, uncovered };
 }
 
 /**

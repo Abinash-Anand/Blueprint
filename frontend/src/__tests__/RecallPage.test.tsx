@@ -87,13 +87,90 @@ describe("recall page", () => {
     expect(screen.getByText(/partly remembered: the same gap again/)).toBeTruthy();
     expect(screen.getByText("Next review").closest("li")!.textContent).toMatch(/23 Nov/);
     expect(screen.getByRole("group", { name: "Misconceptions" }).textContent).toMatch(/You said “a Subject replays old values”. Only a ReplaySubject/);
-    expect(screen.getByRole("heading", { name: "Remembered · 1" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Partly · 1" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Missed · 1" })).toBeTruthy();
-    expect(screen.getByText("“it is both an observable and an observer”")).toBeTruthy();
-    expect(screen.getAllByText("Late subscribers").length).toBeGreaterThan(0);
+    // One row per point, by tier: your words next to the complete point; a missed point leaves an empty slot.
+    const row = (label: string) => screen.getByRole("listitem", { name: new RegExp(`^${label}:`) });
+    expect(within(screen.getByRole("region", { name: "Definition" })).getByRole("listitem", { name: "Observable and observer: Remembered" })).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "How it works" })).getByRole("listitem", { name: "Multicasting: Partly" })).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Edge cases" })).getByRole("listitem", { name: "Late subscribers: Missed" })).toBeTruthy();
+    // A review from before the answer came along still shows the grader's quote.
+    expect(within(row("Observable and observer")).getByText("“it is both an observable and an observer”")).toBeTruthy();
+    expect(within(row("Late subscribers")).getByText("Missed: not in your answer")).toBeTruthy();
+    expect(within(row("Late subscribers")).getByText("They miss earlier values.")).toBeTruthy();
+    expect(within(row("Multicasting")).getByText("The full point")).toBeTruthy();
+    expect(screen.getAllByText("To learn")).toHaveLength(2);
+    expect(screen.getByRole("list", { name: "Summary" }).textContent).toBe("1 remembered1 partly1 missed");
+    expect(screen.queryByRole("region", { name: "Also in your answer" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show your whole answer" })).toBeNull();
     // There is nothing to grade yourself with.
     expect(screen.queryByRole("radio")).toBeNull();
+  });
+
+  it("shows your own words from the graded text, mistakes underlined, and what matched no point", async () => {
+    const text = "A Subject: it is both an observable and an observer. And it shares. But a Subject replays old values to new subscribers.\n\nWe used them in the chat service for typing indicators and presence.";
+    const at = (q: string) => ({ start: text.indexOf(q), end: text.indexOf(q) + q.length });
+    const c = checked();
+    c.result!.answer = {
+      text,
+      spans: [
+        { kind: "point", pointId: 1, ...at("it is both an observable and an observer") },
+        { kind: "point", pointId: 2, ...at("it shares. But a Subject replays old values") },
+        { kind: "claim", index: 0, ...at("a Subject replays old values") },
+      ],
+      uncovered: [at("A Subject"), at("We used them in the chat service for typing indicators and presence")],
+    };
+    current = c;
+    render(<RecallPage subtopicId={1} onClose={() => {}} />);
+    const multicasting = await screen.findByRole("listitem", { name: "Multicasting: Partly" });
+    // The stretch of the learner's text, not the grader's copy of it; the mistake inside it is marked.
+    expect(within(multicasting).getByText(/it shares\. But/).closest("p")!.textContent).toBe("“it shares. But a Subject replays old values”");
+    expect(multicasting.querySelector("mark.cmp-wrong")!.textContent).toBe("a Subject replays old values");
+    // Ellipses mark where more of the answer comes before or after a passage.
+    expect(within(screen.getByRole("region", { name: "Also in your answer" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "A Subject…", "…We used them in the chat service for typing indicators and presence",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Show your whole answer" }));
+    const whole = screen.getByLabelText("Your whole answer");
+    expect(whole.textContent).toBe(text);
+    expect([...whole.querySelectorAll("mark")].map((m) => [m.className, m.textContent])).toEqual([
+      ["cmp-hit ok", "it is both an observable and an observer"],
+      ["cmp-hit part", "it shares. But "],
+      ["cmp-hit part cmp-wrong", "a Subject replays old values"],
+    ]);
+  });
+
+  it("cuts a long unmatched passage at a word; the whole answer keeps all of it", async () => {
+    const text = `${"lorem ipsum dolor ".repeat(30)}end`;
+    const c = checked();
+    c.result!.answer = { text, spans: [], uncovered: [{ start: 0, end: text.length }] };
+    current = c;
+    render(<RecallPage subtopicId={1} onClose={() => {}} />);
+    const passage = within(await screen.findByRole("region", { name: "Also in your answer" })).getByRole("listitem").textContent!;
+    expect(passage.length).toBeLessThanOrEqual(241);
+    expect(passage).toMatch(/^lorem ipsum .* (lorem|ipsum|dolor)…$/);
+    fireEvent.click(screen.getByRole("button", { name: "Show your whole answer" }));
+    expect(screen.getByLabelText("Your whole answer").textContent).toBe(text);
+  });
+
+  it("focuses on the gaps when asked, remembers it, and jumps to a gap from the summary", async () => {
+    localStorage.removeItem("bp.recall.focusGaps");
+    current = checked();
+    const first = render(<RecallPage subtopicId={1} onClose={() => {}} />);
+    const toggle = await screen.findByRole("button", { name: "Focus on gaps" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Show all" }).getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".cmp")!.classList.contains("focus")).toBe(true);
+    first.unmount();
+    render(<RecallPage subtopicId={1} onClose={() => {}} />);
+    expect(await screen.findByRole("button", { name: "Show all" })).toBeTruthy();
+    // The gap links: each goes to its row.
+    const gaps = screen.getByText("Gaps:").parentElement!;
+    fireEvent.click(within(gaps).getByRole("button", { name: "Late subscribers" }));
+    const target = screen.getByRole("listitem", { name: "Late subscribers: Missed" });
+    expect(document.activeElement).toBe(target);
+    expect(target.classList.contains("pulse")).toBe(true);
+    expect(within(gaps).queryByRole("button", { name: "Observable and observer" })).toBeNull();
+    localStorage.removeItem("bp.recall.focusGaps");
   });
 
   it("then the senior engineer asks about the gaps; an answer marks points recalled when asked; the verdict closes it", async () => {

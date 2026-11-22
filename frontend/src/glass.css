@@ -199,6 +199,51 @@ button.g-row:disabled{cursor:not-allowed;opacity:.6}
 .g-dots .g-c{min-width:24px;height:24px;padding:0;border-radius:7px}
 .g-only-phone{display:none}
 
+/* gap-first results: your words next to the checklist, one row per point; stacked in a narrow container */
+.cmp{container:cmp / inline-size}
+.cmp-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px}
+.cmp-toggle[aria-pressed="true"]{background:#fff;border-color:var(--line);font-weight:600}
+.cmp-gaps{display:flex;flex-wrap:wrap;align-items:center;gap:0 10px;margin:8px 4px 0;font-size:13px;color:var(--g-muted)}
+.cmp-gaps .g-link{font-size:13px;padding:4px 0;text-decoration:underline;text-underline-offset:3px}
+.cmp-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;margin:20px 17px -14px;font-size:12px;font-weight:600;color:var(--g-muted)}
+.cmp-list{overflow:visible}
+.cmp-list>li:first-child{border-radius:17px 17px 0 0}
+.cmp-list>li:last-child{border-radius:0 0 17px 17px;border-bottom:0}
+.cmp-list>li:only-child{border-radius:17px}
+.cmp-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px;padding:12px 16px;border-bottom:1px solid var(--g-hair);font-size:14px;line-height:1.5;scroll-margin:96px;transition:opacity var(--dur-fast) var(--ease-standard)}
+.cmp-row:focus{outline:none}
+.cmp-row.pulse{animation:cmp-pulse 1.6s var(--ease-standard)}
+@keyframes cmp-pulse{0%,60%{box-shadow:inset 0 0 0 2px var(--accent)}100%{box-shadow:inset 0 0 0 2px transparent}}
+.cmp-row.out{opacity:.7}
+.cmp.focus .cmp-row.ok{opacity:.45}
+.cmp.focus .cmp-row.ok:focus-within,.cmp.focus .cmp-row.ok:hover{opacity:1}
+.cmp-k{display:none;font-size:11.5px;font-weight:600;color:var(--g-muted)}
+.cmp-you{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0}
+.cmp-quote{margin:0;padding:6px 10px;border-left:3px solid var(--success-line);border-radius:0 8px 8px 0;background:rgba(255,255,255,.62);font-size:13.5px;overflow-wrap:anywhere}
+.cmp-row.part .cmp-quote{border-left-color:var(--warning-line)}
+.cmp-ghost{display:flex;gap:8px;align-items:center;width:100%;margin:0;padding:9px 12px;border:1.5px dashed rgba(46,49,51,.3);border-radius:12px;color:var(--g-muted);font-size:13.5px}
+.cmp-point{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cmp-point p{margin:0;color:var(--g-muted);font-size:13.5px}
+.cmp-point.learn{padding:8px 10px 10px 12px;border-left:3px solid var(--warning-line);border-radius:0 12px 12px 0;background:rgba(252,239,212,.8)}
+.cmp-point.learn p{color:var(--ink)}
+.cmp-pt{display:flex;align-items:flex-start;gap:8px}
+.cmp-pt b{flex:1;font-weight:600}
+.cmp-pt .g-link{padding:0 4px}
+mark.cmp-wrong{background:none;color:inherit;text-decoration:underline wavy var(--danger);text-decoration-thickness:1.5px;text-underline-offset:3px}
+mark.cmp-hit{color:inherit;border-radius:3px;padding:0 1px}
+mark.cmp-hit.ok{background:var(--success-bg)}
+mark.cmp-hit.part{background:var(--warning-bg)}
+.cmp-also li{padding:10px 16px;border-bottom:1px solid var(--g-hair);font-size:13.5px;line-height:1.5;color:var(--g-muted);overflow-wrap:anywhere}
+.cmp-also li:last-child{border-bottom:0}
+.cmp-whole{margin-top:16px}
+.cmp-key{display:flex;flex-wrap:wrap;gap:8px;margin:6px 4px 8px;font-size:12px}
+.cmp-text{padding:14px 16px;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+@container cmp (max-width:560px){
+  .cmp-cols{display:none}
+  .cmp-row{grid-template-columns:minmax(0,1fr);gap:12px}
+  .cmp-k{display:block}
+}
+
 /* the earlier history, read-only */
 .g-hist{list-style:none;margin:0;padding:0}
 .g-hist li{padding:10px 16px;border-bottom:1px solid var(--g-hair);font-size:13.5px;line-height:1.45}
@@ -243,4 +288,4 @@ button.g-row:disabled{cursor:not-allowed;opacity:.6}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   .gl{--g-fill:rgba(246,244,239,.95);--g-strong:rgba(246,244,239,.97);--g-row:rgba(255,255,255,.93)}
 }
-@media (prefers-reduced-motion:reduce){.g-spin{animation:none;border-style:dotted}}
+@media (prefers-reduced-motion:reduce){.g-spin{animation:none;border-style:dotted}.cmp-row.pulse{animation:none;box-shadow:inset 0 0 0 2px var(--accent)}.cmp-row{transition:none}}
