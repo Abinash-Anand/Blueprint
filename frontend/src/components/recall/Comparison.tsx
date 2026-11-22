@@ -2,7 +2,8 @@
  * The results' main column: the learner's answer next to the checklist, one row per point (gap-first results). Your words
  * on the left (the stretch of your own text the grader quoted), the complete point on the right; a missed point leaves an
  * empty slot opposite it. Everything here is shown from what was graded: nothing is rewritten and nothing changes the score.
- * Narrow containers stack each row (your words above the complete point).
+ * The complete point is its statement (what a correct answer says) once written, else the grader's description. Narrow
+ * containers stack each row (your words above the complete point).
  */
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
@@ -235,7 +236,7 @@ function Row({ r, p, answer, busy, run, pulse }: { r: RecallReview; p: RecallPoi
             )}
           </span>
         </div>
-        <p>{p.description}</p>
+        <p>{p.statement || p.description}</p>
       </div>
     </li>
   );

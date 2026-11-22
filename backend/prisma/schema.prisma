@@ -1062,6 +1062,9 @@ model RecallPoint {
   label       String
   /// One line the grader uses to judge the point.
   description String
+  /// The point stated as a correct answer would say it, for showing next to the learner's words (never graded). Written
+  /// once per checklist and kept with it; null until written (the description is shown instead).
+  statement   String?
   tier        Int
   weight      Int
   /// Left out by the learner ("not part of this sub-topic"): not scored from then on.

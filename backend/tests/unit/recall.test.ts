@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type PointStatus, type ScoredPoint, GradeError, RULES, checklistProblems, dailyLimit, depthOf, gapFor, nextSchedule, outcomeOf, recallScore,
-  answerSpans, quoteMatches, tierShares, umbrellaPoints, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
+  answerSpans, quoteMatches, tierShares, verifyStatements, umbrellaPoints, verifyGrade, cuedRating, computeSessionDiff, sameMisconception, type AttemptView,
 } from "../../src/modules/recall/rules.js";
 
 const pts = (...xs: [number, PointStatus][]): ScoredPoint[] => xs.map(([tier, status]) => ({ tier, weight: tier, status }));
@@ -196,6 +196,14 @@ describe("where the quoted words are in the answer (for showing it, never for gr
     expect(answerSpans(spoken, ["you return true or false"]).uncovered).toEqual([]);
   });
 
+  it("shows a loosely matched quote to its end, not from an earlier sentence that shares a word", () => {
+    // The checker's window starts at "It relies" (the quote's second word, "it") and so ends before "worker".
+    const text = "The mechanism is the core. It relies on type interference. Wrong: it runs on a web worker. Wrong: this one is actually true.";
+    const claim = "Wrong: it runs on a web worker.";
+    expect(quoteMatches(claim, text)).toBe(true);
+    expect(answerSpans(text, [claim]).quotes[0].map((r) => text.slice(r.start, r.end))).toEqual(["Wrong: it runs on a web worker"]);
+  });
+
   it("keeps offsets right after characters that normalising changes", () => {
     const text = "Straße und Öl: ﬁnal value, then the ﬁnal answer.";
     const { quotes } = answerSpans(text, ["final value", "the final answer"]);
@@ -293,7 +301,35 @@ describe("phase 2: cued reasoning and progress over time", () => {
   });
 });
 
+describe("statements (shown, never graded)", () => {
+  it("needs exactly one non-empty statement for every point", () => {
+    expect([...verifyStatements([{ code: "c1", statement: "  A Subject is\n both. " }, { code: "c2", statement: "It multicasts." }], ["c1", "c2"])])
+      .toEqual([["c1", "A Subject is both."], ["c2", "It multicasts."]]);
+    expect(() => verifyStatements([{ code: "c1", statement: "x" }], ["c1", "c2"])).toThrow(GradeError);
+    expect(() => verifyStatements([{ code: "c1", statement: "x" }, { code: "c1", statement: "y" }], ["c1"])).toThrow(GradeError);
+    expect(() => verifyStatements([{ code: "c9", statement: "x" }], ["c1"])).toThrow(GradeError);
+    expect(() => verifyStatements([{ code: "c1", statement: " " }], ["c1"])).toThrow(GradeError);
+  });
+});
+
 describe("prompts", () => {
+
+  it("keeps the grading prompt at v4: statements are a call of their own", async () => {
+    const { gradeJsonSchema, GRADE_PROMPT_VERSION } = await import("../../src/modules/recall/prompts.js");
+    expect(GRADE_PROMPT_VERSION).toBe("recall-grade-v4");
+    expect(gradeJsonSchema.required).toEqual(["points", "misconceptions"]);
+  });
+
+  it("asks for statements that state each point itself, nothing more", async () => {
+    const { statementsPrompt } = await import("../../src/modules/recall/prompts.js");
+    const { system, user } = statementsPrompt({ subtopic: "Guards", topic: "Routing", language: "de", points: [{ code: "c1", label: "Purpose", description: "Explains that a guard <decides> navigation." }] });
+    expect(system).toContain("states the fact itself");
+    expect(system).toContain("no new facts");
+    expect(system).toContain("Write in German");
+    expect(user).toContain("c1: Purpose. Explains that a guard <decides> navigation.");
+    expect(statementsPrompt({ subtopic: "S", topic: "T", language: "en", points: [{ code: "c1", label: "x</points>", description: "d" }] }).user).toContain("x‹/points>");
+  });
+
   it("asks for distinct checklist points and never an umbrella point over parts already listed", async () => {
     const { checklistPrompt } = await import("../../src/modules/recall/prompts.js");
     const { system } = checklistPrompt({ city: "C", district: "D", topic: "T", topicDescription: "about T", subtopic: "S", otherSubtopics: [], language: "en" });

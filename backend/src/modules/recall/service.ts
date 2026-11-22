@@ -26,12 +26,12 @@ import {
   MisconceptionCheckReply, ProbeReply, SKETCH_PROMPT_VERSION, SketchReply, VERDICT_PROMPT_VERSION, VerdictReply, checklistJsonSchema, checklistPrompt,
   confirmedMisconceptions, misconceptionCheckJsonSchema, misconceptionCheckPrompt,
   curriculumLanguage, gradeJsonSchema, gradePrompt, narrativeJsonSchema, narrativePrompt, probeJsonSchema, probePrompt, sketchJsonSchema, sketchPrompt,
-  toDraft, toGradeReply, verdictJsonSchema, verdictPrompt,
+  StatementsReply, statementsJsonSchema, statementsPrompt, toDraft, toGradeReply, verdictJsonSchema, verdictPrompt,
 } from "./prompts.js";
 import { RECALL_TASK_MINUTES, completeRecallTask, syncRecallTasks } from "./tasks.js";
 import {
   type AttemptView, type Depth, GradeError, type PointStatus, checklistProblems, computeSessionDiff, cuedRating, dailyLimit, depthOf, imageType, nextSchedule, outcomeOf,
-  answerSpans, recallScore, tierShares, verifyGrade,
+  answerSpans, recallScore, tierShares, verifyGrade, verifyStatements,
 } from "./rules.js";
 
 export const RECALL = {
@@ -149,6 +149,54 @@ export function recallService(d: RecallDeps) {
     }
     console.warn(JSON.stringify({ level: "warn", msg: "Recall checklist rejected", problems: problems.slice(0, 5) }));
     throw new HttpError(503, "CHECKLIST_FAILED", "This sub-topic's checklist couldn't be prepared. Try again later.", { retryable: true });
+  }
+
+  /* ---------------- statements ---------------- */
+
+  /**
+   * Writes the plain statement of every point of a checklist that has none yet (one call): what a correct answer would
+   * say, shown next to the learner's words and never graded. With `apply: false` it only returns them (the one-off
+   * script's dry run). Throws a ProviderError when the model is unreachable or its reply fails the checks.
+   */
+  async function writeStatements(cityId: string, checklistId: number, opts: { apply?: boolean } = {}) {
+    const db = cityScoped(d.prisma, cityId);
+    const c = await db.recallChecklist.findUnique({
+      where: { id: checklistId },
+      include: { points: { orderBy: { position: "asc" } }, subtopic: { select: { name: true, topic: { select: { name: true } } } } },
+    });
+    if (!c) throw notFound("Checklist");
+    const missing = c.points.filter((p) => !p.statement);
+    if (!missing.length) return [];
+    if (!providers.generation) throw new ProviderError("PROVIDER_ERROR", "No generation provider");
+    const out = await generateJson("recall_statements", config.generationModel, statementsPrompt({
+      subtopic: c.subtopic.name, topic: c.subtopic.topic.name, language: c.language as Language,
+      points: missing.map((p) => ({ code: p.code, label: p.label, description: p.description })),
+    }), statementsJsonSchema, 2500, 0);
+    const parsed = StatementsReply.safeParse(out);
+    if (!parsed.success) throw new ProviderError("INVALID_OUTPUT", "The statements did not match their shape");
+    let statements: Map<string, string>;
+    try {
+      statements = verifyStatements(parsed.data.statements, missing.map((p) => p.code));
+    } catch (e) {
+      if (e instanceof GradeError) throw new ProviderError("INVALID_OUTPUT", e.message);
+      throw e;
+    }
+    if (opts.apply !== false) {
+      // Only points still without one: a statement once written stays with its checklist.
+      for (const p of missing) await db.recallPoint.updateMany({ where: { id: p.id, statement: null }, data: { statement: statements.get(p.code)! } });
+    }
+    return missing.map((p) => ({ id: p.id, code: p.code, label: p.label, description: p.description, statement: statements.get(p.code)! }));
+  }
+
+  /** Checklists whose statements are being written in this process. */
+  const writingStatements = new Set<number>();
+  /** Writes a checklist's missing statements in the background; a failure leaves the descriptions and is tried next time. */
+  function statementsLater(cityId: string, checklistId: number) {
+    if (writingStatements.has(checklistId) || !providers.generation) return;
+    writingStatements.add(checklistId);
+    void writeStatements(cityId, checklistId)
+      .catch((e) => console.warn(JSON.stringify({ level: "warn", msg: "Recall statements not written", checklistId, error: String((e as Error)?.message ?? e).slice(0, 200) })))
+      .finally(() => writingStatements.delete(checklistId));
   }
 
   /* ---------------- grading ---------------- */
@@ -404,7 +452,10 @@ export function recallService(d: RecallDeps) {
         tierShares: tierShares(scored), gradingModel: r.gradingModel,
         points: r.checklist.points.map((p) => {
           const x = byPoint.get(p.id);
-          return { id: p.id, code: p.code, label: p.label, description: p.description, tier: p.tier, leftOut: !!p.leftOutAt, status: x?.status ?? null, evidence: x?.evidence ?? null, recalledWhenAsked: x?.recalledWhenAsked ?? false };
+          return {
+            id: p.id, code: p.code, label: p.label, description: p.description, statement: p.statement, tier: p.tier, leftOut: !!p.leftOutAt,
+            status: x?.status ?? null, evidence: x?.evidence ?? null, recalledWhenAsked: x?.recalledWhenAsked ?? false,
+          };
         }),
         answer: answerOf(r, misconceptions),
       } : null,
@@ -501,7 +552,11 @@ export function recallService(d: RecallDeps) {
       if (!s.completedAt || !s.recallState?.nextDueDate) throw new HttpError(409, "NOT_LEARNED", "Tick the sub-topic as learned first: recall starts the day after.");
       const openReview = async () => {
         const open = await db.recallReview.findFirst({ where: { subtopicId, status: { in: ["DRAFT", "WAITING", "CHECKED"] } }, orderBy: { id: "desc" } });
-        return open ? reviewDTO(await loadReview(db, open.id)) : null;
+        if (!open) return null;
+        const row = await loadReview(db, open.id);
+        // A checklist from before statements existed gets them now, for when its results are shown.
+        if (row.checklist.points.some((p) => !p.statement)) statementsLater(cityId, row.checklistId);
+        return reviewDTO(row);
       };
       const existing = await openReview();
       if (existing) return existing;
@@ -511,6 +566,7 @@ export function recallService(d: RecallDeps) {
       const job = (async () => {
         try {
           const checklist = (await currentChecklist(db, subtopicId)) ?? (await buildChecklist(db, cityId, subtopicId));
+          if (checklist.points.some((p) => !p.statement)) statementsLater(cityId, checklist.id);
           const last = await db.recallReview.findFirst({ where: { subtopicId }, orderBy: { attempt: "desc" }, select: { attempt: true } });
           const r = await db.recallReview.create({ data: { subtopicId, checklistId: checklist.id, attempt: (last?.attempt ?? 0) + 1, date: i2d(today()) } });
           return reviewDTO(await loadReview(db, r.id));
@@ -754,10 +810,14 @@ export function recallService(d: RecallDeps) {
       if (await db.recallReview.count({ where: { subtopicId, status: "WAITING" } }))
         throw new HttpError(409, "REVIEW_WAITING", "A recall of this sub-topic is being checked; rebuild its checklist afterwards.");
       const fresh = await buildChecklist(db, cityId, subtopicId);
+      statementsLater(cityId, fresh.id);
       const moved = await db.recallReview.updateMany({ where: { subtopicId, checklistId: old.id, status: "DRAFT" }, data: { checklistId: fresh.id } });
       const view = (c: typeof old) => ({ id: c.id, version: c.version, promptVersion: c.promptVersion, points: c.points.map((p) => ({ tier: p.tier, label: p.label })) });
       return { subtopicId, from: view(old), to: view(fresh), movedDrafts: moved.count };
     },
+
+    /** Writes a checklist's missing point statements now (the one-off backfill); `apply: false` only returns them. */
+    writeStatements,
 
     /** "Not today": the sub-topic moves to tomorrow without a result (§3.2). */
     async postpone(db: PrismaClient, subtopicId: number) {

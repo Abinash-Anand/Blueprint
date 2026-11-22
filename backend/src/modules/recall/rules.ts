@@ -115,8 +115,13 @@ export class GradeError extends Error {}
 
 const words = (s: string) => normalise(s).split(" ").filter(Boolean);
 
-/** Where a quote part sits in the explanation's words (searching from `from`): [first, end) word indexes, or null. */
-function findPart(part: string[], text: string[], from: number): [number, number] | null {
+/**
+ * Where a quote part sits in the explanation's words (searching from `from`): [first, end) word indexes, or null.
+ * `tight` is for showing a quote, never for checking one: once a window matches, the window that starts at its first
+ * matched word is tried too and kept when it also matches, so a match that began early (on the part's second word,
+ * found in an earlier sentence) does not end before the quote does.
+ */
+function findPart(part: string[], text: string[], from: number, tight = false): [number, number] | null {
   // Short parts (one or two words) must be exact and contiguous.
   if (part.length < 3) {
     for (let i = from; i + part.length <= text.length; i++) if (part.every((w, k) => text[i + k] === w)) return [i, i + part.length];
@@ -125,8 +130,7 @@ function findPart(part: string[], text: string[], from: number): [number, number
   // Longer parts: at least 80 % of their words, in order, within a window not much longer than the part.
   const need = Math.ceil(part.length * 0.8);
   const span = Math.ceil(part.length * 1.25) + 2;
-  for (let i = from; i < text.length; i++) {
-    if (text[i] !== part[0] && text[i] !== part[1]) continue;
+  const windowAt = (i: number) => {
     const end = Math.min(text.length, i + span);
     let at = i, matched = 0, first = -1, last = i;
     for (const w of part) {
@@ -139,19 +143,29 @@ function findPart(part: string[], text: string[], from: number): [number, number
         last = j + 1;
       }
     }
-    if (matched >= need) return [first, last];
+    return { matched, first, last };
+  };
+  for (let i = from; i < text.length; i++) {
+    if (text[i] !== part[0] && text[i] !== part[1]) continue;
+    const w = windowAt(i);
+    if (w.matched < need) continue;
+    if (tight && w.first > i) {
+      const again = windowAt(w.first);
+      if (again.matched >= w.matched) return [again.first, again.last];
+    }
+    return [w.first, w.last];
   }
   return null;
 }
 
 /** Where each part of a quote sits in `text`'s words, in order, or null when it is not there (quoteMatches). */
-function quoteParts(quote: string, text: string[]): [number, number][] | null {
+function quoteParts(quote: string, text: string[], tight = false): [number, number][] | null {
   const parts = quote.split(/\.{3,}|…/).map(words).filter((p) => p.length);
   if (!parts.length) return null;
   const found: [number, number][] = [];
   let from = 0;
   for (const p of parts) {
-    const at = findPart(p, text, from);
+    const at = findPart(p, text, from, tight);
     if (!at) return null;
     found.push(at);
     from = at[1];
@@ -198,7 +212,8 @@ export function answerSpans(text: string, quotes: string[]): { quotes: TextRange
   const plain = ws.map((x) => x.w);
   const covered = new Array<boolean>(ws.length).fill(false);
   const found = quotes.map((q) => {
-    const parts = q.trim() ? quoteParts(q, plain) : null;
+    // Tight stretches for showing; when tightening loses a later part of an elided quote, the stretches quoteMatches found.
+    const parts = q.trim() ? (quoteParts(q, plain, true) ?? quoteParts(q, plain)) : null;
     return (parts ?? []).map(([a, b]) => {
       for (let i = a; i < b; i++) covered[i] = true;
       return { start: ws[a].start, end: ws[b - 1].end };
@@ -247,6 +262,25 @@ export function verifyGrade(reply: GradeReply, codes: string[], explanation: str
     .filter((m) => m.claim.trim() && m.correction.trim() && quoteMatches(m.claim, explanation))
     .slice(0, 5);
   return { points, misconceptions, rejectedQuotes };
+}
+
+/**
+ * Checks the statements written for a checklist: exactly one non-empty sentence for every point code, none repeated or
+ * unknown. Returns them by code, trimmed to one line, or throws GradeError.
+ */
+export function verifyStatements(reply: { code: string; statement: string }[], codes: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const x of reply) {
+    const code = x.code.trim();
+    if (!codes.includes(code)) throw new GradeError(`Unknown point ${code}`);
+    if (out.has(code)) throw new GradeError(`Point ${code} has two statements`);
+    const statement = x.statement.replace(/\s+/g, " ").trim();
+    if (!statement) throw new GradeError(`Point ${code} has an empty statement`);
+    if (statement.length > 400) throw new GradeError(`Point ${code}'s statement is too long`);
+    out.set(code, statement);
+  }
+  if (out.size !== codes.length) throw new GradeError("Not every point has a statement");
+  return out;
 }
 
 /* ---------------- the checklist ---------------- */

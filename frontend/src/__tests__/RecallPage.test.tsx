@@ -138,6 +138,17 @@ describe("recall page", () => {
     ]);
   });
 
+  it("shows a point's statement once written, else its description", async () => {
+    const c = checked();
+    c.result!.points[0].statement = "A Subject is both an observable and an observer.";
+    current = c;
+    render(<RecallPage subtopicId={1} onClose={() => {}} />);
+    const first = await screen.findByRole("listitem", { name: "Observable and observer: Remembered" });
+    expect(within(first).getByText("A Subject is both an observable and an observer.")).toBeTruthy();
+    expect(within(first).queryByText("A Subject is both.")).toBeNull();
+    expect(within(screen.getByRole("listitem", { name: "Multicasting: Partly" })).getByText("One execution for all subscribers.")).toBeTruthy();
+  });
+
   it("cuts a long unmatched sentence at a word; the whole answer keeps all of it", async () => {
     const text = `${"lorem ipsum dolor ".repeat(30)}end`;
     const c = checked();

@@ -31,7 +31,7 @@ type Review = {
   result: null | {
     score: number; depth: string; outcome: string; stageBefore: number; stageAfter: number; nextDueDate: string;
     misconceptions: { claim: string; correction: string }[];
-    points: { id: number; code: string; label: string; tier: number; status: string | null; evidence: string | null; leftOut: boolean }[];
+    points: { id: number; code: string; label: string; description: string; statement: string | null; tier: number; status: string | null; evidence: string | null; leftOut: boolean }[];
     answer: { text: string; spans: (({ kind: "point"; pointId: number } | { kind: "claim"; index: number }) & { start: number; end: number })[]; uncovered: { start: number; end: number }[] };
   };
 };
@@ -141,6 +141,23 @@ suite("recall", () => {
     // Starting again returns the same open review; no second checklist.
     expect((await asUser(app, H).post("/api/recall/reviews").send({ subtopicId: subA }).expect(201)).body.id).toBe(r.id);
     expect(await prisma.recallChecklist.count({ where: { subtopicId: subA } })).toBe(1);
+    // Each point's plain statement is written in the background, once, and kept with the checklist.
+    let statements: (string | null)[] = [null];
+    for (let i = 0; i < 100 && !statements.every(Boolean); i++) {
+      statements = (await prisma.recallPoint.findMany({ where: { checklistId: c.id }, orderBy: { position: "asc" } })).map((p) => p.statement);
+      await new Promise((ok) => setTimeout(ok, 20));
+    }
+    expect(statements[0]).toMatch(/^The definition of /);
+    expect(statements.every(Boolean)).toBe(true);
+    // A checklist from before statements existed gets them when its open review is opened again.
+    await prisma.recallPoint.updateMany({ where: { checklistId: c.id }, data: { statement: null } });
+    expect((await asUser(app, H).post("/api/recall/reviews").send({ subtopicId: subA }).expect(201)).body.id).toBe(r.id);
+    let again = 0;
+    for (let i = 0; i < 100 && again < 6; i++) {
+      again = await prisma.recallPoint.count({ where: { checklistId: c.id, statement: { not: null } } });
+      await new Promise((ok) => setTimeout(ok, 20));
+    }
+    expect(again).toBe(6);
   });
 
   it("keeps the text of recorded parts (never the audio) and what was typed", async () => {
@@ -150,7 +167,7 @@ suite("recall", () => {
     r = (await asUser(app, H).delete(`/api/recall/reviews/${reviewId}/parts/1`).expect(200)).body;
     expect(r.spokenParts).toHaveLength(1);
     await asUser(app, H).post(`/api/recall/reviews/${reviewId}/parts`).set("Content-Type", "text/plain").send("not audio").expect(415);
-    r = (await asUser(app, H).patch(`/api/recall/reviews/${reviewId}`).send({ typed: "The mechanism is the core. Wrong: it runs on a web worker. Wrong: this one is actually true." }).expect(200)).body;
+    r = (await asUser(app, H).patch(`/api/recall/reviews/${reviewId}`).send({ typed: "The mechanism is the core. It relies on type interference. Wrong: it runs on a web worker. Wrong: this one is actually true." }).expect(200)).body;
     expect(r.typed).toMatch(/mechanism/);
     expect(JSON.stringify(await prisma.recallReview.findUniqueOrThrow({ where: { id: reviewId } }))).not.toMatch(/RIFF|WAVE/);
   });
@@ -173,6 +190,9 @@ suite("recall", () => {
     expect(answer.spans.filter((x) => x.kind === "point" && x.pointId === c1.id).map(text)).toEqual(["Definition"]);
     expect(answer.spans.filter((x) => x.kind === "claim").map(text)).toEqual(["Wrong: it runs on a web worker"]);
     expect(answer.spans.map((x) => x.start)).toEqual([...answer.spans.map((x) => x.start)].sort((a, b) => a - b));
+    expect((await prisma.recallReview.findUniqueOrThrow({ where: { id: reviewId } })).promptVersion).toBe("recall-grade-v4");
+    // The complete point is shown as its statement, with the grader's description kept alongside.
+    expect(r.result!.points[0]).toMatchObject({ statement: expect.stringMatching(/^The definition of /), description: expect.stringMatching(/^Explains the definition/) });
     // Tiers 1–2 only (tier 3 decides depth): 4 of 8 weight = 0.5, minus 0.15 for the misconception: a lapse; stage 0 → 1, due the next day.
     expect(r.result!.score).toBeCloseTo(4 / 8 - 0.15, 3);
     expect(r.result).toMatchObject({ depth: "FOUNDATIONAL", outcome: "LAPSE", stageBefore: 0, stageAfter: 1, nextDueDate: "2026-11-22" });
@@ -188,8 +208,9 @@ suite("recall", () => {
     const progress = (await asUser(app, H).get("/api/progress").expect(200)).body;
     expect(progress.recall).toMatchObject({ reviews: 1, depth: { FOUNDATIONAL: 1 }, outcomes: { LAPSE: 1 } });
     const used = await prisma.aiUsage.findMany({ where: { operation: "RECALL" }, select: { model: true, outcome: true } });
-    // checklist + grade + the check of the two flagged misconceptions, which drops the one that is true
-    expect(used.length).toBe(3);
+    // checklist + its statements (twice: written, then again once cleared) + grade + the check of the two flagged
+    // misconceptions, which drops the one that is true
+    expect(used.length).toBe(5);
   });
 
   it("counts a checked recall as study time: its planned minutes are logged once, with its topic", async () => {
