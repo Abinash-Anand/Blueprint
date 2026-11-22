@@ -21,6 +21,7 @@ import { HttpError, notFound } from "../../lib/http.js";
 import type { AiConfig } from "../ai/config.js";
 import { jobCaller } from "../ai/jobCaller.js";
 import { type AiProviders, ProviderError, asProviderError, isProviderOutage } from "../ai/providers/types.js";
+import { generateSwitching } from "../ai/switching.js";
 import type { UsageService } from "../ai/usage.js";
 import type { AuthService } from "../auth/service.js";
 import {
@@ -204,22 +205,20 @@ export function recallService(d: RecallDeps) {
   /* ---------------- grading ---------------- */
 
   /** One call to the checklist's pinned grading model at temperature 0, usage recorded. Never another model. */
-  async function callGrader(model: string, name: string, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number) {
-    await d.usage.check("RECALL", providers.generation!.name, config.generationDailyLimit, 1);
-    const t0 = performance.now();
-    try {
-      const r = await providers.generation!.generate({
-        ...prompt, jsonSchema, model, name, maxTokens, temperature: 0, signal: AbortSignal.timeout(config.generationTimeoutMs),
-      });
-      await d.usage.record("RECALL", providers.generation!.name, model, r.usage, performance.now() - t0, "OK");
-      return r.output as unknown;
-    } catch (e) {
-      const err = asProviderError(e);
-      await d.usage.record("RECALL", providers.generation!.name, model, {}, performance.now() - t0, err.kind);
-      console.warn(JSON.stringify({ level: "warn", msg: "AI provider error", op: "RECALL", model, kind: err.kind, status: err.status ?? null }));
-      throw err;
-    }
+  /**
+   * One recall call (ai/switching.ts): the main model gets `recallSwitchAfterMs`, then the fallback model takes over
+   * (the learner is waiting). Answers with the output and the model that wrote it.
+   */
+  function call(name: string, model: string, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number, temperature: number, images?: { mimeType: string; data: Buffer }[]) {
+    return generateSwitching({
+      provider: providers.generation!, usage: d.usage, op: "RECALL", model, fallback: config.recallFallbackModel,
+      switchAfterMs: config.recallSwitchAfterMs, timeoutMs: config.generationTimeoutMs,
+      input: { ...prompt, jsonSchema, name, maxTokens, temperature, images },
+      before: () => d.usage.check("RECALL", providers.generation!.name, config.generationDailyLimit, 1),
+    });
   }
+  const callGrader = (model: string, name: string, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number) =>
+    call(name, model, prompt, jsonSchema, maxTokens, 0);
 
   /**
    * Grades an explanation with the pinned model at temperature 0. When the first recall's grade (not the follow-up,
@@ -229,7 +228,8 @@ export function recallService(d: RecallDeps) {
     const scored = only ?? checklist.points.filter((p) => !p.leftOutAt);
     const language = checklist.language as Language;
     const prompt = gradePrompt({ subtopic, topic, explanation, language, points: scored.map((p) => ({ code: p.code, label: p.label, description: p.description })) });
-    const output = await callGrader(checklist.gradingModel, "recall_grade", prompt, gradeJsonSchema, 4000);
+    // The pinned model, unless it was too slow and the fallback graded instead: the review records which one did.
+    const { output, model } = await callGrader(checklist.gradingModel, "recall_grade", prompt, gradeJsonSchema, 4000);
     // The checks in code (§5.4): a reply that fails them counts as invalid output.
     const parsed = GradeReplySchema.safeParse(output);
     if (!parsed.success) throw new ProviderError("INVALID_OUTPUT", "The grading reply did not match its shape");
@@ -240,13 +240,13 @@ export function recallService(d: RecallDeps) {
       if (e instanceof GradeError) throw new ProviderError("INVALID_OUTPUT", e.message);
       throw e;
     }
-    if (only) return graded;
+    if (only) return { ...graded, model };
     let confirmed = graded.misconceptions;
     if (confirmed.length) {
-      const check = MisconceptionCheckReply.safeParse(await callGrader(
-        checklist.gradingModel, "recall_misconception_check",
+      const check = MisconceptionCheckReply.safeParse((await callGrader(
+        model, "recall_misconception_check",
         misconceptionCheckPrompt({ subtopic, topic, explanation, language, items: graded.misconceptions }), misconceptionCheckJsonSchema, 1500,
-      ));
+      )).output);
       if (!check.success) throw new ProviderError("INVALID_OUTPUT", "The misconception check did not match its shape");
       confirmed = confirmedMisconceptions(graded.misconceptions, check.data);
       if (confirmed.length !== graded.misconceptions.length) {
@@ -257,7 +257,7 @@ export function recallService(d: RecallDeps) {
     const tierOf = new Map(scored.map((p) => [p.code, p.tier]));
     const checked = checkEvidence(graded.points.map((p) => ({ ...p, tier: tierOf.get(p.code) ?? 2 })), confirmed, explanation);
     if (checked.changed) console.log(JSON.stringify({ level: "info", msg: "Recall evidence checks lowered points", count: checked.changed }));
-    return { ...graded, points: checked.points, misconceptions: confirmed };
+    return { ...graded, points: checked.points, misconceptions: confirmed, model };
   }
 
   /**
@@ -291,7 +291,7 @@ export function recallService(d: RecallDeps) {
         data: {
           status: "CHECKED", score, depth: depthOf(points), outcome,
           misconceptions: graded.misconceptions as unknown as Prisma.InputJsonValue, stageBefore, stageAfter: next.stage, nextDueDate: i2d(next.nextDueDate),
-          ...(opts.regrade ? {} : { gradingModel: checklist.gradingModel, promptVersion: GRADE_PROMPT_VERSION, waitReason: null, checkedAt: now }),
+          ...(opts.regrade ? {} : { gradingModel: graded.model, promptVersion: GRADE_PROMPT_VERSION, waitReason: null, checkedAt: now }),
         },
       });
       const st = await tx.recallState.upsert({
@@ -348,18 +348,7 @@ export function recallService(d: RecallDeps) {
 
   /** One structured call with the generation model; usage recorded; errors as ProviderError. */
   async function generateJson(name: string, model: string, prompt: { system: string; user: string }, jsonSchema: Record<string, unknown>, maxTokens: number, temperature: number, images?: { mimeType: string; data: Buffer }[]) {
-    await d.usage.check("RECALL", providers.generation!.name, config.generationDailyLimit, 1);
-    const t0 = performance.now();
-    try {
-      const r = await providers.generation!.generate({ ...prompt, jsonSchema, model, name, maxTokens, temperature, images, signal: AbortSignal.timeout(config.generationTimeoutMs) });
-      await d.usage.record("RECALL", providers.generation!.name, model, r.usage, performance.now() - t0, "OK");
-      return r.output;
-    } catch (e) {
-      const err = asProviderError(e);
-      await d.usage.record("RECALL", providers.generation!.name, model, {}, performance.now() - t0, err.kind);
-      console.warn(JSON.stringify({ level: "warn", msg: "AI provider error", op: "RECALL", stage: name, model, kind: err.kind, status: err.status ?? null }));
-      throw err;
-    }
+    return (await call(name, model, prompt, jsonSchema, maxTokens, temperature, images)).output;
   }
   const unavailable = (what: string) => new HttpError(503, "AI_UNAVAILABLE", `${what} couldn't be written right now: the AI is busy or unreachable. Try again in a moment.`, { retryable: true });
 
@@ -412,9 +401,9 @@ export function recallService(d: RecallDeps) {
       let narrative = "";
       let model: string | null = null;
       try {
-        const out = await generateJson("recall_narrative", config.recallNarrativeModel, narrativePrompt(contextOf(r), diff), narrativeJsonSchema, 800, 0.2);
-        narrative = NarrativeReply.parse(out).sentences.map((x) => x.trim()).join(" ");
-        model = config.recallNarrativeModel;
+        const out = await call("recall_narrative", config.recallNarrativeModel, narrativePrompt(contextOf(r), diff), narrativeJsonSchema, 800, 0.2);
+        narrative = NarrativeReply.parse(out.output).sentences.map((x) => x.trim()).join(" ");
+        model = out.model;
       } catch {
         /* the computed diff is shown without a summary */
       }
@@ -821,6 +810,8 @@ export function recallService(d: RecallDeps) {
         const graded = {
           points: scored.map((x) => ({ code: x.code, status: byPoint.get(x.id)?.status ?? ("MISSED" as PointStatus), evidence: byPoint.get(x.id)?.evidence ?? null })),
           misconceptions: misconceptionsOf(latest.misconceptions), rejectedQuotes: 0,
+          // A regrade calls no model and keeps the review's record of which one checked it.
+          model: latest.gradingModel ?? checklist.gradingModel,
         };
         // The schedule is worked out again from where this review started; no task is completed a second time.
         await applyGrade(cityId, latest, checklist, graded, { regrade: true });

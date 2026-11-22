@@ -40,7 +40,7 @@ type Review = {
 suite("recall", () => {
   let prisma: PrismaClient;
   const clock = new TestClock("2026-11-20");
-  const config = loadAiConfig({ AI_ENABLED: "true", AI_EVALUATION_PROVIDER: "fake", AI_TRANSCRIPTION_PROVIDER: "fake", AI_GENERATION_PROVIDER: "fake", AI_GENERATION_RETRY_DELAYS_MS: "0,0" });
+  const config = loadAiConfig({ AI_ENABLED: "true", AI_EVALUATION_PROVIDER: "fake", AI_TRANSCRIPTION_PROVIDER: "fake", AI_GENERATION_PROVIDER: "fake", AI_GENERATION_RETRY_DELAYS_MS: "0,0", AI_RECALL_FALLBACK_MODEL: "fake-2" });
   // A generation provider that can be made busy for a test.
   let busy = 0;
   const fake = fakeProvider("Definition and purpose of the thing, said out loud.");
@@ -270,7 +270,7 @@ suite("recall", () => {
     reviewId = r.id;
   });
 
-  it("waits while the grading model is busy and checks as soon as it answers, never with another model", async () => {
+  it("switches to the fallback model when the grading model is busy, and records which model checked it", async () => {
     busy = 1;
     await asUser(app, H).patch(`/api/recall/reviews/${reviewId}`).send({ typed: "definition purpose mechanism usage syntax pitfalls all explained" }).expect(200);
     await asUser(app, H).post(`/api/recall/reviews/${reviewId}/submit`).expect(202);
@@ -278,8 +278,8 @@ suite("recall", () => {
     expect(r.result).toMatchObject({ outcome: "PASS", stageBefore: 1, stageAfter: 2, nextDueDate: "2026-11-24", depth: "MASTERY" });
     expect(r.result!.score).toBe(1);
     const models = await prisma.aiUsage.findMany({ where: { operation: "RECALL" }, select: { model: true, outcome: true }, orderBy: { id: "asc" } });
-    expect(models.slice(-2).map((m) => m.outcome)).toEqual(["PROVIDER_ERROR", "OK"]);
-    expect(new Set(models.slice(-2).map((m) => m.model)).size).toBe(1);
+    expect(models.slice(-2)).toEqual([{ model: "fake-1", outcome: "PROVIDER_ERROR" }, { model: "fake-2", outcome: "OK" }]);
+    expect((r.result as unknown as { gradingModel: string }).gradingModel).toBe("fake-2");
   });
 
   it("refuses an explanation that is too short, and edits after sending", async () => {

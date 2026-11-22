@@ -32,6 +32,13 @@ export interface AiConfig {
   maxRecallPerHour: number;
   /** The model that grades recall explanations, pinned per checklist (§5.5); by default the generation model. */
   recallModel: string;
+  /**
+   * Same-provider model a recall call switches to when the main model takes longer than `recallSwitchAfterMs` or
+   * reports an outage (5xx): the learner is waiting. By default the generation fallback (GWDG: Mistral Large 4).
+   */
+  recallFallbackModel: string | null;
+  /** How long a recall call waits on the main model before switching to the fallback (ms). */
+  recallSwitchAfterMs: number;
   /** A small, fast model for the recall progress summary (§7), written from the computed diff only. */
   recallNarrativeModel: string;
   /** Daily cap on calls to the generation provider (GWDG allows far more than Gemini's free tier). 0 = none. */
@@ -126,6 +133,9 @@ export function loadAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
     maxGenerationsPerHour: num(env.AI_MAX_GENERATIONS_PER_HOUR, 3, 1, 100),
     maxRecallPerHour: num(env.AI_MAX_RECALL_PER_HOUR, 30, 1, 500),
     recallModel: env.AI_RECALL_MODEL?.trim() || env.AI_GENERATION_MODEL?.trim() || DEFAULT_MODELS[generationProvider].generation,
+    recallFallbackModel: fallback(env.AI_RECALL_FALLBACK_MODEL, env.AI_GENERATION_FALLBACK_MODEL, generationProvider, "generation",
+      env.AI_RECALL_MODEL?.trim() || env.AI_GENERATION_MODEL?.trim() || DEFAULT_MODELS[generationProvider].generation),
+    recallSwitchAfterMs: num(env.AI_RECALL_SWITCH_AFTER_MS, 60_000, 1_000, 900_000),
     recallNarrativeModel: env.AI_RECALL_NARRATIVE_MODEL?.trim() || (generationProvider === "gwdg" ? "qwen3.8-27b" : env.AI_GENERATION_MODEL?.trim() || DEFAULT_MODELS[generationProvider].generation),
     generationDailyLimit: num(env.AI_GENERATION_DAILY_LIMIT, 300, 0, 100_000),
     evaluationFallbackModel: fallback(env.AI_EVALUATION_FALLBACK_MODEL, env.AI_FALLBACK_MODEL, evaluationProvider, "evaluation", evaluationModel),
