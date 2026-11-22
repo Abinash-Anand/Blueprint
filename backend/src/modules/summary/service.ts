@@ -226,6 +226,8 @@ export function summaryService(prisma: PrismaClient, clock: Clock) {
       const outlook = forecast({
         today, planEnd: settings.journeyEnd, targetDate: settings.targetDate, week,
         remainingNewMinutes: sum(tasks.filter((t) => t.status === "TODO" && t.kind !== "REVISION"), (t) => t.estimatedMinutes),
+        // The plan's own last day of open new material (it is re-planned each day, and on every change).
+        plannedFinish: tasks.filter((t) => t.status === "TODO" && t.kind !== "REVISION").map((t) => d2i(t.scheduledDate)).sort().at(-1) ?? null,
         recalls: recallStates.map((r) => ({ stage: r.stage, nextDueDate: d2i(r.nextDueDate!) })),
         recallMinutes: RULES.minutesPerReview, gapFor,
       });

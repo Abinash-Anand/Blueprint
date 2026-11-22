@@ -2,13 +2,18 @@
  * Forecast (Blueprint relationship model, phase 1): what is realistically achievable with the learner's time. Pure and
  * deterministic; it reports and never schedules.
  *
- * It walks the calendar from today. Each day offers the learner's available minutes (availability). Recalls that are
- * due are done first, in the day's revision time (available − new-material target); revision that does not fit there
- * borrows from the new-material time, as revision must not wait. New material then fills what is left of the day's
+ * It walks the calendar from today with the scheduler's day rules (domain/scheduler.ts), so it predicts what the plan
+ * will do. Each day offers the learner's available minutes (availability). Recalls that are due are done first, in the
+ * day's revision time (available − new-material target); revision that does not fit there may borrow up to half the
+ * new-material time, and the rest waits for the next study day. New material then fills what is left of the day's
  * new-material target (allocation). Every recall is assumed remembered (its stage goes up), so the forecast is the
  * best case for revision; sub-topics that are not yet in recall add no recall demand.
+ *
+ * Its projected finish is the plan's (docs/Scheduler-Phase2-Plan.md, 5a): the last day of the re-planned open work, as
+ * stage start dates hold later work in place. Without a plan (`plannedFinish` not given), the walk's own finish.
  */
 import { type ISODate, addDays, diffDays, isoWeekday, weekStart } from "./dates.js";
+import { dayBudget, emptyUse, newRoom, takeRecall } from "./scheduler.js";
 
 export interface ForecastDay { available: number; newTarget: number }
 
@@ -29,6 +34,8 @@ export interface ForecastInput {
   gapFor: (stage: number) => number;
   /** The forecast looks this far ahead at most (default three years). */
   horizonDays?: number;
+  /** The last day of open new material in the re-planned plan (null: none open). */
+  plannedFinish?: ISODate | null;
 }
 
 export interface Forecast {
@@ -71,15 +78,13 @@ export function forecast(i: ForecastInput): Forecast {
   let finish: ISODate | null = left === 0 ? i.today : null;
   for (let n = 0; n < horizon && (finish === null || addDays(i.today, n) < loadEnd); n++) {
     const d = addDays(i.today, n);
-    const { available: av, newTarget } = day(d);
-    const available = Math.max(av, newTarget);
-    if (available <= 0) continue;
-    // Revision first, oldest first, as far as the day's time goes.
+    const b = dayBudget(day(d));
+    if (b.available <= 0) continue;
+    // Revision first, oldest first, as far as the day's rules allow.
     const ready = due.filter((r) => r.at <= d).sort((a, b) => a.at.localeCompare(b.at));
-    let used = 0;
+    const u = emptyUse();
     for (const r of ready) {
-      if (used + i.recallMinutes > available) break;
-      used += i.recallMinutes;
+      if (!takeRecall(b, u, i.recallMinutes)) break;
       r.stage += 1;
       r.at = addDays(d, i.gapFor(r.stage));
       if (d < loadEnd) {
@@ -88,15 +93,15 @@ export function forecast(i: ForecastInput): Forecast {
       }
     }
 
-    // New material: the day's target, less any revision that spilled over into it.
-    const spill = Math.max(0, used - (available - newTarget));
-    const fresh = Math.max(0, Math.min(newTarget - spill, available - used));
+    // New material: what is left of the day's target after any revision that borrowed from it.
+    const fresh = newRoom(b, u);
     if (finish === null && left > 0) {
       left -= fresh;
       if (left <= 0) finish = d;
     }
   }
 
+  if (i.plannedFinish !== undefined) finish = i.remainingNewMinutes <= 0 ? i.today : i.plannedFinish;
   const target = i.targetDate;
   const weeksToTarget = target && target >= i.today ? (diffDays(i.today, target) + 1) / 7 : null;
   return {

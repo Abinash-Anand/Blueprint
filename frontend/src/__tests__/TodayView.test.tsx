@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { Task, Today } from "../api/types";
+import type { PlanChange, Task, Today } from "../api/types";
 
 const task = (over: Partial<Task>): Task => ({
   id: 1, title: "t", notes: "", kind: "STUDY", status: "TODO", source: "PLAN", estimatedMinutes: 60, loggedMinutes: 0,
@@ -48,12 +48,18 @@ const withRevision: Today = {
   ],
 };
 let current = today;
+let changes: PlanChange[] = [];
+const patchTask = vi.fn(async () => ({}));
 
-vi.mock("../api/client", () => ({ api: { today: vi.fn(async () => current) }, ApiError: class extends Error {} }));
+vi.mock("../api/client", () => ({
+  api: { today: vi.fn(async () => current), planChanges: vi.fn(async () => changes), patchTask: (...a: unknown[]) => patchTask(...(a as [])) },
+  getCurrentCity: () => "city-1",
+  ApiError: class extends Error {},
+}));
 vi.mock("../state/AppData", () => ({
   useAppData: () => ({
     version: 0,
-    mutate: vi.fn(),
+    mutate: (fn: () => Promise<unknown>) => fn(),
     toggleSubtopic: vi.fn(),
     progress: null,
     topicById: new Map([["fe.ts", { id: "fe.ts", name: "TypeScript", districtId: "fe" }]]),
@@ -103,6 +109,35 @@ describe("TodayView (Mission Control)", () => {
     expect(screen.queryByText(/Start revision session|All revisions|competing with new learning/)).not.toBeInTheDocument();
     // Study and revision are still told apart by a kind tag.
     expect(screen.getAllByText("Revision").length).toBeGreaterThanOrEqual(1);
+    current = today;
+  });
+
+  it("says once what a re-plan moved and what it did to the finish, until dismissed", async () => {
+    localStorage.clear();
+    changes = [{ at: "2026-11-17T06:00:00.000Z", reason: "DAILY", moved: 6, finishBefore: "2027-03-09", finishAfter: "2027-03-12" }];
+    const first = render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
+    const note = await screen.findByRole("status");
+    expect(note.textContent).toMatch(/^The plan moved 6 tasks to fit work left from earlier days\. Projected finish 12 Mar \(3 days later\)\./);
+    fireEvent.click(screen.getByRole("button", { name: "Got it" }));
+    expect(screen.queryByText(/The plan moved/)).toBeNull();
+    first.unmount();
+    // Seen: not shown again for the same change.
+    render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/17 November 2026/)).toBeInTheDocument());
+    expect(screen.queryByText(/The plan moved/)).toBeNull();
+    changes = [];
+  });
+
+  it("says you are ahead on a study day with nothing planned, and has no bulk move for what stays carried over", async () => {
+    current = { ...today, tasks: [], carriedOver: [task({ id: 9, title: "Pinned earlier", scheduledDate: "2026-11-16", overdueDays: 1, pinned: true })] };
+    render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
+    expect(await screen.findByRole("heading", { name: "Nothing planned today: you're ahead" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Move all forward" })).toBeNull();
+    expect(screen.getByText(/moves unfinished work forward on its own each day/)).toBeInTheDocument();
+    // A pinned task says so, and can be unpinned.
+    expect(screen.getByText("Pinned")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Unpin "Pinned earlier"/ }));
+    expect(patchTask).toHaveBeenCalledWith(9, { pinned: false });
     current = today;
   });
 });

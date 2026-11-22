@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { Today } from "../api/types";
 import { addDays, hm, longDate, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
+import { PlanNotice } from "./PlanNotice";
 import { RecallToday } from "./recall/RecallToday";
 import { TaskRow } from "./TaskRow";
 import { Bar, Loading } from "./ui";
@@ -88,6 +89,7 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
           </div>
         </div>
 
+        {isToday && <PlanNotice version={version} />}
         {isToday && <RecallToday onOpen={onOpenRevision} />}
 
         <div className="grid3">
@@ -135,14 +137,14 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
 
         {data.carriedOver.length > 0 && (
           <div className="section">
-            <h3>
-              Carried over · {plural(data.carriedOver.length, "unfinished task")}
-              <button className="btn" onClick={() => void mutate(() => api.rescheduleOverdue())}>Move all forward</button>
-            </h3>
+            <h3>Carried over · {plural(data.carriedOver.length, "unfinished task")}</h3>
             <ul className="tasks">
               {data.carriedOver.map((t) => <TaskRow key={t.id} task={t} today={data.today} onOpenTopic={onOpenTopic} compact />)}
             </ul>
-            <div className="sub">"Move all forward" puts these on the next study days that have room. Their original dates are kept. Nothing is marked done for you.</div>
+            <div className="sub">
+              The plan moves unfinished work forward on its own each day. These stayed: you moved them to this day by hand
+              (unpin one to let the plan place it), or no study day had room for them yet.
+            </div>
           </div>
         )}
 
@@ -189,6 +191,11 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
             <div className="card rest">
               <h3>Buffer day</h3>
               <p>No new material is planned today. This day exists to absorb delays: use it for carried-over work.</p>
+            </div>
+          ) : isToday && data.targetMinutes > 0 ? (
+            <div className="card rest">
+              <h3>Nothing planned today: you're ahead</h3>
+              <p>Your next tasks are on later days, and the next stage starts on its own date. Use the time to revise, or rest.</p>
             </div>
           ) : (
             <div className="card empty">No tasks on this day.</div>

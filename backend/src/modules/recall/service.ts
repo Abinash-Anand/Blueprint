@@ -11,7 +11,9 @@
  */
 import type { Prisma, PrismaClient, RecallChecklist, RecallPoint, RecallReview } from "@prisma/client";
 import { d2i, i2d } from "../../db.js";
-import { type ISODate, addDays, diffDays } from "../../domain/dates.js";
+import { type ISODate, addDays, diffDays, isoWeekday } from "../../domain/dates.js";
+import { dayBudget } from "../../domain/scheduler.js";
+import { loadWeek } from "../schedule/service.js";
 import type { Clock } from "../../lib/clock.js";
 import { cityScoped } from "../../lib/cityScope.js";
 import { withTimeZone } from "../../lib/zone.js";
@@ -496,11 +498,14 @@ export function recallService(d: RecallDeps) {
   return {
     availability,
 
-    /** Due today (within the daily limit), due but waiting for a free slot, and the next two weeks (plan §3.1). */
+    /**
+     * Due today (as many as today's time holds), due but waiting for a day with time, and the next two weeks (plan
+     * §3.1). The limit is how many recalls fit today: its revision time plus what may be borrowed from new material.
+     */
     async home(db: PrismaClient, userId: string) {
       const t = today();
-      const settings = await db.settings.findFirst({ select: { revisionDailyMinutes: true } });
-      const limit = dailyLimit(settings?.revisionDailyMinutes ?? 30);
+      const b = dayBudget((await loadWeek(db))[isoWeekday(t)] ?? { available: 0, newTarget: 0 });
+      const limit = Math.floor((b.revision + Math.min(b.borrow, b.newMaterial)) / RECALL_TASK_MINUTES);
       const [tasks, doneToday, open] = await Promise.all([
         db.task.findMany({
           where: { recallStateId: { not: null }, status: "TODO", scheduledDate: { lte: i2d(addDays(t, RECALL.upcomingDays)) } },
@@ -514,14 +519,15 @@ export function recallService(d: RecallDeps) {
         subtopicId: x.subtopic!.id, subtopic: x.subtopic!.name, topicId: x.subtopic!.topic.id, topic: x.subtopic!.topic.name, district: x.subtopic!.topic.district.name,
         stage: x.recallState!.stage, nextDueDate: d2i(x.originalDate), lastReviewDate: x.recallState!.lastReviewDate ? d2i(x.recallState!.lastReviewDate) : null,
         taskId: x.id, scheduledDate: d2i(x.scheduledDate),
-        overdueDays: d2i(x.scheduledDate) < t ? diffDays(d2i(x.scheduledDate), t) : 0,
+        // Days past its due date (the scheduler may have carried it onto today).
+        overdueDays: d2i(x.originalDate) < t ? diffDays(d2i(x.originalDate), t) : 0,
       });
       const day = (x: (typeof tasks)[number]) => d2i(x.scheduledDate);
       return {
         today: t, limit, doneToday,
         // Planned for today or earlier (carried over): what to recall now.
         due: tasks.filter((x) => day(x) <= t).map(item),
-        // Due already, but planned for a later day because of the daily limit.
+        // Due already, but planned for a later day: today's time is full.
         later: tasks.filter((x) => day(x) > t && d2i(x.originalDate) <= t).map(item),
         upcoming: tasks.filter((x) => day(x) > t && d2i(x.originalDate) > t).map(item),
         open: open.map((o) => ({ reviewId: o.id, subtopicId: o.subtopicId, status: o.status })),

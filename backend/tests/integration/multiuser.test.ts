@@ -166,6 +166,28 @@ suite("multi-user foundation", () => {
       // A create outside any scope fails closed on the foreign key.
       await expect(prisma.task.create({ data: { title: "orphan", kind: "STUDY", estimatedMinutes: 30, originalDate: new Date(), scheduledDate: new Date(), source: "MANUAL" } })).rejects.toThrow(/foreign key/i);
     });
+
+    it("re-plans one city only, once a day even when two requests arrive together", async () => {
+      const dates = async (city: string) => (await prisma.task.findMany({ where: { cityId: city }, select: { id: true, scheduledDate: true }, orderBy: { id: "asc" } }))
+        .map((t) => `${t.id}:${t.scheduledDate.toISOString().slice(0, 10)}`);
+      const aBefore = await dates("engineering");
+      // A transaction opened from a city client is scoped too: the re-plan loads only that city's tasks.
+      expect(await cityScoped(prisma, bCity).$transaction((tx) => tx.task.count())).toBe(await prisma.task.count({ where: { cityId: bCity } }));
+      clock.date = "2026-11-30"; // a week into B's plan with nothing done: the day's re-plan places the missed work
+      await asUser(app, bWith(bCity)).get("/api/today").expect(200);
+      const changes = (await asUser(app, bWith(bCity)).get("/api/schedule/plan-changes").expect(200)).body;
+      expect(changes[0]).toMatchObject({ reason: "DAILY" });
+      expect(changes[0].moved).toBeGreaterThan(0);
+      expect(await dates("engineering")).toEqual(aBefore);
+      // Two first requests of a new day at once: the lock lets one re-plan, the other finds the day done.
+      clock.date = "2026-12-01";
+      await Promise.all([asUser(app, bWith(bCity)).get("/api/today").expect(200), asUser(app, bWith(bCity)).get("/api/progress").expect(200)]);
+      const after = (await asUser(app, bWith(bCity)).get("/api/schedule/plan-changes").expect(200)).body;
+      expect(after.length - changes.length).toBeLessThanOrEqual(1);
+      expect((await prisma.settings.findUniqueOrThrow({ where: { cityId: bCity } })).replannedFor?.toISOString().slice(0, 10)).toBe("2026-12-01");
+      expect(await dates("engineering")).toEqual(aBefore);
+      clock.date = "2026-11-18";
+    }, 60_000);
   });
 
   describe("curriculum versioning", () => {

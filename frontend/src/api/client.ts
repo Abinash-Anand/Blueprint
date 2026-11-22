@@ -1,6 +1,6 @@
 import type {
   Account, CityAttachment, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template, Understanding,
-  AiStatus, CheckpointResult, Curriculum, Progress, RecallHistoryRow, RecallHome, RecallMatrix, RecallReview, RetrievalMethod, RevisionArchive, Session, Stage, Task, TaskKind, TaskStatus, Today, Topic, Week,
+  AiStatus, CheckpointResult, Curriculum, PlanChange, Progress, RecallHistoryRow, RecallHome, RecallMatrix, RecallReview, RetrievalMethod, RevisionArchive, Session, Stage, Task, TaskKind, TaskStatus, Today, Topic, Week,
 } from "./types";
 
 export class ApiError extends Error {
@@ -54,6 +54,8 @@ export interface TaskPatch {
   estimatedMinutes?: number;
   scheduledDate?: string;
   status?: TaskStatus;
+  /** false: unpin, so the plan may move it again. */
+  pinned?: false;
 }
 
 export interface NewTask {
@@ -125,6 +127,7 @@ export const api = {
   createTask: (body: NewTask) => request<Task>("POST", "/tasks", body),
   patchTask: (id: number, body: TaskPatch) => request<Task>("PATCH", `/tasks/${id}`, body),
   deleteTask: (id: number) => request<void>("DELETE", `/tasks/${id}`),
+  planChanges: () => request<PlanChange[]>("GET", "/schedule/plan-changes"),
   rescheduleOverdue: () => request<{ moved: { id: number; from: string; to: string }[] }>("POST", "/tasks/reschedule-overdue", {}),
   logTime: (body: { date: string; minutes: number; taskId?: number; topicId?: string; note?: string }) =>
     request<Session>("POST", "/sessions", body),

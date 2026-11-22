@@ -104,6 +104,8 @@ export interface Task {
   originalDate: ISODate;
   scheduledDate: ISODate;
   rescheduleCount: number;
+  /** Moved by hand: the scheduler leaves it on its day until it is unpinned. */
+  pinned?: boolean;
   completedAt: string | null;
   overdueDays: number;
   presentation?: Presentation;
@@ -248,6 +250,15 @@ export interface Session {
   taskId: number | null;
   topicId: string | null;
   note: string;
+}
+
+/** A re-plan that moved tasks (docs/Scheduler-Phase2-Plan.md). */
+export interface PlanChange {
+  at: string;
+  reason: "DAILY" | "AVAILABILITY" | "STAGES" | "OVERDUE";
+  moved: number;
+  finishBefore: ISODate | null;
+  finishAfter: ISODate | null;
 }
 
 export interface Today {

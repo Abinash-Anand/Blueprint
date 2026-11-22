@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seed } from "../../prisma/seed.js";
 import { createApp } from "../../src/app.js";
 import { cityScoped } from "../../src/lib/cityScope.js";
+import { syncRecallTasks } from "../../src/modules/recall/tasks.js";
 import { loadAuthConfig } from "../../src/config.js";
 import { TestClock } from "../../src/lib/clock.js";
 import { loadAiConfig } from "../../src/modules/ai/config.js";
@@ -321,24 +322,24 @@ suite("recall", () => {
     expect(a.narrative).toMatch(/changed since last time/);
   });
 
-  it("plans recall tasks within the daily limit, carries missed ones over, and moves one to tomorrow on request", async () => {
-    await prisma.settings.updateMany({ where: { cityId: "engineering" }, data: { revisionDailyMinutes: 8 } }); // one a day
+  it("plans recalls in the day's time, carries missed ones onto the next day, and moves one to tomorrow on request", async () => {
     const subC = (await prisma.subtopic.findFirstOrThrow({ where: { topicId: "fe.ts", position: 2 } })).id;
     await asUser(app, H).patch(`/api/subtopics/${subB}`).send({ completed: true }).expect(200);
     await asUser(app, H).patch(`/api/subtopics/${subC}`).send({ completed: true }).expect(200);
     const day = async (id: number) => (await prisma.task.findFirstOrThrow({ where: { subtopicId: id, status: "TODO", recallStateId: { not: null } } })).scheduledDate.toISOString().slice(0, 10);
-    expect([await day(subB), await day(subC)]).toEqual(["2026-11-25", "2026-11-26"]); // both due on the 25th; one moves on
+    // Both due on the 25th, and the day has time for both: this city has no separate revision time, so recalls borrow
+    // up to half of the 240 new-material minutes (15 recalls of 8 minutes).
+    expect([await day(subB), await day(subC)]).toEqual(["2026-11-25", "2026-11-25"]);
     clock.date = "2026-11-25";
     const h = await home();
-    expect(h.limit).toBe(1);
-    // subA's task from the 24th is carried over, subB is today's, subC waits for the next day.
-    expect(h.due.map((x: { subtopicId: number }) => x.subtopicId)).toEqual([subA, subB]);
-    expect(h.due[0]).toMatchObject({ overdueDays: 1 });
-    expect(h.later.map((x: { subtopicId: number }) => x.subtopicId)).toEqual([subC]);
-    expect((await asUser(app, H).get("/api/today").expect(200)).body.recall).toMatchObject({ dueCount: 2, overdueCount: 1 });
+    expect(h.limit).toBe(15);
+    // subA, due on the 24th and missed, is carried onto today by the day's re-plan; it still counts as a day overdue.
+    expect(h.due.map((x: { subtopicId: number }) => x.subtopicId)).toEqual([subA, subB, subC]);
+    expect(h.due[0]).toMatchObject({ overdueDays: 1, scheduledDate: "2026-11-25" });
+    expect(h.later).toEqual([]);
+    expect((await asUser(app, H).get("/api/today").expect(200)).body.recall).toMatchObject({ dueCount: 3 });
     expect((await asUser(app, H).post(`/api/recall/subtopics/${subB}/postpone`).expect(200)).body.nextDueDate).toBe("2026-11-26");
-    expect(await day(subB)).toBe("2026-11-27"); // the 26th already has subC
-    await prisma.settings.updateMany({ where: { cityId: "engineering" }, data: { revisionDailyMinutes: 30 } });
+    expect(await day(subB)).toBe("2026-11-26");
     await asUser(app, H).patch(`/api/subtopics/${subC}`).send({ completed: false }).expect(200);
   });
 
@@ -354,6 +355,11 @@ suite("recall", () => {
     const prev = (await asUser(app, H).get("/api/week?date=2026-11-29").expect(200)).body.days as { date: string; recall: string[] }[];
     expect(prev.find((d) => d.date === "2026-11-29")!.recall).not.toContain(sub);
     expect(days.find((d) => d.date === "2026-11-30")!.recall).toContain(sub);
+    // Due on the rest day itself: a new task is not parked on the rest day, it goes to the next study day.
+    await prisma.task.deleteMany({ where: { subtopicId: subD, recallStateId: { not: null } } });
+    await syncRecallTasks(cityScoped(prisma, "engineering"), "2026-11-29");
+    const sunday = await prisma.task.findFirstOrThrow({ where: { subtopicId: subD, status: "TODO", recallStateId: { not: null } } });
+    expect([sunday.originalDate.toISOString().slice(0, 10), sunday.scheduledDate.toISOString().slice(0, 10)]).toEqual(["2026-11-29", "2026-11-30"]);
     await asUser(app, H).patch(`/api/subtopics/${subD}`).send({ completed: false }).expect(200);
     clock.date = "2026-11-25";
   });
@@ -458,12 +464,23 @@ suite("recall", () => {
     await prisma.task.deleteMany({ where: { id: { in: [...study, practice] } } });
   });
 
-  it("plans open recall tasks again when the daily limit or the study days change", async () => {
-    const open = () => prisma.task.findMany({ where: { recallStateId: { not: null }, status: "TODO", cityId: "engineering" }, select: { scheduledDate: true } });
-    await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 10 }).expect(200); // one recall a day (8 minutes each)
-    const days = (await open()).map((t) => t.scheduledDate.toISOString().slice(0, 10));
-    expect(days.length).toBeGreaterThan(1);
-    expect(new Set(days).size).toBe(days.length);
-    await asUser(app, H).patch("/api/settings").send({ revisionDailyMinutes: 30 }).expect(200);
+  it("re-plans when study time changes: new material leaves a weekday with no new-material time, recalls may stay", async () => {
+    const weekdayOf = (d: string) => ((new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+    const open = async (recall: boolean) => (await prisma.task.findMany({
+      where: { cityId: "engineering", status: "TODO", kind: recall ? "REVISION" : { not: "REVISION" }, scheduledDate: { gt: new Date(`${clock.date}T00:00:00Z`) } }, // from tomorrow: today's tasks stay
+      select: { scheduledDate: true },
+    })).map((t) => t.scheduledDate.toISOString().slice(0, 10));
+    const weekday = 4; // Thursday
+    const total = (await open(false)).length;
+    expect((await open(false)).some((d) => weekdayOf(d) === weekday)).toBe(true);
+    const before = (await asUser(app, H).get("/api/settings").expect(200)).body.weeklyTargets.find((w: { weekday: number }) => w.weekday === weekday).targetMinutes;
+    await asUser(app, H).patch("/api/settings").send({ weeklyTargets: [{ weekday, targetMinutes: 0 }] }).expect(200);
+    // Thursdays keep their available time, now all of it revision: new material moves off them, nothing is lost.
+    const after = await open(false);
+    expect(after.filter((d) => weekdayOf(d) === weekday)).toEqual([]);
+    expect(after).toHaveLength(total);
+    expect((await asUser(app, H).get("/api/schedule/plan-changes").expect(200)).body[0]).toMatchObject({ reason: "AVAILABILITY" });
+    await asUser(app, H).patch("/api/settings").send({ weeklyTargets: [{ weekday, targetMinutes: before }] }).expect(200);
+    expect((await open(false)).some((d) => weekdayOf(d) === weekday)).toBe(true);
   });
 });

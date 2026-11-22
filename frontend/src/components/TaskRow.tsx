@@ -82,6 +82,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
               </>
             )}
             {compact && t.scheduledDate !== today && <span>on {dayMonth(t.scheduledDate)}</span>}
+            {t.pinned && !done && <span className="tag pin" title="You moved it here: the plan leaves it on this day">Pinned</span>}
             {t.subtopic && !rv && (
               <label className="subchk" title="Ticks the floor in the curriculum and completes this sub-topic's open study tasks (practice tasks stay open).">
                 <input type="checkbox" aria-label={`Sub-topic "${t.subtopic.name}" learned`} checked={t.subtopic.completed} onChange={(e) => void toggleSubtopic(t.topic!.id, t.subtopic!.id, e.target.checked)} />
@@ -96,6 +97,9 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
             )}
             {!rv && <button className="btn" onClick={() => open("log")} aria-expanded={mode === "log"}>Log time</button>}
             <button className="btn" onClick={() => open("move")} aria-expanded={mode === "move"}>Reschedule</button>
+            {t.pinned && !done && (
+              <button className="btn" onClick={() => void mutate(() => api.patchTask(t.id, { pinned: false }))} aria-label={`Unpin "${t.title}": the plan may move it again`}>Unpin</button>
+            )}
             {!rv && <button className="btn" onClick={() => open("edit")} aria-expanded={mode === "edit"}>Edit</button>}
             {rv ? null : t.source === "PLAN" ? (
               <button className="btn" onClick={() => void mutate(() => api.patchTask(t.id, { status: skipped ? "TODO" : "SKIPPED" }))}>
@@ -128,6 +132,7 @@ export function TaskRow({ task: t, today, onOpenTopic, compact }: Props) {
                 Move
               </button>
               <button className="btn" onClick={() => setMode(null)}>Cancel</button>
+              <span className="hint">Moving it pins it: the plan leaves it on that day until you unpin it.</span>
             </div>
           )}
           {mode === "edit" && (

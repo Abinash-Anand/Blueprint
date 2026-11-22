@@ -15,6 +15,7 @@ const CITY_OWNED = new Set([
   "RevisionPrompt", "RevisionSchedule", "RevisionAttempt", "LearningCheckpoint", "RevisionEvaluation", "RevisionReport",
   "RevisionMaterial", "RevisionPack", "RevisionConcept", "RevisionItem", "RevisionTrack", "RevisionSession", "RevisionResponse",
   "ConceptResult", "RecallChecklist", "RecallPoint", "RecallState", "RecallReview", "RecallPointResult", "RecallAnalysis",
+  "PlanChange",
 ]);
 const VIA_TOPIC = new Set(["Subtopic", "Resource", "TopicDependency"]);
 /** Shared, non-personal ledger: the provider quota is per API key, not per city. */

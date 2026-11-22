@@ -179,6 +179,10 @@ model Stage {
   kind      StageKind
   startDate DateTime   @db.Date
   endDate   DateTime   @db.Date
+  /// ISO weekdays (1 = Monday … 7 = Sunday) the stage studies on, from its curriculum; empty: every day with time.
+  weekdays  Int[]      @default([])
+  /// Stages with the same queue share one sequence of topics (the planner's queues); empty: its own.
+  queue     String     @default("")
   districts District[]
   tasks     Task[]
 
@@ -206,6 +210,8 @@ model Task {
   completedAt        DateTime?         @db.Timestamptz(3)
   source             TaskSource
   rescheduleCount    Int               @default(0)
+  /// When the learner moved this task by hand: the scheduler then leaves it where it is until it is unpinned.
+  pinnedAt           DateTime?         @db.Timestamptz(3)
   /// Set for scheduler-created revision tasks. At most one TODO task per schedule (partial unique index, REV-13).
   revisionScheduleId Int?
   revisionSchedule   RevisionSchedule? @relation(fields: [revisionScheduleId], references: [id], onDelete: SetNull)
@@ -257,6 +263,8 @@ model Settings {
   targetDate                    DateTime? @db.Date
   /// When the learner accepted the AI first-use notice (AI design §8.3); null until then.
   aiConsentAt                   DateTime? @db.Timestamptz(3)
+  /// The city's "today" when the plan was last re-planned for a new day (docs/Scheduler-Phase2-Plan.md §2.4).
+  replannedFor                  DateTime? @db.Date
 }
 
 model WeeklyTarget {
@@ -620,6 +628,7 @@ model City {
   recallReviews     RecallReview[]
   recallResults     RecallPointResult[]
   recallAnalyses    RecallAnalysis[]
+  planChanges       PlanChange[]
   districts         District[]
   stages            Stage[]
   settings          Settings?
@@ -1159,6 +1168,22 @@ model RecallPointResult {
 
   @@unique([reviewId, pointId])
   @@index([cityId])
+}
+
+/// A re-plan that moved tasks (docs/Scheduler-Phase2-Plan.md): why, how many, and the projected finish before and after,
+/// so the learner can see what changed and why.
+model PlanChange {
+  id           Int      @id @default(autoincrement())
+  cityId       String   @default("")
+  city         City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  at           DateTime @default(now()) @db.Timestamptz(3)
+  /// DAILY (a new day), AVAILABILITY (study time changed), STAGES (stage dates changed), OVERDUE (moved on request).
+  reason       String
+  moved        Int
+  finishBefore DateTime? @db.Date
+  finishAfter  DateTime? @db.Date
+
+  @@index([cityId, at])
 }
 
 /// Phase 2: how a sub-topic's recall changed since earlier reviews, worked out in code (diffPayload), with a short summary

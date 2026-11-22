@@ -1,14 +1,14 @@
 /**
- * Recall tasks (docs/Recall-Plan.md, the planned workflow): every sub-topic in recall has one open task in the plan,
- * on its due date, up to the daily limit (the rest move to the next day; rest days are skipped), like the earlier
- * revision tasks. A task is completed by its recall being checked, never by ticking; when the date changes the task
- * is planned again. Overdue tasks stay open and are carried over on Today until recalled.
+ * Recall tasks (docs/Recall-Plan.md, the planned workflow): every sub-topic in recall has one open task, due on its
+ * next due date. The scheduler (docs/Scheduler-Phase2-Plan.md) decides its day: on or after the due date, in the day's
+ * revision time, borrowing at most half of its new-material time, never on a rest day. A task is completed by its
+ * recall being checked, never by ticking; when the due date changes the task is replaced.
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { d2i, i2d } from "../../db.js";
-import { type ISODate, addDays, isoWeekday } from "../../domain/dates.js";
-import { loadTargets } from "../schedule/service.js";
-import { RULES, dailyLimit } from "./rules.js";
+import { type ISODate, addDays } from "../../domain/dates.js";
+import { BULK_TX, replanIn } from "../schedule/replan.js";
+import { RULES } from "./rules.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -17,52 +17,45 @@ export const RECALL_TASK_MINUTES = RULES.minutesPerReview;
 /** After the learning tasks of the day. */
 const POSITION = 1000;
 
-/** Brings the plan in line with the recall schedule (city-scoped client). Idempotent. */
-export async function syncRecallTasks(db: Db, today: ISODate) {
-  const [states, settings, targets] = await Promise.all([
-    db.recallState.findMany({
-      include: { subtopic: { select: { id: true, name: true, topicId: true } }, tasks: { where: { status: "TODO" }, select: { id: true, originalDate: true } } },
-      orderBy: [{ nextDueDate: "asc" }, { subtopicId: "asc" }],
-    }),
-    db.settings.findFirst({ select: { revisionDailyMinutes: true } }),
-    loadTargets(db),
-  ]);
-  // Rest days (no study target, e.g. Sunday) get no recall: it moves to the next study day. With no study day at all, any day.
-  const studyDay = (day: ISODate) => (targets[isoWeekday(day)] ?? 0) > 0 || Object.values(targets).every((m) => !m);
-  const limit = dailyLimit(settings?.revisionDailyMinutes ?? 30);
-
-  // Drop open tasks that no longer match their sub-topic's date (unticked, recalled early, postponed).
-  const place: typeof states = [];
+/**
+ * Brings the plan in line with the recall schedule (city-scoped client). Idempotent. Drops open tasks whose due date no
+ * longer matches, adds one for each sub-topic now due without one, and when any came or went, re-plans from tomorrow
+ * (today's tasks stay), so recalls and the new material they borrow time from fit together. Returns how many tasks it
+ * added. Works in the caller's transaction, or its own.
+ */
+export async function syncRecallTasks(db: Db, today: ISODate): Promise<number> {
+  if ("$transaction" in db) return db.$transaction((tx) => syncRecallTasks(tx, today), BULK_TX);
+  const tx = db;
+  const settings = await tx.settings.findFirst({ select: { cityId: true } });
+  if (!settings) return 0;
+  const states = await tx.recallState.findMany({
+    include: { subtopic: { select: { id: true, name: true, topicId: true } }, tasks: { where: { status: "TODO" }, select: { id: true, originalDate: true } } },
+    orderBy: [{ nextDueDate: "asc" }, { subtopicId: "asc" }],
+  });
+  let added = 0;
+  let dropped = 0;
   for (const s of states) {
     const due = s.nextDueDate ? d2i(s.nextDueDate) : null;
     const keep = s.tasks.find((t) => due !== null && d2i(t.originalDate) === due);
     const stale = s.tasks.filter((t) => t !== keep).map((t) => t.id);
-    if (stale.length) await db.task.deleteMany({ where: { id: { in: stale } } });
-    if (due !== null && !keep) place.push(s);
-  }
-  if (!place.length) return 0;
-
-  // Recall tasks already in each day from today on (done ones count: the limit is per day).
-  const planned = await db.task.groupBy({
-    by: ["scheduledDate"],
-    where: { recallStateId: { not: null }, status: { not: "SKIPPED" }, scheduledDate: { gte: i2d(today) } },
-    _count: { _all: true },
-  });
-  const load = new Map(planned.map((p) => [d2i(p.scheduledDate), p._count._all]));
-  for (const s of place) {
-    const due = d2i(s.nextDueDate!);
-    let day = due < today ? today : due;
-    while (!studyDay(day) || (load.get(day) ?? 0) >= limit) day = addDays(day, 1);
-    load.set(day, (load.get(day) ?? 0) + 1);
-    await db.task.create({
+    if (stale.length) dropped += (await tx.task.deleteMany({ where: { id: { in: stale } } })).count;
+    if (due === null || keep) continue;
+    await tx.task.create({
       data: {
         title: `Recall: ${s.subtopic.name}`, kind: "REVISION", source: "REVISION", estimatedMinutes: RECALL_TASK_MINUTES,
         topicId: s.subtopic.topicId, subtopicId: s.subtopic.id, recallStateId: s.id,
-        originalDate: i2d(due), scheduledDate: i2d(day), position: POSITION,
+        // Due today or earlier: on the day before today until the scheduler below places it, as carried-over work that
+        // joins today only if today has time (today's own open tasks never move, so parking it on today would keep it
+        // there, even on a rest day). Due later: on its due date, which the scheduler may move later still.
+        originalDate: i2d(due), scheduledDate: i2d(due <= today ? addDays(today, -1) : due), position: POSITION,
       },
     });
+    added++;
   }
-  return place.length;
+  // Only when a recall task came or went: otherwise there is nothing new to fit, and the day's own re-plan (which tells
+  // the learner what moved) is left to place missed work. A silent re-plan here on start-up used to pre-empt it.
+  if (added || dropped) await replanIn(tx, settings.cityId, today, "RECALL");
+  return added;
 }
 
 /**

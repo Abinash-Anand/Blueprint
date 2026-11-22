@@ -35,6 +35,7 @@ const patchBody = z
     estimatedMinutes: minutes.optional(),
     scheduledDate: isoDate.optional(),
     status: status.optional(),
+    pinned: z.literal(false).optional(),
   })
   .strict()
   .refine((b) => Object.keys(b).length > 0, { message: "Provide at least one field" });

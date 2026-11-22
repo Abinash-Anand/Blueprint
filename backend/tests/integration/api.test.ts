@@ -142,27 +142,46 @@ suite("Engineering City API", () => {
     await asUser(app, H).post("/api/tasks").send({ title: "x", scheduledDate: "2026-11-22", estimatedMinutes: 30, topicId: "zz.nope" }).expect(404);
   });
 
-  it("carries over unfinished work and reschedules it while keeping the original date", async () => {
+  it("re-plans missed work at the start of a new day, keeps the original date, and leaves hand-moved tasks alone", async () => {
+    type T = { id: number; status: string; scheduledDate: string; originalDate: string; estimatedMinutes: number; pinned: boolean };
+    const missed = ((await asUser(app, H).get("/api/tasks?from=2026-11-17&to=2026-11-18")).body as T[]).filter((x) => x.status === "TODO");
+    expect(missed.length).toBeGreaterThan(0);
     clock.date = "2026-11-19"; // two days later; 17–18 Nov mostly unfinished
-    const t = (await asUser(app, H).get("/api/today")).body;
-    expect(t.carriedOver.length).toBeGreaterThan(0);
-    const first = t.carriedOver[0];
-    expect(first.overdueDays).toBe(2);
+    // A server start plans recalls first; with no recall task coming or going, it leaves the missed work to the day's
+    // own re-plan, which records what it moved.
+    await (app.locals.recall as { planAll: () => Promise<number> }).planAll();
+    expect((await prisma.task.count({ where: { id: { in: missed.map((m) => m.id) }, scheduledDate: { lt: new Date("2026-11-19T00:00:00Z") } } }))).toBe(missed.length);
 
-    const moved = await asUser(app, H).patch(`/api/tasks/${first.id}`).send({ scheduledDate: "2026-11-29" }).expect(200);
-    // A manual move may target an optional Sunday; bulk moves never do.
-    expect(moved.body).toMatchObject({ scheduledDate: "2026-11-29", originalDate: first.originalDate, rescheduleCount: 1, status: "TODO" });
-
-    const bulk = await asUser(app, H).post("/api/tasks/reschedule-overdue").send({}).expect(200);
-    expect(bulk.body.moved.length).toBe(t.carriedOver.length - 1);
-    for (const m of bulk.body.moved) expect(m.to >= "2026-11-19").toBe(true);
+    // The first request of the day re-plans: nothing is left carried over, and every missed task keeps its original date.
+    expect((await asUser(app, H).get("/api/today")).body.carriedOver).toEqual([]);
+    const ahead = (await asUser(app, H).get("/api/tasks?from=2026-11-19&to=2026-12-31")).body as T[];
+    const moved = ahead.filter((x) => missed.some((m) => m.id === x.id));
+    expect(moved).toHaveLength(missed.length);
+    for (const x of moved) expect([x.scheduledDate >= "2026-11-19", x.originalDate <= "2026-11-18"]).toEqual([true, true]);
     // No study day is overfilled and nothing lands on Sunday.
-    const tasks = (await asUser(app, H).get("/api/tasks?from=2026-11-19&to=2026-12-31")).body;
     const load = new Map<string, number>();
-    for (const x of tasks) if (x.status !== "SKIPPED" && x.id !== first.id) load.set(x.scheduledDate, (load.get(x.scheduledDate) ?? 0) + x.estimatedMinutes);
+    for (const x of ahead) if (x.status !== "SKIPPED") load.set(x.scheduledDate, (load.get(x.scheduledDate) ?? 0) + x.estimatedMinutes);
     expect(Math.max(...load.values())).toBeLessThanOrEqual(240);
     expect(load.has("2026-11-22") || load.has("2026-11-29")).toBe(false);
-    expect((await asUser(app, H).get("/api/today")).body.carriedOver).toEqual([]);
+    // The change is recorded, once a day: a second request re-plans nothing.
+    const changes = (await asUser(app, H).get("/api/schedule/plan-changes").expect(200)).body;
+    expect(changes[0]).toMatchObject({ reason: "DAILY" });
+    expect(changes[0].moved).toBeGreaterThanOrEqual(missed.length);
+    await asUser(app, H).get("/api/today").expect(200);
+    expect((await asUser(app, H).get("/api/schedule/plan-changes")).body).toHaveLength(changes.length);
+
+    // A task moved by hand is pinned, even onto a rest day, and re-planning leaves it there.
+    const first = moved[0];
+    const pinned = await asUser(app, H).patch(`/api/tasks/${first.id}`).send({ scheduledDate: "2026-11-29" }).expect(200);
+    expect(pinned.body).toMatchObject({ scheduledDate: "2026-11-29", originalDate: first.originalDate, status: "TODO", pinned: true });
+    const bulk = await asUser(app, H).post("/api/tasks/reschedule-overdue").send({}).expect(200);
+    expect(bulk.body.moved.map((m: { id: number }) => m.id)).not.toContain(first.id);
+    const at = async () => ((await asUser(app, H).get("/api/tasks?from=2026-11-19&to=2026-12-31")).body as T[]).find((x) => x.id === first.id)!;
+    expect((await at()).scheduledDate).toBe("2026-11-29");
+    // Unpinned, it goes back to its place in the plan.
+    expect((await asUser(app, H).patch(`/api/tasks/${first.id}`).send({ pinned: false }).expect(200)).body.pinned).toBe(false);
+    await asUser(app, H).post("/api/tasks/reschedule-overdue").send({}).expect(200);
+    expect((await at()).scheduledDate).toBe(first.scheduledDate);
     clock.date = "2026-11-17";
   });
 
