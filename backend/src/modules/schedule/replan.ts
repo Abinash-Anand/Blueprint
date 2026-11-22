@@ -18,7 +18,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
 type Tx = Prisma.TransactionClient;
 
 /** Why a re-plan ran (PlanChange.reason). RECALL runs (a recall's due date changed) are not recorded: too frequent to notice. */
-export type ReplanReason = "DAILY" | "AVAILABILITY" | "STAGES" | "OVERDUE" | "RECALL";
+export type ReplanReason = "DAILY" | "AVAILABILITY" | "STAGES" | "OVERDUE" | "RECALL" | "CURRICULUM";
 
 /** Bulk moves can touch hundreds of rows; allow more than Prisma's 5 s default. */
 export const BULK_TX = { maxWait: 10_000, timeout: 60_000 };

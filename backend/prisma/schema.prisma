@@ -1177,7 +1177,8 @@ model PlanChange {
   cityId       String   @default("")
   city         City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
   at           DateTime @default(now()) @db.Timestamptz(3)
-  /// DAILY (a new day), AVAILABILITY (study time changed), STAGES (stage dates changed), OVERDUE (moved on request).
+  /// DAILY (a new day), AVAILABILITY (study time changed), STAGES (stage dates changed), OVERDUE (moved on request),
+  /// CURRICULUM (a new curriculum version was approved).
   reason       String
   moved        Int
   finishBefore DateTime? @db.Date

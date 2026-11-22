@@ -10,6 +10,7 @@ import { cityScoped } from "../../lib/cityScope.js";
 import { HttpError } from "../../lib/http.js";
 import { recordAvailability } from "../schedule/service.js";
 import { TEMPLATES, type TemplateId, applyCurriculum } from "./apply.js";
+import { updatePlanForCurriculum } from "./planUpdate.js";
 import { CURRICULUM_CONTRACT_VERSION, type CurriculumDocument, diffCurriculum, shiftDocument, validateCurriculum } from "./contract.js";
 
 export interface CityInput {
@@ -223,7 +224,8 @@ export function cityService(prisma: PrismaClient, clock: Clock, userId: string) 
       const v = await prisma.curriculumVersion.findUnique({ where: { cityId_version: { cityId: id, version } } });
       if (!v || v.status !== "PROPOSED") throw new HttpError(409, "NOT_PROPOSED", "Only an open proposal can be approved.");
       const doc = v.content as unknown as CurriculumDocument;
-      const changes = diffCurriculum((await prisma.curriculumVersion.findFirst({ where: { cityId: id, status: "APPLIED" }, orderBy: { version: "desc" } }))?.content as unknown as CurriculumDocument ?? null, doc);
+      const prev = ((await prisma.curriculumVersion.findFirst({ where: { cityId: id, status: "APPLIED" }, orderBy: { version: "desc" } }))?.content ?? null) as unknown as CurriculumDocument | null;
+      const changes = diffCurriculum(prev, doc);
       const blocked = await removalsWithHistory(c, changes.removed.topics);
       if (blocked.length) throw new HttpError(409, "CURRICULUM_REMOVAL_BLOCKED", "This version removes topics that have learning history. Keep them in the curriculum.", { topics: blocked });
       const db = cityScoped(prisma, id);
@@ -234,6 +236,9 @@ export function cityService(prisma: PrismaClient, clock: Clock, userId: string) 
       }
       await applyCurriculum(db, doc, c.idPrefix, clock.today());
       await recordAvailability(db, c.constraints);
+      // An active city's plan follows the new version: new topics get tasks, changed hours resize, then it is re-planned.
+      // (A draft city's whole plan was just built from it.)
+      if (c.status !== "DRAFT") await updatePlanForCurriculum(db, id, c.idPrefix, prev, doc, clock.today());
       for (const k of changes.removed.districts) await db.district.deleteMany({ where: { id: `${c.idPrefix}${k}`, topics: { none: {} } } });
       const appliedAt = new Date();
       await prisma.$transaction([

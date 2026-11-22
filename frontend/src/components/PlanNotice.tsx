@@ -12,6 +12,7 @@ const WHY: Record<PlanChange["reason"], string> = {
   AVAILABILITY: "to fit your new study times",
   STAGES: "to fit the new stage dates",
   OVERDUE: "to move unfinished work forward",
+  CURRICULUM: "to fit the curriculum changes you approved",
 };
 
 const seenKey = () => `bp.planChangeSeen.${getCurrentCity() ?? ""}`;
