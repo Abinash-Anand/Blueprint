@@ -10,7 +10,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import type { RequestHandler } from "express";
 import { d2i, i2d } from "../../db.js";
 import type { ISODate } from "../../domain/dates.js";
-import { type SchedStage, type SchedTask, replan } from "../../domain/scheduler.js";
+import { type SchedStage, type SchedTask, type Split, replan } from "../../domain/scheduler.js";
 import type { Clock } from "../../lib/clock.js";
 import { loadWeek } from "./service.js";
 
@@ -29,8 +29,8 @@ export async function lockPlan(tx: Tx, cityId: string) {
   await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${`plan:${cityId}`}))`;
 }
 
-/** The scheduler's view of a city: its week, stages and tasks. */
-async function loadInput(db: Db, today: ISODate) {
+/** The scheduler's view of a city: its week, stages and tasks (the preview runs it on a proposed week). */
+export async function loadInput(db: Db, today: ISODate) {
   const [week, stageRows, rows] = await Promise.all([
     loadWeek(db),
     db.stage.findMany({ select: { id: true, kind: true, startDate: true, endDate: true, weekdays: true, queue: true } }),
@@ -70,22 +70,52 @@ export async function plannedFinish(db: Db): Promise<ISODate | null> {
  * Re-plans inside an open transaction (the caller's): takes the lock, moves what the scheduler moves, and records the
  * change when anything moved. Today's open tasks never move, so no re-plan reshuffles the day the learner is in.
  */
+/** A continuation part's title: the task's own, marked once as continued. */
+const continued = (title: string) => (/\(continued\)$/.test(title) ? title : `${title} (continued)`);
+
+/**
+ * Writes the scheduler's splits: the task keeps its first part, and each further part becomes a new task right after it
+ * in the plan's order. Order within an original day is by position (then id), so everything after the task on that day
+ * moves down by the number of parts first, and the parts take the positions freed right after it. No original date
+ * changes. Splits are written one at a time, each reading its task's position afresh.
+ */
+async function writeSplits(tx: Tx, splits: Split[]) {
+  for (const x of splits) {
+    const t = await tx.task.findUniqueOrThrow({ where: { id: x.id } });
+    const n = x.parts.length;
+    await tx.task.updateMany({
+      where: { originalDate: t.originalDate, OR: [{ position: { gt: t.position } }, { position: t.position, id: { gt: t.id } }] },
+      data: { position: { increment: n } },
+    });
+    await tx.task.update({ where: { id: t.id }, data: { estimatedMinutes: x.minutes } });
+    await tx.task.createMany({
+      data: x.parts.map((p, i) => ({
+        topicId: t.topicId, subtopicId: t.subtopicId, stageId: t.stageId, title: continued(t.title), notes: t.notes, kind: t.kind,
+        estimatedMinutes: p.minutes, source: t.source, originalDate: t.originalDate, position: t.position + 1 + i, scheduledDate: i2d(p.date),
+      })),
+    });
+  }
+}
+
 export async function replanIn(tx: Tx, cityId: string, today: ISODate, reason: ReplanReason) {
   await lockPlan(tx, cityId);
   const finishBefore = await plannedFinish(tx);
-  const { moves, unplaced } = replan(await loadInput(tx, today));
+  const { moves, splits, unplaced } = replan(await loadInput(tx, today));
   const byDay = new Map<ISODate, number[]>();
   for (const m of moves) byDay.set(m.to, [...(byDay.get(m.to) ?? []), m.id]);
   for (const [day, ids] of byDay) {
     await tx.task.updateMany({ where: { id: { in: ids } }, data: { scheduledDate: i2d(day), rescheduleCount: { increment: 1 } } });
   }
-  const finishAfter = moves.length ? await plannedFinish(tx) : finishBefore;
-  if (moves.length && reason !== "RECALL") {
+  await writeSplits(tx, splits);
+  // Tasks changed: moved, split, or both.
+  const changed = new Set([...moves.map((m) => m.id), ...splits.map((x) => x.id)]).size;
+  const finishAfter = changed ? await plannedFinish(tx) : finishBefore;
+  if (changed && reason !== "RECALL") {
     await tx.planChange.create({
-      data: { cityId, reason, moved: moves.length, finishBefore: finishBefore ? i2d(finishBefore) : null, finishAfter: finishAfter ? i2d(finishAfter) : null },
+      data: { cityId, reason, moved: changed, finishBefore: finishBefore ? i2d(finishBefore) : null, finishAfter: finishAfter ? i2d(finishAfter) : null },
     });
   }
-  return { moved: moves.length, moves, unplaced: unplaced.length, finishBefore, finishAfter };
+  return { moved: changed, moves, splits, unplaced: unplaced.length, finishBefore, finishAfter };
 }
 
 /** Re-plans a city in a transaction of its own. */

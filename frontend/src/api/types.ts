@@ -252,6 +252,38 @@ export interface Session {
   note: string;
 }
 
+/** "Your time" (docs/Availability-Phase3-Plan.md): the choice the sheet edits. */
+export type TimePace = "LIGHT" | "STEADY" | "INTENSIVE" | "CURRENT";
+export interface TimeChoice {
+  minutesPerDay: number;
+  studyDays: number[];
+  pace: TimePace;
+  /** A date to set, null to clear, absent to keep. */
+  targetDate?: ISODate | null;
+  timezone?: string;
+}
+/** The current week, described as the sheet's choice. */
+export interface YourTime extends TimeChoice {
+  /** New material's share of the study time now (for showing "Current"). */
+  share: number;
+  /** False when the study days do not all have the same minutes. */
+  uniform: boolean;
+  targetDate: ISODate | null;
+  timezone: string;
+  paces: Record<"LIGHT" | "STEADY" | "INTENSIVE", number>;
+}
+/** What a choice would do (nothing saved). Minutes. */
+export interface TimePreview {
+  split: { available: number; newMaterial: number; revision: number };
+  finish: { before: ISODate | null; after: ISODate | null };
+  target: { date: ISODate | null; meets: boolean | null; neededNewMinutesPerWeek: number | null };
+  revisionLoad: { weekStart: ISODate; recalls: number; minutes: number }[];
+  moved: number;
+  splitTasks: number;
+  movedToday: number;
+  unchanged: boolean;
+}
+
 /** A re-plan that moved tasks (docs/Scheduler-Phase2-Plan.md). */
 export interface PlanChange {
   at: string;

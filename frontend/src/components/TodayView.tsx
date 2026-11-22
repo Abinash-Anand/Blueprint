@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { Today } from "../api/types";
 import { addDays, hm, longDate, plural } from "../lib/format";
 import { useAppData } from "../state/AppData";
+import { YOUR_TIME, openPage } from "../lib/nav";
 import { PlanNotice } from "./PlanNotice";
 import { RecallToday } from "./recall/RecallToday";
 import { TaskRow } from "./TaskRow";
@@ -108,7 +109,7 @@ export function TodayView({ date, onDate, onOpenTopic, onOpenRevision }: Props) 
             )}
           </div>
           <div className="card stat">
-            <div className="kick">Study time</div>
+            <div className="kick yt-kick">Study time <button type="button" className="link" onClick={() => openPage(YOUR_TIME)}>Change</button></div>
             <div className="v">
               {hm(data.actualMinutes)}
               {data.targetMinutes > 0 && <small>of {hm(data.targetMinutes)}</small>}

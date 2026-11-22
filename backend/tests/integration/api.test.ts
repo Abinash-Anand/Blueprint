@@ -256,4 +256,63 @@ suite("Engineering City API", () => {
     const j = await asUser(app, H).patch("/api/tasks/1").set("Content-Type", "application/json").send("{bad").expect(400);
     expect(j.body.error.code).toBe("INVALID_JSON");
   });
+
+  it("describes your time, previews a change without saving anything, and saves exactly what it previewed", async () => {
+    const now = (await asUser(app, H).get("/api/schedule/availability").expect(200)).body;
+    // The built-in city plans all its hours as new material: no preset matches, so its split shows as "Current".
+    expect(now).toMatchObject({ minutesPerDay: 240, pace: "CURRENT", share: 1, uniform: true, targetDate: null, timezone: "Europe/Berlin" });
+    const choice = { minutesPerDay: now.minutesPerDay, studyDays: now.studyDays, pace: now.pace };
+    expect((await asUser(app, H).post("/api/schedule/preview").send(choice).expect(200)).body).toMatchObject({ unchanged: true, moved: 0 });
+
+    const dates = async () => (await prisma.task.findMany({ where: { cityId: "engineering" }, select: { id: true, scheduledDate: true }, orderBy: { id: "asc" } })).map((t) => `${t.id}:${t.scheduledDate.toISOString()}`);
+    const weekRows = async () => prisma.weeklyTarget.findMany({ where: { cityId: "engineering" }, orderBy: { weekday: "asc" } });
+    const changes = async () => (await asUser(app, H).get("/api/schedule/plan-changes")).body.length;
+    const [d0, w0, c0] = [await dates(), await weekRows(), await changes()];
+
+    // An hour less a day at a Steady pace: later, with revision time, and some tasks move.
+    const less = { ...choice, minutesPerDay: 180, pace: "STEADY" };
+    const p = (await asUser(app, H).post("/api/schedule/preview").send(less).expect(200)).body;
+    expect(p.finish.after > p.finish.before).toBe(true);
+    expect(p.moved).toBeGreaterThan(0);
+    expect(p.split.revision).toBeGreaterThan(0);
+    expect(p.week["1"]).toEqual({ available: 180, newTarget: 135 });
+    expect(p.unchanged).toBe(false);
+    // The preview wrote nothing.
+    expect([await dates(), await weekRows(), await changes()]).toEqual([d0, w0, c0]);
+
+    // Saved: the week is stored and the plan moves exactly as previewed.
+    const open = () => prisma.task.findMany({ where: { cityId: "engineering", status: "TODO", kind: { not: "REVISION" } }, orderBy: [{ originalDate: "asc" }, { position: "asc" }, { id: "asc" }] });
+    const before = await open();
+    const saved = (await asUser(app, H).put("/api/schedule/availability").send(less).expect(200)).body;
+    // Tasks sized for 4-hour days are split to fill 135 minutes: nothing is lost, and the plan's order holds.
+    const afterSave = await open();
+    expect(afterSave.reduce((a, t) => a + t.estimatedMinutes, 0)).toBe(before.reduce((a, t) => a + t.estimatedMinutes, 0));
+    const cont = (xs: { title: string }[]) => xs.filter((t) => t.title.endsWith("(continued)")).length;
+    expect(cont(afterSave) - cont(before)).toBe(afterSave.length - before.length); // every new task is a continuation
+    expect(p.splitTasks).toBeGreaterThan(0);
+    for (const stageId of new Set(afterSave.map((t) => t.stageId))) {
+      const line = afterSave.filter((t) => t.stageId === stageId && t.scheduledDate >= new Date("2026-11-18T00:00:00Z")).map((t) => t.scheduledDate.toISOString());
+      for (let i = 1; i < line.length; i++) expect(line[i] >= line[i - 1]).toBe(true);
+    }
+    expect(saved).toMatchObject({ minutesPerDay: 180, pace: "STEADY" });
+    const pc = (await asUser(app, H).get("/api/schedule/plan-changes")).body[0];
+    expect(pc).toMatchObject({ reason: "AVAILABILITY", moved: p.moved, finishAfter: p.finish.after });
+    expect((await asUser(app, H).post("/api/schedule/preview").send(less).expect(200)).body).toMatchObject({ unchanged: true, moved: 0 });
+
+    // A target date is checked, never moves the plan, and can be cleared; a time zone must exist.
+    const target = (await asUser(app, H).post("/api/schedule/preview").send({ ...less, targetDate: "2027-03-01" }).expect(200)).body;
+    expect(target.target).toMatchObject({ date: "2027-03-01", meets: false });
+    expect(target.target.neededNewMinutesPerWeek).toBeGreaterThan(0);
+    expect(target.moved).toBe(0);
+    await asUser(app, H).put("/api/schedule/availability").send({ ...less, targetDate: "2027-03-01" }).expect(200);
+    expect((await asUser(app, H).get("/api/schedule/availability")).body.targetDate).toBe("2027-03-01");
+    await asUser(app, H).put("/api/schedule/availability").send({ ...less, targetDate: null }).expect(200);
+    expect((await asUser(app, H).get("/api/schedule/availability")).body.targetDate).toBeNull();
+    await asUser(app, H).post("/api/schedule/preview").send({ ...less, targetDate: "2026-11-01" }).expect(400);
+    await asUser(app, H).post("/api/schedule/preview").send({ ...less, timezone: "Mars/Olympus" }).expect(400);
+    await asUser(app, H).post("/api/schedule/preview").send({ ...less, minutesPerDay: 100 }).expect(400); // not in 15-minute steps
+    await asUser(app, H).post("/api/schedule/preview").send({ ...less, studyDays: [] }).expect(400);
+    await asUser(app, H).put("/api/schedule/availability").send({ ...less, timezone: "Asia/Kolkata" }).expect(200);
+    expect((await asUser(app, H).get("/api/schedule/availability")).body.timezone).toBe("Asia/Kolkata");
+  });
 });

@@ -184,6 +184,8 @@ German City has no plan. No task was left without a day.
   so its finish is 10 days to 2 months earlier than the plan can deliver. It shares the day rules, but not the stage
   rules.
 
+**Revised (22 Nov 2026, phase 3): option 2.** Stages now start early once the work before them is placed, and tasks are split to fill a day. See `docs/Availability-Phase3-Plan.md`, 4b. What follows is the first decision, kept for the record.
+
 **Decided (22 Nov 2026): option 1.** Stage start dates stay fixed, and the forecast's finish comes from the scheduler.
 Step 3 gains:
 - the forecast's projected finish becomes the last day of the re-planned open work, and its target-date check uses
