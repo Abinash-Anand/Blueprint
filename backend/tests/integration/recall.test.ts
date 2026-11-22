@@ -241,7 +241,7 @@ suite("recall", () => {
     // Nothing to answer before there is a question.
     expect((await asUser(app, H).post(`/api/recall/reviews/${reviewId}/followup`).send({ answer: "anything" }).expect(409)).body.error.code).toBe("NO_FOLLOWUP");
     const probed = (await asUser(app, H).post(`/api/recall/reviews/${reviewId}/probe`).expect(200)).body;
-    expect(probed.followupQuestion).toMatch(/pitfalls\?$/); // the highest-tier missed point first
+    expect(probed.followupQuestion).toMatch(/usage\?$/); // basics first: the lowest-tier missed point (usage, tier 2), not pitfalls
     // Asking again keeps the same question.
     expect((await asUser(app, H).post(`/api/recall/reviews/${reviewId}/probe`).expect(200)).body.followupQuestion).toBe(probed.followupQuestion);
     expect((await asUser(app, H).post(`/api/recall/reviews/${reviewId}/followup`).send({ answer: "ok" }).expect(400)).body.error.code).toBe("ANSWER_TOO_SHORT");

@@ -31,7 +31,7 @@ import {
 import { RECALL_TASK_MINUTES, completeRecallTask, syncRecallTasks } from "./tasks.js";
 import {
   type AttemptView, type Depth, GradeError, type PointStatus, checklistProblems, computeSessionDiff, cuedRating, dailyLimit, depthOf, imageType, nextSchedule, outcomeOf,
-  answerSpans, recallScore, tierShares, verifyGrade, verifyStatements,
+  answerSpans, checkEvidence, recallScore, tierShares, verifyGrade, verifyStatements,
 } from "./rules.js";
 
 export const RECALL = {
@@ -238,17 +238,24 @@ export function recallService(d: RecallDeps) {
       if (e instanceof GradeError) throw new ProviderError("INVALID_OUTPUT", e.message);
       throw e;
     }
-    if (only || !graded.misconceptions.length) return graded;
-    const check = MisconceptionCheckReply.safeParse(await callGrader(
-      checklist.gradingModel, "recall_misconception_check",
-      misconceptionCheckPrompt({ subtopic, topic, explanation, language, items: graded.misconceptions }), misconceptionCheckJsonSchema, 1500,
-    ));
-    if (!check.success) throw new ProviderError("INVALID_OUTPUT", "The misconception check did not match its shape");
-    const confirmed = confirmedMisconceptions(graded.misconceptions, check.data);
-    if (confirmed.length !== graded.misconceptions.length) {
-      console.log(JSON.stringify({ level: "info", msg: "Recall misconceptions not confirmed", flagged: graded.misconceptions.length, confirmed: confirmed.length }));
+    if (only) return graded;
+    let confirmed = graded.misconceptions;
+    if (confirmed.length) {
+      const check = MisconceptionCheckReply.safeParse(await callGrader(
+        checklist.gradingModel, "recall_misconception_check",
+        misconceptionCheckPrompt({ subtopic, topic, explanation, language, items: graded.misconceptions }), misconceptionCheckJsonSchema, 1500,
+      ));
+      if (!check.success) throw new ProviderError("INVALID_OUTPUT", "The misconception check did not match its shape");
+      confirmed = confirmedMisconceptions(graded.misconceptions, check.data);
+      if (confirmed.length !== graded.misconceptions.length) {
+        console.log(JSON.stringify({ level: "info", msg: "Recall misconceptions not confirmed", flagged: graded.misconceptions.length, confirmed: confirmed.length }));
+      }
     }
-    return { ...graded, misconceptions: confirmed };
+    // Code alone for a definition, or a wrong statement as evidence, does not fully show a point (rules.ts, checkEvidence).
+    const tierOf = new Map(scored.map((p) => [p.code, p.tier]));
+    const checked = checkEvidence(graded.points.map((p) => ({ ...p, tier: tierOf.get(p.code) ?? 2 })), confirmed, explanation);
+    if (checked.changed) console.log(JSON.stringify({ level: "info", msg: "Recall evidence checks lowered points", count: checked.changed }));
+    return { ...graded, points: checked.points, misconceptions: confirmed };
   }
 
   /**
@@ -676,7 +683,25 @@ export function recallService(d: RecallDeps) {
       const { res, missed, partial } = byStatus(r);
       const misconceptions = misconceptionsOf(r.misconceptions);
       if (!missed.length && !partial.length && !misconceptions.length) return reviewDTO(r);
-      const gaps = [...missed, ...partial].sort((a, b) => b.tier - a.tier).map((p) => ({ label: p.label, description: p.description, tier: p.tier, status: res.get(p.id)!.status }));
+      // Basics first (missed before partly, lower tiers first), and how many reviews in a row each missed point was missed.
+      const earlier = await db.recallReview.findMany({
+        where: { subtopicId: r.subtopicId, checklistId: r.checklistId, status: "COMPLETE", attempt: { lt: r.attempt } },
+        orderBy: { attempt: "desc" },
+        select: { results: { select: { pointId: true, status: true } } },
+      });
+      const inARow = (pointId: number) => {
+        let n = 1;
+        for (const e of earlier) {
+          if (e.results.find((x) => x.pointId === pointId)?.status !== "MISSED") break;
+          n++;
+        }
+        return n;
+      };
+      const byTier = (a: { tier: number }, b: { tier: number }) => a.tier - b.tier;
+      const gaps = [...[...missed].sort(byTier), ...[...partial].sort(byTier)].map((p) => ({
+        label: p.label, description: p.description, tier: p.tier, status: res.get(p.id)!.status,
+        missedInARow: res.get(p.id)!.status === "MISSED" ? inARow(p.id) : 0,
+      }));
       let questions: string[];
       try {
         questions = ProbeReply.parse(await generateJson("recall_probe", config.generationModel, probePrompt(contextOf(r), gaps, misconceptions), probeJsonSchema, 800, 0.3)).questions;

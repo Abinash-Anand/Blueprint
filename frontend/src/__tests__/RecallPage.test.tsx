@@ -65,6 +65,19 @@ describe("recall page", () => {
     expect((screen.getByRole("button", { name: "Check my recall" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("does not take pasted or dropped text: recall is from memory", async () => {
+    render(<RecallPage subtopicId={1} onClose={() => {}} />);
+    const box = await screen.findByRole("textbox", { name: "Type what you remember" });
+    const pasted = fireEvent.paste(box, { clipboardData: { getData: () => "Observable and observer. Multicasting. Late subscribers." } });
+    expect(pasted).toBe(false); // the paste was cancelled
+    expect((box as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByRole("status").textContent).toBe("Recall is from memory, so pasting is off here. Type it, or speak instead.");
+    expect(fireEvent.drop(box, { dataTransfer: { getData: () => "dropped text" } })).toBe(false);
+    // Typing still works.
+    fireEvent.change(box, { target: { value: "A Subject is both" } });
+    expect((box as HTMLTextAreaElement).value).toBe("A Subject is both");
+  });
+
   it("sends what was typed and follows the check until the results", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     render(<RecallPage subtopicId={1} onClose={() => {}} />);

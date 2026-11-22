@@ -264,6 +264,44 @@ export function verifyGrade(reply: GradeReply, codes: string[], explanation: str
   return { points, misconceptions, rejectedQuotes };
 }
 
+/* ---------------- evidence that does not show the point ---------------- */
+
+const PROSE = /^[A-Za-z][a-z]+[,.;:!?]?$/;
+/** Plain words in a text: runs of lower-case letters, as prose has and code mostly lacks (identifiers, markup and symbols do not count). */
+export const proseWords = (s: string) => s.split(/\s+/).filter((t) => PROSE.test(t)).length;
+/** A quote that is code or markup rather than an explanation: a code symbol and fewer than three plain words. */
+export const codeOnly = (s: string) => /[<>(){}[\]=;]/.test(s) && proseWords(s) < 3;
+/** An answer with fewer plain words than this is code, not an explanation. */
+export const MIN_PROSE_WORDS = 12;
+
+/**
+ * Two checks in code on what the grader credited, after its quotes and misconceptions are verified:
+ * - Code shows how, not what or why: in an answer that is code with almost no explanation, a definition or purpose
+ *   point (tier 1) credited on a code quote counts as partly shown. How-it-works points can be shown by code.
+ * - A wrong statement is not evidence: a point whose quote overlaps a confirmed misconception drops one step
+ *   (remembered to partly, partly to missed). The misconception still counts once, as before.
+ * Returns the points (a point that drops to missed loses its quote) and how many changed.
+ */
+export function checkEvidence(
+  points: (GradedPoint & { tier: number })[], misconceptions: { claim: string }[], explanation: string,
+): { points: GradedPoint[]; changed: number } {
+  const text = words(explanation);
+  const wrong = misconceptions.flatMap((m) => quoteParts(m.claim, text) ?? []);
+  const codeAnswer = proseWords(explanation) < MIN_PROSE_WORDS;
+  let changed = 0;
+  const out = points.map(({ code, status, evidence, tier }): GradedPoint => {
+    let s = status;
+    if (codeAnswer && tier === 1 && s === "ACCURATE" && evidence && codeOnly(evidence)) s = "PARTIAL";
+    if (s !== "MISSED" && evidence && wrong.length) {
+      const at = quoteParts(evidence, text) ?? [];
+      if (at.some(([a, b]) => wrong.some(([c, d]) => a < d && c < b))) s = s === "ACCURATE" ? "PARTIAL" : "MISSED";
+    }
+    if (s !== status) changed++;
+    return { code, status: s, evidence: s === "MISSED" ? null : evidence };
+  });
+  return { points: out, changed };
+}
+
 /**
  * Checks the statements written for a checklist: exactly one non-empty sentence for every point code, none repeated or
  * unknown. Returns them by code, trimmed to one line, or throws GradeError.
