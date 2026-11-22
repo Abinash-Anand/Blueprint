@@ -18,6 +18,19 @@ const task = (over: Partial<SchedTask> = {}): SchedTask => {
   return { id, kind: "NEW", state: "OPEN", minutes: 30, date: day(0), originalDate: day(0), position: id, stageId: null, ...over };
 };
 const recall = (due: ISODate, over: Partial<SchedTask> = {}) => task({ kind: "RECALL", minutes: 8, date: due, originalDate: due, ...over });
+/** The tasks after a re-plan, as the database writes them: moved, and split tasks shortened with their parts added. */
+function applied(tasks: SchedTask[], r: { moves: { id: number; to: ISODate }[]; splits: { id: number; minutes: number; parts: { minutes: number; date: ISODate }[] }[] }) {
+  const to = new Map(r.moves.map((m) => [m.id, m.to]));
+  const split = new Map(r.splits.map((x) => [x.id, x]));
+  let id = Math.max(0, ...tasks.map((t) => t.id));
+  const out = tasks.map((t) => ({ ...t, date: to.get(t.id) ?? t.date, minutes: split.get(t.id)?.minutes ?? t.minutes }));
+  for (const x of r.splits) {
+    const t = tasks.find((y) => y.id === x.id)!;
+    for (const p of x.parts) out.push({ ...t, id: ++id, minutes: p.minutes, date: p.date });
+  }
+  return out;
+}
+
 /** Where each task ends up: its move, or where it was. */
 const where = (input: ReplanInput) => {
   const r = replan(input);
@@ -56,10 +69,15 @@ describe("re-planning", () => {
     expect(late.map(where({ today: day(4), week: weekdays(90, 60), stages: [], tasks: late }).at)).toEqual([day(4), day(7), day(8)]);
   });
 
-  it("keeps the order: a task that does not fit waits, and the rest of its queue waits with it", () => {
+  it("splits a task that does not fit the room left, so no time goes unused, and keeps the order", () => {
     const ts = [task({ minutes: 30, position: 1, date: day(-1) }), task({ minutes: 60, position: 2, date: day(-1) }), task({ minutes: 30, position: 3, date: day(-1) })];
     const r = where({ today: MON, week: weekdays(60, 60), stages: [], tasks: ts });
-    expect(ts.map(r.at)).toEqual([day(0), day(1), day(2)]); // the last 30 min does not jump into Monday's free half hour
+    // Monday: 30, then half of the hour-long task; Tuesday: its other half, then the last task.
+    expect(ts.map(r.at)).toEqual([day(0), day(0), day(1)]);
+    expect(r.splits).toEqual([{ id: ts[1].id, minutes: 30, parts: [{ minutes: 30, date: day(1) }] }]);
+    // No part shorter than 30 minutes: 45 minutes of room takes 30 of a 60-minute task, never 45 + 15.
+    const t60 = task({ minutes: 60, date: day(-1) });
+    expect(replan({ today: MON, week: weekdays(45, 45), stages: [], tasks: [t60] }).splits).toEqual([{ id: t60.id, minutes: 30, parts: [{ minutes: 30, date: day(1) }] }]);
   });
 
   it("does revision first: in revision time, then up to half the new material, then the next day", () => {
@@ -96,7 +114,7 @@ describe("re-planning", () => {
     expect([r.at(todays), r.at(overdue), r.at(tomorrow)]).toEqual([day(0), day(0), day(1)]); // tomorrow's is not pulled in
   });
 
-  it("follows stages: their weekdays, their start, and the days a parallel stage claims", () => {
+  it("follows stages: their weekdays, the days a parallel stage claims, and a start brought forward once earlier work is placed", () => {
     const week = Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((d) => [d, { available: 60, newTarget: 60 }]));
     const stages: SchedStage[] = [
       { id: "main", kind: "MAIN", start: day(0), end: day(30), weekdays: [1, 2, 3, 4, 5, 6, 7], queue: "main" },
@@ -111,15 +129,24 @@ describe("re-planning", () => {
     expect(main.map(r.at)).toEqual([day(0), day(1), day(3), day(4)]);
     expect(side.map(r.at)).toEqual([day(2), day(9)]);
     expect(side.map(r.at).every((d) => isoWeekday(d) === 3)).toBe(true);
-    // A stage that starts later waits for its start, and its first free weekday.
-    expect(r.at(later[0])).toBe(day(10));
+    // A later stage (10 Dec) starts as soon as the earlier main stage's work is placed (Fri 27 Nov), on its first
+    // weekday with room: Monday 30 Nov, not its own start date.
+    expect(r.at(later[0])).toBe(day(7));
+    // While earlier work is still open, it waits for its own start date.
+    const busy = [...Array(20)].map((_, i) => task({ minutes: 60, stageId: "main", position: 100 + i, date: day(-1) }));
+    const r2 = where({ today: MON, week, stages, tasks: [...busy, ...later] });
+    expect(r2.at(later[0]) >= day(10)).toBe(true);
   });
 
-  it("puts a task bigger than a day alone on a day, rather than holding up its queue", () => {
+  it("splits a task bigger than a day across days, and puts one whole on a day too short for any part", () => {
     const big = task({ minutes: 120, position: 1, date: day(-1) });
     const next = task({ minutes: 30, position: 2, date: day(-1) });
     const r = where({ today: MON, week: weekdays(60, 60), stages: [], tasks: [big, next] });
-    expect([r.at(big), r.at(next)]).toEqual([day(0), day(1)]);
+    expect([r.at(big), r.at(next)]).toEqual([day(0), day(2)]);
+    expect(r.splits).toEqual([{ id: big.id, minutes: 60, parts: [{ minutes: 60, date: day(1) }] }]);
+    // 20 minutes a day can take no 30-minute part: the task goes whole, alone, rather than waiting for ever.
+    const r2 = where({ today: MON, week: weekdays(20, 20), stages: [], tasks: [big] });
+    expect([r2.at(big), r2.splits]).toEqual([day(0), []]);
   });
 
   it("puts a recall too big for any day alone on its own study day, as revision must not wait forever", () => {
@@ -130,12 +157,12 @@ describe("re-planning", () => {
 
   it("leaves work it cannot place where it is", () => {
     const t = task({ date: day(-1) });
-    expect(replan({ today: MON, week: weekdays(0, 0), stages: [], tasks: [t], horizonDays: 30 })).toEqual({ moves: [], unplaced: [t.id] });
+    expect(replan({ today: MON, week: weekdays(0, 0), stages: [], tasks: [t], horizonDays: 30 })).toEqual({ moves: [], splits: [], unplaced: [t.id] });
   });
 });
 
 describe("a fresh plan", () => {
-  it("is left as the original planner built it: the first re-plan moves nothing", async () => {
+  it("only brings work forward on the first re-plan of a fresh plan: same order, a finish no later, then stable", async () => {
     const { buildPlan } = await import("../../src/domain/planner.js");
     const { DEFAULT_TARGETS, queues, stages } = await import("../../src/curriculum/index.js");
     const planQueues = Object.fromEntries(Object.entries(queues()).map(([k, v]) => [k, v.map((t) => ({ slug: t.slug, name: t.name, hours: t.hours, subtopics: t.subtopics, exercise: t.exercise }))]));
@@ -148,7 +175,17 @@ describe("a fresh plan", () => {
       tasks: plan.map((p, i) => ({ id: i + 1, kind: "NEW", state: "OPEN", minutes: p.minutes, date: p.date, originalDate: p.date, position: p.position, stageId: p.stageSlug })),
     };
     expect(plan.length).toBeGreaterThan(100);
-    expect(replan(input)).toEqual({ moves: [], unplaced: [] });
+    const once = replan(input);
+    expect(once.unplaced).toEqual([]);
+    // The planner left days empty between stages; stages now start once the work before them is placed.
+    expect(once.moves.length).toBeGreaterThan(0);
+    expect(once.moves.every((m) => m.to < m.from)).toBe(true);
+    const after = applied(input.tasks, once);
+    const last = (ts: SchedTask[]) => ts.map((t) => t.date).sort().at(-1)!;
+    expect(last(after) <= last(input.tasks)).toBe(true);
+    expect(after.reduce((a, t) => a + t.minutes, 0)).toBe(input.tasks.reduce((a, t) => a + t.minutes, 0));
+    const again = replan({ ...input, tasks: after });
+    expect([again.moves, again.splits]).toEqual([[], []]);
   });
 });
 
@@ -210,56 +247,82 @@ function generated(seed: number): ReplanInput {
 describe("the scheduler's guarantees, on generated plans", () => {
   const seeds = Array.from({ length: 60 }, (_, i) => i + 1);
 
-  it.each(seeds)("plan %i: order, time, due dates, fixed work, and stability", (seed) => {
+  it.each(seeds)("plan %i: order, time, due dates, fixed work, splits, and stability", (seed) => {
     const input = generated(seed);
-    const { moves, unplaced } = replan(input);
-    const to = new Map(moves.map((m) => [m.id, m.to]));
-    const at = (t: SchedTask) => to.get(t.id) ?? t.date;
+    const r = replan(input);
+    const { moves, splits, unplaced } = r;
     const stage = new Map(input.stages.map((s) => [s.id, s]));
+    const after = applied(input.tasks, r);
+    const original = new Map(input.tasks.map((t) => [t.id, t]));
+    // Each task's pieces after the re-plan: itself, and its parts when split (parts have new ids, in order).
+    const pieces = new Map<number, SchedTask[]>();
+    let next = Math.max(0, ...input.tasks.map((t) => t.id));
+    for (const t of input.tasks) pieces.set(t.id, [after.find((x) => x.id === t.id)!]);
+    for (const x of splits) {
+      for (let k = 0; k < x.parts.length; k++) {
+        const partId = ++next;
+        pieces.get(x.id)!.push(after.find((y) => y.id === partId)!);
+      }
+    }
+    const first = (t: SchedTask) => pieces.get(t.id)![0].date;
+    const lastOf = (t: SchedTask) => pieces.get(t.id)!.at(-1)!.date;
 
-    // Fixed and skipped work never moves; nothing moves before today; today only gains carried-over work.
+    // Fixed and skipped work never moves or splits; nothing moves before today; today only gains carried-over work.
     for (const m of moves) {
-      const t = input.tasks.find((x) => x.id === m.id)!;
+      const t = original.get(m.id)!;
       expect(t.state).toBe("OPEN");
       expect(m.to >= MON).toBe(true);
       if (m.to === MON) expect(t.date < MON).toBe(true);
     }
+    for (const x of splits) {
+      const t = original.get(x.id)!;
+      expect([t.state, t.kind]).toEqual(["OPEN", "NEW"]);
+      // Nothing is lost, no part is too short, and parts follow each other.
+      expect(x.minutes + x.parts.reduce((a, p) => a + p.minutes, 0)).toBe(t.minutes);
+      for (const m of [x.minutes, ...x.parts.map((p) => p.minutes)]) expect(m).toBeGreaterThanOrEqual(30);
+      const days = [first(t), ...x.parts.map((p) => p.date)];
+      for (let i = 1; i < days.length; i++) expect(days[i] > days[i - 1]).toBe(true);
+    }
     // A recall never goes before its due date.
-    for (const t of input.tasks.filter((x) => x.kind === "RECALL" && x.state === "OPEN" && !unplaced.includes(x.id))) expect(at(t) >= t.originalDate).toBe(true);
+    for (const t of input.tasks.filter((x) => x.kind === "RECALL" && x.state === "OPEN" && !unplaced.includes(x.id))) expect(first(t) >= t.originalDate).toBe(true);
 
     // Within a queue, new material keeps its order (today's own open tasks stay where they are and are left out).
     const movable = input.tasks.filter((t) => t.kind === "NEW" && t.state === "OPEN" && t.date !== MON && !unplaced.includes(t.id));
     for (const q of new Set(input.stages.map((s) => s.queue))) {
       const line = movable.filter((t) => stage.get(t.stageId!)?.queue === q)
         .sort((a, b) => a.originalDate.localeCompare(b.originalDate) || a.position - b.position || a.id - b.id);
-      for (let i = 1; i < line.length; i++) expect(at(line[i]) >= at(line[i - 1])).toBe(true);
-      // ...and only on its stage's days.
+      for (let i = 1; i < line.length; i++) expect(first(line[i]) >= lastOf(line[i - 1])).toBe(true);
+      // ...only on its stage's weekdays, and before its stage's start date only once every earlier stage of the same
+      // kind has all its open work placed by then.
       for (const t of line) {
         const s = stage.get(t.stageId!)!;
-        expect(s.weekdays).toContain(isoWeekday(at(t)));
-        expect(at(t) >= s.start).toBe(true);
+        for (const p of pieces.get(t.id)!) expect(s.weekdays).toContain(isoWeekday(p.date));
+        if (first(t) < s.start) {
+          const earlierWork = movable.filter((x) => { const o = stage.get(x.stageId!); return o && o.kind === s.kind && o.start < s.start; });
+          for (const x of earlierWork) expect(lastOf(x) <= first(t)).toBe(true);
+        }
       }
     }
 
-    // From tomorrow, no day gets more than its time, unless one oversized task or recall sits alone on it, or fixed
-    // work already overfills it.
+    // From tomorrow, no day gets more than its time, unless fixed work already overfills it, a day too short for any
+    // part takes a task whole, or a recall too big for any day sits alone.
     const days = new Map<ISODate, SchedTask[]>();
-    for (const t of input.tasks.filter((x) => x.state !== "SKIPPED" && !unplaced.includes(x.id))) {
-      const d = at(t);
-      if (d > MON) days.set(d, [...(days.get(d) ?? []), t]);
+    for (const t of after.filter((x) => x.state !== "SKIPPED" && !unplaced.includes(x.id))) {
+      if (t.date > MON) days.set(t.date, [...(days.get(t.date) ?? []), t]);
     }
     for (const [d, ts] of days) {
       const b = dayBudget(input.week[isoWeekday(d)]);
       const fixed = ts.filter((t) => t.state === "FIXED").reduce((a, t) => a + t.minutes, 0);
       const placedNew = ts.filter((t) => t.state === "OPEN" && t.kind === "NEW");
       const total = ts.reduce((a, t) => a + t.minutes, 0);
-      const alone = placedNew.length === 1 && placedNew[0].minutes > b.newMaterial;
+      const tinyDay = placedNew.length === 1 && b.newMaterial < 30;
       const loneRecall = ts.filter((t) => t.state === "OPEN" && t.kind === "RECALL").length === 1 && placedNew.length === 0;
-      if (!alone && !loneRecall && fixed <= b.available) expect(total, `day ${d}`).toBeLessThanOrEqual(b.available);
+      if (!tinyDay && !loneRecall && fixed <= b.available) expect(total, `day ${d}`).toBeLessThanOrEqual(b.available);
+      if (!tinyDay && fixed <= b.newMaterial) expect(placedNew.reduce((a, t) => a + t.minutes, 0) + ts.filter((t) => t.state === "FIXED" && t.kind === "NEW").reduce((a, t) => a + t.minutes, 0), `new on ${d}`).toBeLessThanOrEqual(b.newMaterial);
     }
 
-    // Stable: re-planning its own result moves nothing.
-    const again = replan({ ...input, tasks: input.tasks.map((t) => ({ ...t, date: at(t) })) });
-    expect(again.moves).toEqual([]);
+    // Stable: re-planning its own result moves and splits nothing.
+    const again = replan({ ...input, tasks: after });
+    expect([again.moves, again.splits]).toEqual([[], []]);
   });
 });

@@ -281,7 +281,19 @@ suite("Engineering City API", () => {
     expect([await dates(), await weekRows(), await changes()]).toEqual([d0, w0, c0]);
 
     // Saved: the week is stored and the plan moves exactly as previewed.
+    const open = () => prisma.task.findMany({ where: { cityId: "engineering", status: "TODO", kind: { not: "REVISION" } }, orderBy: [{ originalDate: "asc" }, { position: "asc" }, { id: "asc" }] });
+    const before = await open();
     const saved = (await asUser(app, H).put("/api/schedule/availability").send(less).expect(200)).body;
+    // Tasks sized for 4-hour days are split to fill 135 minutes: nothing is lost, and the plan's order holds.
+    const afterSave = await open();
+    expect(afterSave.reduce((a, t) => a + t.estimatedMinutes, 0)).toBe(before.reduce((a, t) => a + t.estimatedMinutes, 0));
+    const cont = (xs: { title: string }[]) => xs.filter((t) => t.title.endsWith("(continued)")).length;
+    expect(cont(afterSave) - cont(before)).toBe(afterSave.length - before.length); // every new task is a continuation
+    expect(p.splitTasks).toBeGreaterThan(0);
+    for (const stageId of new Set(afterSave.map((t) => t.stageId))) {
+      const line = afterSave.filter((t) => t.stageId === stageId && t.scheduledDate >= new Date("2026-11-18T00:00:00Z")).map((t) => t.scheduledDate.toISOString());
+      for (let i = 1; i < line.length; i++) expect(line[i] >= line[i - 1]).toBe(true);
+    }
     expect(saved).toMatchObject({ minutesPerDay: 180, pace: "STEADY" });
     const pc = (await asUser(app, H).get("/api/schedule/plan-changes")).body[0];
     expect(pc).toMatchObject({ reason: "AVAILABILITY", moved: p.moved, finishAfter: p.finish.after });

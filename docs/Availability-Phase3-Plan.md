@@ -125,6 +125,52 @@ from Progress and Today).
   preview of "more time" will mostly show more free days, not an earlier finish. To be decided before the sheet
   ships: say this plainly in the preview, or let a later stage start early.
 
+## 4b. Decided: stages start early, and tasks split (22 Nov 2026)
+
+You chose option 2: a stage may start before its start date once every earlier stage of the same kind (main or
+parallel) has all its open work placed. Its weekdays and the days a parallel stage claims still apply. Stage dates
+stay in the database as targets, so Progress can still say "behind" or "ahead". This reverses phase 2's option 1
+(`docs/Scheduler-Phase2-Plan.md`, 5a).
+
+**Measuring that showed a second limit, now fixed: tasks could not be split.**
+- The first plan cut topics into pieces sized to fill the days exactly (up to 2 hours). When the time per day
+  changes, those pieces stop fitting, and the rest of the day goes unused.
+- For example, AI Engineer at 180 minutes of new material a day fits one 2-hour piece, and so does 225 minutes. More
+  time therefore barely helped.
+- **The fix:** a task that does not fit the room left in a day is now split. The part that fits goes there (15-minute
+  steps, at least 30 minutes), and the rest becomes "(continued)" tasks right after it. Recalls never split. This
+  replaces the "oversized task goes alone onto a day" rule, which now applies only to a day too short for any part.
+- **Order is kept through `position`,** which means "order within its original day". Before a task's parts are
+  inserted, everything after it on its original day moves down by the number of parts. No original date changes.
+- **Migration `20261130090000_replan_rules`** clears each city's daily re-plan marker, so every city re-plans under
+  the new rules on its next visit rather than tomorrow.
+
+**Measured on a copy of the local data** (backup `before-your-time-20261122-191242.dump`):
+
+| City | First re-plan: tasks changed (split) | Projected finish | 1 h more a day | 1 h less a day |
+|---|---|---|---|---|
+| AI Engineer | 522 (49) | 16 Sep → 2 Aug 2027 | 21 Jun 2027 | 15 Nov 2027 |
+| Angular City | 74 (1) | 25 Jan → 14 Jan 2027 | 28 Dec 2026 | 8 Mar 2027 |
+| Engineering City | 483 (24) | 12 Aug → 3 Jul 2027 | 27 May 2027 | 15 Sep 2027 |
+| Full-Stack AI Engineer | 454 (104) | 18 Aug → 10 Jul 2027 | 4 Jun 2027 | 27 Sep 2027 |
+| German A1 to C1 | 680 (0) | 8 Feb 2028 → 23 Dec 2027 | 5 Oct 2027 | 12 Jul 2028 |
+| German A1 to C1 (2) | 433 (53) | 7 Sep → 31 Jul 2027 | 13 Jun 2027 | 17 Dec 2027 |
+| German B2 | 367 (281) | 3 Nov → 20 Sep 2027 | 11 Jun 2027 | 17 Jul 2028 |
+| German C1 | 348 (0) | 9 Nov → 7 Oct 2027 | 5 Aug 2027 | 17 Mar 2028 |
+| German Language | 750 (114) | 19 Jan 2028 → 4 Dec 2027 | 1 Sep 2027 | 9 Jun 2028 |
+| Jasmine City | 125 (26) | 5 Apr → 11 Mar 2027 | 3 Feb 2027 | 30 Jun 2027 |
+| RxJS in Angular | 86 (6) | 28 Jan → 8 Jan 2027 | 28 Dec 2026 | 13 Apr 2027 |
+| Tech City | 682 (137) | 13 Jan 2028 → 16 Nov 2027 | 6 Sep 2027 | 14 Mar 2028 |
+
+In every city:
+- open minutes are unchanged, a second re-plan changes nothing, and the current week previews as unchanged;
+- the first re-plan takes 0.1–2.4 s (the most splits, German B2's 281, take longest). It happens once, on each
+  city's first visit after the deploy.
+
+**Tests:** backend 371. The generated plans now also check that nothing is lost, that no part is under 30 minutes,
+that parts follow each other, that no day gets more new material than its time, and that re-planning the split
+result changes nothing. Through the database, a saved change splits and keeps the plan's order.
+
 ## 5. Questions for you
 
 1. **Hours model:** one "hours per study day" for all study days, as at creation (suggested; it fits every city you

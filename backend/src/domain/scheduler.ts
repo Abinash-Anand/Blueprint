@@ -101,22 +101,36 @@ export interface ReplanInput {
 
 export interface Move { id: number; from: ISODate; to: ISODate }
 
+/**
+ * A task split to fill a day's room: the task keeps `minutes` (on its moved day), and each part becomes a new task
+ * right after it (same original date and position, a higher id), in order.
+ */
+export interface Split { id: number; minutes: number; parts: { minutes: number; date: ISODate }[] }
+
 export interface ReplanResult {
-  /** Open tasks whose day changes. */
+  /** Open tasks whose day changes (for a split task, the day of its first part). */
   moves: Move[];
+  /** Tasks split across days. */
+  splits: Split[];
   /** Open tasks that found no day within the horizon: left where they are. */
   unplaced: number[];
 }
+
+/** New material is split in steps of this many minutes, and no part is shorter than MIN_PART. */
+export const SPLIT_STEP = 15;
+export const MIN_PART = 30;
 
 const byOrder = (a: SchedTask, b: SchedTask) => a.originalDate.localeCompare(b.originalDate) || a.position - b.position || a.id - b.id;
 
 /**
  * Re-plans a city's open work from today. Today's open tasks stay on today (the learner may be partway through); only
  * work carried over from earlier days may join them in today's free time. From tomorrow, all open work flows again.
+ * A task that does not fit the room left in a day is split: the part that fits goes there (in SPLIT_STEP minutes, at
+ * least MIN_PART), the rest continues on the next days, so time is not left unused when the learner's hours change.
  * Guarantees (tests/unit/scheduler.test.ts): new material keeps its order within its queue; no day gets more new
- * material than its new-material time, or more than its time in all, except one oversized task alone on a day (or
- * fixed work that already overfills it); a recall never goes before its due date; fixed and skipped tasks never move;
- * re-planning its own result moves nothing.
+ * material than its new-material time, or more than its time in all (unless fixed work already overfills it, a day
+ * too short for any part takes a task alone, or a recall too big for any day goes alone); a recall never goes before
+ * its due date; fixed and skipped tasks never move; re-planning its own result moves and splits nothing.
  */
 export function replan(input: ReplanInput): ReplanResult {
   const { today } = input;
@@ -127,10 +141,19 @@ export function replan(input: ReplanInput): ReplanResult {
   const budget = (d: ISODate) => dayBudget(input.week[isoWeekday(d)] ?? { available: 0, newTarget: 0 }, share);
   // Days a parallel stage claims are not used by main stages (as when the plan was first built).
   const reserved = (d: ISODate) => parallels.some((s) => d >= s.start && d <= s.end && s.weekdays.includes(isoWeekday(d)));
+  // A stage starts on its start date, or earlier once every earlier stage of its kind has all its open work placed: more
+  // time then means an earlier finish (docs/Availability-Phase3-Plan.md, 4b). Its weekdays, and the days a parallel stage
+  // claims, still apply. Stage dates stay as they are: targets the learner can be ahead of or behind.
+  const openLeft = new Map<string, number>();
+  for (const t of input.tasks) {
+    if (t.kind === "NEW" && t.state === "OPEN" && t.date !== today && t.stageId && stage.has(t.stageId)) openLeft.set(t.stageId, (openLeft.get(t.stageId) ?? 0) + 1);
+  }
+  const earlier = new Map(input.stages.map((s) => [s.id, input.stages.filter((o) => o.kind === s.kind && o.start < s.start).map((o) => o.id)]));
+  const started = (s: SchedStage, d: ISODate) => d >= s.start || earlier.get(s.id)!.every((p) => !openLeft.get(p));
   const eligible = (t: SchedTask, d: ISODate) => {
     const s = t.stageId ? stage.get(t.stageId) : undefined;
     if (!s) return true;
-    return d >= s.start && s.weekdays.includes(isoWeekday(d)) && (s.kind === "PARALLEL" || !reserved(d));
+    return started(s, d) && s.weekdays.includes(isoWeekday(d)) && (s.kind === "PARALLEL" || !reserved(d));
   };
 
   // What is already on each day and stays there: fixed work, and today's open tasks.
@@ -159,6 +182,9 @@ export function replan(input: ReplanInput): ReplanResult {
   const maxRecall = Math.max(0, ...weekBudgets.map((b) => b.revision + Math.min(b.borrow, b.newMaterial)));
 
   const placed = new Map<number, ISODate>();
+  /** New material placed so far, by task: its parts in order (more than one when split). */
+  const partsOf = new Map<number, { minutes: number; date: ISODate }[]>();
+  const leftOf = (t: SchedTask) => t.minutes - (partsOf.get(t.id) ?? []).reduce((a, p) => a + p.minutes, 0);
   let pending = recalls;
   const heads = lines.map(() => 0);
   const left = () => pending.length > 0 || lines.some((ts, i) => heads[i] < ts.length);
@@ -195,27 +221,43 @@ export function replan(input: ReplanInput): ReplanResult {
     }
     pending = waiting;
 
-    // New material: each queue in turn (in the order its stages start) takes what fits, in its own order; a task that
-    // does not fit waits, and so does the rest of its queue. A task bigger than the day's new-material time goes alone
-    // onto a day with no new material yet, rather than holding up its queue until a longer day comes.
+    // New material: each queue in turn (in the order its stages start) takes what fits, in its own order. A task that
+    // does not fit is split: the part that fits goes today and the rest waits at the head of its queue. A day too short
+    // for any part takes a task whole, alone, rather than holding up its queue for ever.
     for (let i = 0; i < lines.length; i++) {
       for (let t = lines[i][heads[i]]; t; t = lines[i][heads[i]]) {
         if (!eligible(t, d) || !carried(t)) break;
-        const alone = t.minutes > b.newMaterial && u.newMaterial === 0 && b.newMaterial > 0;
-        if (t.minutes > newRoom(b, u) && !alone) break;
-        u.newMaterial += t.minutes;
-        placed.set(t.id, d);
+        const left = leftOf(t);
+        const room = newRoom(b, u);
+        let take = left;
+        if (left > room) {
+          // The most that fits, leaving at least MIN_PART for later.
+          const part = Math.min(Math.floor(room / SPLIT_STEP), Math.floor((left - MIN_PART) / SPLIT_STEP)) * SPLIT_STEP;
+          if (part >= MIN_PART && left - part >= MIN_PART) take = part;
+          else if (!(u.newMaterial === 0 && b.newMaterial > 0 && b.newMaterial < MIN_PART)) break;
+        }
+        u.newMaterial += take;
+        partsOf.set(t.id, [...(partsOf.get(t.id) ?? []), { minutes: take, date: d }]);
+        if (take < left) break; // the day is full; the rest of this task continues tomorrow
+        placed.set(t.id, partsOf.get(t.id)![0].date);
+        if (t.stageId && openLeft.has(t.stageId)) openLeft.set(t.stageId, openLeft.get(t.stageId)! - 1);
         heads[i]++;
       }
     }
   }
 
   const moves: Move[] = [];
+  const splits: Split[] = [];
   const unplaced: number[] = [];
   for (const t of movable) {
     const to = placed.get(t.id);
-    if (!to) unplaced.push(t.id);
-    else if (to !== t.date) moves.push({ id: t.id, from: t.date, to });
+    if (!to) {
+      unplaced.push(t.id); // a task only partly placed within the horizon stays whole, where it is
+      continue;
+    }
+    if (to !== t.date) moves.push({ id: t.id, from: t.date, to });
+    const parts = partsOf.get(t.id);
+    if (parts && parts.length > 1) splits.push({ id: t.id, minutes: parts[0].minutes, parts: parts.slice(1) });
   }
-  return { moves: moves.sort((a, b) => a.id - b.id), unplaced: unplaced.sort((a, b) => a - b) };
+  return { moves: moves.sort((a, b) => a.id - b.id), splits: splits.sort((a, b) => a.id - b.id), unplaced: unplaced.sort((a, b) => a - b) };
 }

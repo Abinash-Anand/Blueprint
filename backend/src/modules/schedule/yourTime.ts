@@ -50,10 +50,10 @@ export async function describeTime(db: PrismaClient) {
   return { ...describeWeek(week), targetDate: s.targetDate ? d2i(s.targetDate) : null, timezone: s.timezone, paces: PACES, week };
 }
 
-/** The last day with open new material, with some tasks moved. */
-async function finishWith(db: PrismaClient, to: Map<number, ISODate>) {
+/** The last day with open new material, with some tasks moved and some split (their parts on later days). */
+async function finishWith(db: PrismaClient, to: Map<number, ISODate>, partDays: ISODate[] = []) {
   const open = await db.task.findMany({ where: { status: "TODO", kind: { not: "REVISION" } }, select: { id: true, scheduledDate: true, estimatedMinutes: true } });
-  const days = open.map((t) => to.get(t.id) ?? d2i(t.scheduledDate)).sort();
+  const days = [...open.map((t) => to.get(t.id) ?? d2i(t.scheduledDate)), ...partDays].sort();
   return { finish: days.at(-1) ?? null, remaining: open.reduce((a, t) => a + t.estimatedMinutes, 0) };
 }
 
@@ -66,9 +66,10 @@ export async function previewTime(db: PrismaClient, today: ISODate, body: TimeBo
   ]);
   const week: Week = weekFromChoice(body, input.week);
   const targetDate = body.targetDate === undefined ? (s.targetDate ? d2i(s.targetDate) : null) : body.targetDate;
-  const { moves } = replan({ ...input, week });
+  const { moves, splits } = replan({ ...input, week });
   const before = await finishWith(db, new Map());
-  const after = await finishWith(db, new Map(moves.map((m) => [m.id, m.to])));
+  const after = await finishWith(db, new Map(moves.map((m) => [m.id, m.to])), splits.flatMap((x) => x.parts.map((p) => p.date)));
+  const changed = new Set([...moves.map((m) => m.id), ...splits.map((x) => x.id)]).size;
   const f = forecast({
     today, planEnd: d2i(s.journeyEnd), targetDate, week, remainingNewMinutes: after.remaining,
     recalls: recalls.map((r) => ({ stage: r.stage, nextDueDate: d2i(r.nextDueDate!) })), recallMinutes: RULES.minutesPerReview, gapFor,
@@ -81,9 +82,11 @@ export async function previewTime(db: PrismaClient, today: ISODate, body: TimeBo
     finish: { before: before.finish, after: after.finish },
     target: { date: targetDate, meets: f.meetsTarget, neededNewMinutesPerWeek: f.neededNewMinutesPerWeek },
     revisionLoad: f.revisionLoad,
-    moved: moves.length,
+    moved: changed,
+    /** Tasks that would be split to fill a day's room. */
+    splitTasks: splits.length,
     movedToday: moves.filter((m) => m.from === today || m.to === today).length,
-    unchanged: sameWeek && moves.length === 0 && (body.targetDate === undefined || targetDate === (s.targetDate ? d2i(s.targetDate) : null))
+    unchanged: sameWeek && changed === 0 && (body.targetDate === undefined || targetDate === (s.targetDate ? d2i(s.targetDate) : null))
       && (body.timezone === undefined || body.timezone === s.timezone),
   };
 }
