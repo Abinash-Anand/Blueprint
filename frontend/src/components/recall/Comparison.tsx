@@ -17,10 +17,9 @@ const TIERS = [[1, "Definition"], [2, "How it works"], [3, "Edge cases"]] as con
 const STATUS: Record<Status, string> = { ACCURATE: "Remembered", PARTIAL: "Partly", MISSED: "Missed" };
 const TONE: Record<Status, "ok" | "part" | "miss"> = { ACCURATE: "ok", PARTIAL: "part", MISSED: "miss" };
 const FOCUS_KEY = "bp.recall.focusGaps";
-/** How many stretches "Also in your answer" lists before the whole answer is the way to see the rest. */
+/** How many sentences "Also in your answer" lists before the whole answer is the way to see the rest. */
 const ALSO_SHOWN = 4;
-const WORD = /[\p{L}\p{N}]/u;
-/** Longer passages are cut at a word near this many characters; the whole answer shows them in full. */
+/** Longer sentences are cut at a word near this many characters; the whole answer shows them in full. */
 const EXCERPT = 240;
 const excerpt = (t: string) => {
   if (t.length <= EXCERPT) return t;
@@ -164,13 +163,13 @@ export function Comparison({ r, busy, run }: { r: RecallReview; busy: boolean; r
 
       {answer && also.length > 0 && (
         <section aria-label="Also in your answer">
-          <h3 className="g-cap">Also in your answer <span className="g-r">Not matched to a point</span></h3>
+          <h3 className="g-cap">Also in your answer <span className="g-r">Sentences with no matched words</span></h3>
           <ul className="g-group cmp-also">
             {also.slice(0, ALSO_SHOWN).map((x, i) => (
-              <li key={i}>{WORD.test(answer.text.slice(0, x.start)) ? "…" : ""}{excerpt(answer.text.slice(x.start, x.end))}{x.end - x.start <= EXCERPT && WORD.test(answer.text.slice(x.end)) ? "…" : ""}</li>
+              <li key={i}>{excerpt(answer.text.slice(x.start, x.end))}</li>
             ))}
           </ul>
-          {also.length > ALSO_SHOWN && <p className="g-foot">{plural(also.length - ALSO_SHOWN, "more passage")} in your whole answer.</p>}
+          {also.length > ALSO_SHOWN && <p className="g-foot">{plural(also.length - ALSO_SHOWN, "more sentence")} in your whole answer.</p>}
         </section>
       )}
 

@@ -181,13 +181,17 @@ function located(text: string) {
   return ws;
 }
 
-/** Uncovered stretches shorter than this many words are not worth showing ("Also in your answer"). */
-export const UNCOVERED_MIN_WORDS = 6;
+/** Unquoted sentences shorter than this many words are not worth showing ("Also in your answer"). */
+export const UNCOVERED_MIN_WORDS = 4;
+
+/** Whether the text between two words ends a sentence: a full stop, question or exclamation mark before a space, or a line break. */
+const SENTENCE_BREAK = /[.!?]["'”’)\]*_]*\s|\n/;
 
 /**
  * Where the learner's quoted words are in the graded text, for showing them (never for grading): each quote's
  * stretches, found the way quoteMatches finds them (a quote with an elision has one stretch per part; a quote
- * that is not found has none), and the runs of at least UNCOVERED_MIN_WORDS words that no quote covers.
+ * that is not found has none), and the sentences of at least UNCOVERED_MIN_WORDS words that contain no quoted word
+ * at all. A sentence that holds a quote is the learner's explanation of that point, so it is not listed.
  */
 export function answerSpans(text: string, quotes: string[]): { quotes: TextRange[][]; uncovered: TextRange[] } {
   const ws = located(text);
@@ -202,10 +206,13 @@ export function answerSpans(text: string, quotes: string[]): { quotes: TextRange
   });
   const uncovered: TextRange[] = [];
   for (let i = 0; i < ws.length; ) {
-    if (covered[i]) { i++; continue; }
-    let j = i;
-    while (j < ws.length && !covered[j]) j++;
-    if (j - i >= UNCOVERED_MIN_WORDS) uncovered.push({ start: ws[i].start, end: ws[j - 1].end });
+    let j = i + 1;
+    while (j < ws.length && !SENTENCE_BREAK.test(text.slice(ws[j - 1].end, ws[j].start))) j++;
+    if (j - i >= UNCOVERED_MIN_WORDS && !covered.slice(i, j).some(Boolean)) {
+      // The sentence's own closing mark comes along (not the space or line after it).
+      const close = /^[.!?]+/.exec(text.slice(ws[j - 1].end))?.[0].length ?? 0;
+      uncovered.push({ start: ws[i].start, end: ws[j - 1].end + close });
+    }
     i = j;
   }
   return { quotes: found, uncovered };

@@ -116,7 +116,7 @@ describe("recall page", () => {
         { kind: "point", pointId: 2, ...at("it shares. But a Subject replays old values") },
         { kind: "claim", index: 0, ...at("a Subject replays old values") },
       ],
-      uncovered: [at("A Subject"), at("We used them in the chat service for typing indicators and presence")],
+      uncovered: [at("We used them in the chat service for typing indicators and presence.")],
     };
     current = c;
     render(<RecallPage subtopicId={1} onClose={() => {}} />);
@@ -124,9 +124,9 @@ describe("recall page", () => {
     // The stretch of the learner's text, not the grader's copy of it; the mistake inside it is marked.
     expect(within(multicasting).getByText(/it shares\. But/).closest("p")!.textContent).toBe("“it shares. But a Subject replays old values”");
     expect(multicasting.querySelector("mark.cmp-wrong")!.textContent).toBe("a Subject replays old values");
-    // Ellipses mark where more of the answer comes before or after a passage.
+    // Whole sentences with none of the matched words in them.
     expect(within(screen.getByRole("region", { name: "Also in your answer" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "A Subject…", "…We used them in the chat service for typing indicators and presence",
+      "We used them in the chat service for typing indicators and presence.",
     ]);
     fireEvent.click(screen.getByRole("button", { name: "Show your whole answer" }));
     const whole = screen.getByLabelText("Your whole answer");
@@ -138,7 +138,7 @@ describe("recall page", () => {
     ]);
   });
 
-  it("cuts a long unmatched passage at a word; the whole answer keeps all of it", async () => {
+  it("cuts a long unmatched sentence at a word; the whole answer keeps all of it", async () => {
     const text = `${"lorem ipsum dolor ".repeat(30)}end`;
     const c = checked();
     c.result!.answer = { text, spans: [], uncovered: [{ start: 0, end: text.length }] };

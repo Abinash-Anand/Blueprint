@@ -169,15 +169,31 @@ describe("where the quoted words are in the answer (for showing it, never for gr
     qs.forEach((q, i) => expect(quotes[i].length > 0).toBe(quoteMatches(q, said)));
   });
 
-  it("lists the runs of six or more words no quote covers, and leaves out shorter ones", () => {
-    const { uncovered } = answerSpans(said, ["When it runs? Once, right after Angular initializes the component", "Primary use case", "ngOnDestroy, cleanup before death"]);
+  it("lists the sentences of four or more words with no quoted word in them", () => {
+    // "Once, right after …" holds a quote, so the rest of that sentence is not listed.
+    const { uncovered } = answerSpans(said, ["Once, right after Angular initializes the component", "Primary use case", "ngOnDestroy, cleanup before death"]);
     expect(uncovered.map(at)).toEqual([
-      "and sets its input properties for the very first time",
-      "This is your default start here method for component initialization. 3",
-      "Unsubscribing from long-lived RxJS observables like WebSocket streams",
+      "This is your default start here method for component initialization.",
+      "Unsubscribing from long-lived RxJS observables like WebSocket streams.",
     ]);
-    expect(answerSpans(said, []).uncovered.map(at)).toEqual([said.slice(0, -1)]); // nothing quoted: all of it, without the final full stop
+    // Nothing quoted: every sentence long enough ("When it runs?", "Primary use case." and "3." are not).
+    expect(answerSpans(said, []).uncovered.map(at)).toEqual([
+      "Once, right after Angular initializes the component and sets its input properties for the very first time.",
+      "This is your default start here method for component initialization.",
+      "ngOnDestroy, cleanup before death.",
+      "Unsubscribing from long-lived RxJS observables like WebSocket streams.",
+    ]);
     expect(answerSpans("", ["anything"])).toEqual({ quotes: [[]], uncovered: [] });
+  });
+
+  it("ends sentences at line breaks too, and not at a full stop inside a number", () => {
+    const text = "| CanActivate | before entering a route |\n| CanDeactivate | before leaving the current route |\nIt waits 2.5 seconds before it gives up";
+    expect(answerSpans(text, ["CanActivate before entering a route"]).uncovered.map((r) => text.slice(r.start, r.end))).toEqual([
+      "CanDeactivate | before leaving the current route", "It waits 2.5 seconds before it gives up",
+    ]);
+    // A spoken answer without full stops is one sentence: one quote in it covers it all.
+    const spoken = "so a guard decides if you can go to a route and it runs before the route loads and you return true or false";
+    expect(answerSpans(spoken, ["you return true or false"]).uncovered).toEqual([]);
   });
 
   it("keeps offsets right after characters that normalising changes", () => {
