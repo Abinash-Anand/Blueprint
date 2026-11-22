@@ -5,7 +5,7 @@ import type { Forecast, PlanChange, Progress, RecallCoaching } from "../api/type
 import { INK, mix } from "../lib/color";
 import { dayMonth, hours1, monthName, pct, plural, shortDate } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { historyHash, openPage } from "../lib/nav";
+import { YOUR_TIME, historyHash, openPage } from "../lib/nav";
 import { Loading, Stat } from "./ui";
 import { StatusBadge } from "./Status";
 import { changeText, finishText } from "./PlanNotice";
@@ -197,7 +197,10 @@ export function ForecastView({ f, change }: { f: Forecast; change?: PlanChange |
   const recalls = f.revisionLoad.reduce((a, w) => a + w.recalls, 0);
   return (
     <div className="section">
-      <h3>Forecast</h3>
+      <h3>
+        Forecast
+        <button className="btn" onClick={() => openPage(YOUR_TIME)}>Change your time</button>
+      </h3>
       <div className="grid4">
         <Stat
           label="Projected finish"

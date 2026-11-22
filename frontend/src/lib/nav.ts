@@ -5,6 +5,8 @@
  */
 export const recallHash = (subtopicId: number) => `#/recall/${subtopicId}`;
 export const historyHash = (view: "revision" | "progress", subtopicId: number) => `#/${view}/history/${subtopicId}`;
+/** Your hours, study days and pace (docs/Availability-Phase3-Plan.md). */
+export const YOUR_TIME = "#/your-time";
 
 export function openPage(hash: string) {
   if (location.hash === hash) return;

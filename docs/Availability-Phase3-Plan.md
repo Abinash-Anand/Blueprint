@@ -171,6 +171,37 @@ In every city:
 that parts follow each other, that no day gets more new material than its time, and that re-planning the split
 result changes nothing. Through the database, a saved change splits and keeps the plan's order.
 
+## 4c. Step 2 results: the page (22 Nov 2026)
+
+- **A page, not a sheet:** "Your time" is its own page (`#/your-time`) with Back, as the recall and recall-history
+  views are. That follows your earlier request to route views rather than open modals.
+  - It opens from "Change your time" on Progress's Forecast and from "Change" on Today's study-time card.
+- **Controls** (the create-city kit):
+  - hours on a study day, in 15-minute steps;
+  - study days;
+  - pace, with "Current" shown only for a city whose split matches no preset ("All new material, no revision time");
+  - finish-by date, with a "No date" clear;
+  - a time zone field that suggests the zones the browser knows.
+- **What this does** follows each change about 400 ms later, and an older answer is dropped. It shows:
+  - the projected finish, and how far it moves ("4 weeks later than now (3 Jul 2027)");
+  - the target-date check;
+  - the week's new-material and revision split;
+  - the next four weeks of recalls;
+  - how many tasks would move or split.
+  Save is off while nothing changes or the server refuses the choice (it shows the reason, for example "Unknown time
+  zone."). Save re-plans and goes back.
+- **Narrow screens:** the choice and what it does stack (container query), and nothing scrolls sideways at 375 px.
+- **Found and fixed:** the pace bar's container used `.cc-split`, which is also create-city's two-column page layout on
+  screens 960 px and wider. So the bar was squeezed beside its legend, in city creation too. It is now `.cc-pace`.
+- **Consistency:** Today's notice and Progress's last change now say how far the finish moved the same way as this page
+  (days up to two weeks, then weeks).
+- **Checked in the dev app:**
+  - Engineering City opens as 4 h, Monday to Saturday, Current, "Your plan as it is";
+  - 5 h at Steady previews 28 Jul 2027, 4 weeks later (22.5 h of new material a week instead of 24), with 572 tasks
+    moving and 118 splitting;
+  - Save shows the same finish and the same 572 on Progress.
+- **Tests:** frontend 269 (the page: loading, previewing, saving exactly the previewed choice, refusals, going back).
+
 ## 5. Questions for you
 
 1. **Hours model:** one "hours per study day" for all study days, as at creation (suggested; it fits every city you

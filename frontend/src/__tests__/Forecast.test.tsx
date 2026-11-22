@@ -13,7 +13,8 @@ const f: Forecast = {
 describe("forecast", () => {
   it("shows the projected finish against the plan, the target check, the week's split and the revision ahead", () => {
     const { container } = render(<ForecastView f={f} />);
-    expect(screen.getByRole("heading", { name: "Forecast" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /^Forecast/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change your time" })).toBeTruthy();
     const text = container.textContent!;
     expect(text).toMatch(/Projected finish26 Mar 2027.*30 h of new material left · 3 weeks after the plan's end \(5 Mar 2027\)/);
     expect(text).toMatch(/Target date28 Feb 2027Not at this pace: it needs about 12 h of new material a week \(you plan 9 h\)/);

@@ -9,6 +9,7 @@ import { TodayView } from "./components/TodayView";
 import { WeekView } from "./components/WeekView";
 import { RecallHistory } from "./components/recall/RecallHistory";
 import { RecallPage } from "./components/recall/RecallPage";
+import { YourTimePage } from "./components/time/YourTime";
 import { Loading } from "./components/ui";
 import { TopBar } from "./Root";
 import { shortDate } from "./lib/format";
@@ -27,22 +28,24 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "progress", label: "Progress" },
 ];
 
-interface Route { view: View; param: string | null; sub?: string | null; recall?: number | null }
+interface Route { view: View; param: string | null; sub?: string | null; recall?: number | null; yourTime?: boolean }
 
 /**
  * Hash routing without a router library: #/today[/date], #/week[/date], #/revision, #/city[/topic], #/progress,
  * #/recall/<sub-topic> (the recall flow, a page of its own) and #/revision/history/<sub-topic> or
- * #/progress/history/<sub-topic> (recall over time, inside its tab).
+ * #/progress/history/<sub-topic> (recall over time, inside its tab), and #/your-time (your hours, days and pace, a page of
+ * its own).
  */
 export function parseHash(hash: string): Route {
   const [, v, p, q] = hash.replace(/^#/, "").split("?")[0].split("/");
   if (v === "recall" && /^\d+$/.test(p ?? "")) return { view: "revision", param: null, recall: Number(p) };
+  if (v === "your-time") return { view: "progress", param: null, yourTime: true };
   const known = VIEWS.find((x) => x.id === v);
   // An unknown view falls back to Today and drops its parameter (it isn't a date).
   return { view: (known?.id ?? "today") as View, param: known && p ? decodeURIComponent(p) : null, sub: known && p && q ? decodeURIComponent(q) : null };
 }
 const toHash = (r: Route) =>
-  r.recall != null ? `#/recall/${r.recall}` : `#/${r.view}${r.param ? `/${encodeURIComponent(r.param)}` : ""}${r.param && r.sub ? `/${encodeURIComponent(r.sub)}` : ""}`;
+  r.recall != null ? `#/recall/${r.recall}` : r.yourTime ? "#/your-time" : `#/${r.view}${r.param ? `/${encodeURIComponent(r.param)}` : ""}${r.param && r.sub ? `/${encodeURIComponent(r.sub)}` : ""}`;
 
 export function App() {
   const { curriculum, progress, loadError, reload, invalidate, version, notice, setNotice } = useAppData();
@@ -147,6 +150,7 @@ export function App() {
   const { view, param } = route;
   // The recall flow is a focused page of its own, without the tabs and the districts.
   if (route.recall != null) return <RecallPage subtopicId={route.recall} backLabel={backName("#/revision")} onClose={() => closePage("#/revision")} />;
+  if (route.yourTime) return <YourTimePage backLabel={backName("#/progress")} onClose={() => closePage("#/progress")} />;
   const historyId = (view === "revision" || view === "progress") && param === "history" && /^\d+$/.test(route.sub ?? "") ? Number(route.sub) : null;
   return (
     <div className="app">

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { api, getCurrentCity } from "../api/client";
 import type { PlanChange } from "../api/types";
 import { dayMonth, plural } from "../lib/format";
+import { shiftText } from "./time/YourTime";
 
 const WHY: Record<PlanChange["reason"], string> = {
   DAILY: "to fit work left from earlier days",
@@ -24,14 +25,12 @@ const readSeen = () => {
   }
 };
 
-const days = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
-
-/** "Projected finish 12 Mar (3 days later)" or "… unchanged". */
+/** "Projected finish 12 Mar (3 days later)", "… (5 weeks earlier)" or "… unchanged". */
 export function finishText(c: Pick<PlanChange, "finishBefore" | "finishAfter">) {
   if (!c.finishAfter) return "Nothing new is left to plan.";
   if (!c.finishBefore || c.finishBefore === c.finishAfter) return `Projected finish unchanged (${dayMonth(c.finishAfter)}).`;
-  const d = days(c.finishBefore, c.finishAfter);
-  return `Projected finish ${dayMonth(c.finishAfter)} (${plural(Math.abs(d), "day")} ${d > 0 ? "later" : "earlier"}).`;
+  // Days up to two weeks, then weeks, as on the Your time page.
+  return `Projected finish ${dayMonth(c.finishAfter)} (${shiftText(c.finishBefore, c.finishAfter)}).`;
 }
 
 export const changeText = (c: PlanChange) => `The plan moved ${plural(c.moved, "task")} ${WHY[c.reason]}.`;

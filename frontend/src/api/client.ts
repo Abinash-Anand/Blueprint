@@ -1,6 +1,6 @@
 import type {
   Account, CityAttachment, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template, Understanding,
-  AiStatus, CheckpointResult, Curriculum, PlanChange, Progress, RecallHistoryRow, RecallHome, RecallMatrix, RecallReview, RetrievalMethod, RevisionArchive, Session, Stage, Task, TaskKind, TaskStatus, Today, Topic, Week,
+  AiStatus, CheckpointResult, Curriculum, PlanChange, Progress, TimeChoice, TimePreview, YourTime, RecallHistoryRow, RecallHome, RecallMatrix, RecallReview, RetrievalMethod, RevisionArchive, Session, Stage, Task, TaskKind, TaskStatus, Today, Topic, Week,
 } from "./types";
 
 export class ApiError extends Error {
@@ -128,6 +128,9 @@ export const api = {
   patchTask: (id: number, body: TaskPatch) => request<Task>("PATCH", `/tasks/${id}`, body),
   deleteTask: (id: number) => request<void>("DELETE", `/tasks/${id}`),
   planChanges: () => request<PlanChange[]>("GET", "/schedule/plan-changes"),
+  yourTime: () => request<YourTime>("GET", "/schedule/availability"),
+  previewTime: (c: TimeChoice) => request<TimePreview>("POST", "/schedule/preview", c),
+  saveTime: (c: TimeChoice) => request<YourTime>("PUT", "/schedule/availability", c),
   rescheduleOverdue: () => request<{ moved: { id: number; from: string; to: string }[] }>("POST", "/tasks/reschedule-overdue", {}),
   logTime: (body: { date: string; minutes: number; taskId?: number; topicId?: string; note?: string }) =>
     request<Session>("POST", "/sessions", body),

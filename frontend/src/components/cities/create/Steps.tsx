@@ -199,7 +199,7 @@ export function TimeStep(p: {
             { value: "INTENSIVE", label: "Intensive", hint: `${pct("INTENSIVE")} new material, little slack` },
           ]}
         />
-        <div className="cc-split" aria-live="polite">
+        <div className="cc-pace" aria-live="polite">
           <div className="cc-split-bar" role="img" aria-label={`Each week: ${newH} hours of new material and ${revH} hours of revision`}><i style={{ width: `${share}%` }} /></div>
           <div className="cc-split-legend"><span><b>{newH} h</b> new material</span><span><b>{revH} h</b> revision</span></div>
           <p className="cc-split-note">Pace splits your {p.plan.weeklyHours} hours a week between new material and revision. It never adds hours; it moves the finish date.</p>
