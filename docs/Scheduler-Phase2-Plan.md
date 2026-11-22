@@ -147,6 +147,50 @@ the local database (as with the point statements) before it touches real data.
 
 Phase 3, the "Availability & pace" sheet with a live forecast preview, follows once this is in.
 
+## 5a. Step 2 results: dry run on a copy of the local data (22 Nov 2026)
+
+`scripts/replan-dry-run.ts`, run on a copy restored from `backups/before-replan-dry-run-20261122-170028.dump`.
+Nothing was saved.
+
+| City | Open (new + recalls) | Overdue | Tasks moved | Later / earlier | Largest shift | Days over time (from tomorrow) | Empty study days | Last new material | Forecast finish |
+|---|---|---|---|---|---|---|---|---|---|
+| AI Engineer | 522 + 2 | 0 | 65 | 0 / 65 | 4 d | 0 → 0 | 43 → 43 | 16 Sep 2027 | 1 Aug 2027 |
+| Angular City | 67 + 10 | 0 | 22 | 15 / 7 | 5 d | 4 → 0 | 8 → 7 | 25 Jan 2027 | 15 Jan 2027 |
+| Engineering City | 536 + 4 | 12 | 74 | 74 / 0 | 6 d | 1 → 0 | 59 → 55 | 12 Aug 2027 | 8 Jun 2027 |
+| Full-Stack AI Engineer | 454 + 0 | 5 | 69 | 69 / 0 | 3 d | 0 → 0 | 32 → 30 | 18 Aug 2027 | 10 Jul 2027 |
+| German A1 to C1 | 680 + 0 | 4 | 88 | 88 / 0 | 3 d | 0 → 0 | 42 → 40 | 8 Feb 2028 | 23 Dec 2027 |
+| German A1 to C1 (2) | 433 + 2 | 8 | 72 | 72 / 0 | 5 d | 0 → 0 | 33 → 30 | 7 Sep 2027 | 31 Jul 2027 |
+| German B2 | 367 + 2 | 0 | 49 | 0 / 49 | 2 d | 0 → 0 | 44 → 44 | 3 Nov 2027 | 20 Sep 2027 |
+| German C1 | 458 + 0 | 0 | 0 | 0 / 0 | 0 | 0 → 0 | 23 → 23 | 9 Nov 2027 | 7 Oct 2027 |
+| German Language | 750 + 0 | 7 | 129 | 129 / 0 | 4 d | 0 → 0 | 42 → 39 | 19 Jan 2028 | 4 Dec 2027 |
+| Jasmine City | 114 + 14 | 0 | 42 | 31 / 11 | 4 d | 5 → 0 | 16 → 16 | 5 Apr 2027 | 19 Mar 2027 |
+| RxJS in Angular | 101 + 4 | 2 | 12 | 11 / 1 | 3 d | 0 → 0 | 15 → 14 | 28 Jan 2027 | 8 Jan 2027 |
+| Tech City | 681 + 4 | 3 | 117 | 116 / 1 | 4 d | 2 → 0 | 42 → 40 | 13 Jan 2028 | 17 Nov 2027 |
+
+German City has no plan. No task was left without a day.
+
+**What it shows**
+- **It does what it should.** Days with more work than time go from 12 to 0. Overdue work finds the next free time,
+  and recalls stop piling on top of full days. No task moves more than 6 days.
+- **Learners ahead of plan get work pulled forward.** AI Engineer and German B2 have no overdue work, but tasks
+  finished early (1,044 minutes on 21 Nov in AI Engineer) left days empty, and later work moves into them. This is the
+  model's "freed time goes back to new material".
+- **Stage start dates hold the finish in place.** In every city, the last day of new material is the same before and
+  after. Every plan already has 8 to 59 empty study days: the gaps the first plan left between a stage's last task and
+  the next stage's start. Work moves within a stage, and those gaps absorb it.
+- **The forecast disagrees with the plan.** The forecast ignores stage dates and counts those empty days as usable,
+  so its finish is 10 days to 2 months earlier than the plan can deliver. It shares the day rules, but not the stage
+  rules.
+
+**Decision needed before step 3: what to do with the empty days**
+1. **Keep stage starts fixed, and take the forecast from the scheduler (suggested).** The projected finish becomes
+   the last day of the re-planned work, so the forecast and Today cannot disagree. The empty days stay as buffer, and
+   Today says "nothing planned: you are ahead" on them. A stage can be pulled earlier in phase 3's editing sheet.
+   This causes the least change.
+2. **Let a stage start early when its earlier work is done.** The scheduler fills the empty days, so most plans
+   finish weeks earlier, close to today's forecast. But nearly every open task moves on the first run, and stage dates
+   stop meaning much.
+
 ## 6. Testing
 
 - **Unit (pure):**
