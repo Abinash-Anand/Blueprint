@@ -721,7 +721,12 @@ export interface RecallHome {
 }
 export type RecallStatus = "DRAFT" | "WAITING" | "CHECKED" | "COMPLETE";
 export type RecallPointStatus = "ACCURATE" | "PARTIAL" | "MISSED";
-export interface RecallPointView { id: number; code: string; label: string; description: string; tier: number; leftOut: boolean; status: RecallPointStatus | null; evidence: string | null; recalledWhenAsked: boolean }
+export interface RecallPointView {
+  id: number; code: string; label: string; description: string;
+  /** The point as a correct answer says it, shown instead of the description once written (absent before 28 Nov 2026). */
+  statement?: string | null;
+  tier: number; leftOut: boolean; status: RecallPointStatus | null; evidence: string | null; recalledWhenAsked: boolean;
+}
 export interface RecallReview {
   id: number; subtopicId: number; subtopic: string; topicId: string; topic: string; attempt: number; status: RecallStatus; date: ISODate;
   spokenParts: string[]; typed: string; sketches: string[]; waitReason: string | null; language: string; submittedAt: string | null;

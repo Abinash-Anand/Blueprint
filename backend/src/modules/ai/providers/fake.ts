@@ -35,11 +35,22 @@ function fakeGrade(user: string) {
   return { points, misconceptions };
 }
 
+/** Statements: each point's description without its "Explains the" ("Explains the usage of X." → "The usage of X."). */
+function fakeStatements(user: string) {
+  const statements = tag(user, "points").split("\n").filter(Boolean).map((line) => {
+    const code = line.slice(0, line.indexOf(":"));
+    const description = line.slice(line.indexOf(". ") + 2).trim();
+    return { code, statement: description.replace(/^Explains the /, "The ") };
+  });
+  return { statements };
+}
+
 function fakeGenerate(i: GenerateInput): { output: unknown; usage: { inputTokens: number; outputTokens: number } } {
   const usage = { inputTokens: Math.ceil(i.user.length / 4), outputTokens: 900 };
   const stage = tag(i.user, "stage");
   if (stage === "recall-checklist") return { usage, output: fakeChecklist(i.user) };
   if (stage === "recall-grade") return { usage, output: fakeGrade(i.user) };
+  if (stage === "recall-statements") return { usage, output: fakeStatements(i.user) };
   // Confirms every flagged claim except one that says it is "actually true" (so tests can see a false flag dropped).
   if (stage === "recall-misconception-check") {
     const claims = tag(i.user, "claims").split("\n").filter(Boolean).map((l) => {
