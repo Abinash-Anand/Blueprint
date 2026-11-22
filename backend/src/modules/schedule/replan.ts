@@ -29,8 +29,8 @@ export async function lockPlan(tx: Tx, cityId: string) {
   await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${`plan:${cityId}`}))`;
 }
 
-/** The scheduler's view of a city: its week, stages and tasks. */
-async function loadInput(db: Db, today: ISODate) {
+/** The scheduler's view of a city: its week, stages and tasks (the preview runs it on a proposed week). */
+export async function loadInput(db: Db, today: ISODate) {
   const [week, stageRows, rows] = await Promise.all([
     loadWeek(db),
     db.stage.findMany({ select: { id: true, kind: true, startDate: true, endDate: true, weekdays: true, queue: true } }),
