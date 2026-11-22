@@ -8,7 +8,7 @@ A local-first, single-user learning system for the nine-month software-engineeri
 - **Progress**: hours (total, weekly, monthly), learned vs demonstrated per district, recall and revision, and the stage timeline with delays.
 - **Revision**: recall checks while you study, then spaced revision of every learned sub-topic and topic, with intervals that adapt to how well you remembered. The Revision tab lists what is due, overdue, weak and coming up, starts a session, and keeps the history and recall analytics. See [section 6.1](#61-revision-and-active-recall).
 
-The stack is React + TypeScript (Vite), Node.js + Express, PostgreSQL + Prisma, Docker Compose. The design documents are in [`docs/`](docs): [SRS](docs/SRS.md), [HLD](docs/HLD.md), [LLD](docs/LLD.md), with a PDF of each, and the [revision specification](docs/Revision-Spec.md).
+The stack is React + TypeScript (Vite), Node.js + Express, PostgreSQL + Prisma, Docker Compose. The design documents are in [`docs/`](docs): [SRS](docs/SRS.md), [HLD](docs/HLD.md), [LLD](docs/LLD.md), with a PDF of each, the [revision specification](docs/Revision-Spec.md), the [architecture case study](docs/Architecture-Case-Study.md) (the decisions behind the AI grading, isolation and deployment, and what would change at scale), and the [Render deployment guide](docs/Deploy-Render.md).
 
 ---
 

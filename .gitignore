@@ -12,3 +12,6 @@ recordings/
 # Local e-mail outbox: verification and reset links are one-time secrets (never commit)
 mail-outbox/
 backend/mail-outbox/
+
+# Personal editor and tool settings
+.vscode/

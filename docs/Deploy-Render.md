@@ -44,8 +44,13 @@ send outbound network traffic on ports 25, 465, or 587", render.com/docs/free), 
    address works; Brevo sends a confirmation e-mail to it).
 2. Create an **API key** in Brevo's settings and set it as `BREVO_API_KEY` (a secret: never in Git or chat).
 3. Set `MAIL_FROM` to that confirmed sender. The `SMTP_` variables are then unused and can be removed.
-4. Redeploy and look for `Mail server reachable and login accepted` in the log (the start-up check reads the Brevo
-   account, which confirms the key without sending anything).
+4. Turn off Brevo's IP blocking for API keys: in Brevo, **Security → Authorised IPs**, choose **Deactivate blocking**
+   for API keys. Brevo blocks API calls from addresses it has not seen, and Render's outbound addresses are shared
+   and change, so without this every send fails with `Mail delivery failed … unauthorized` (Brevo's own reply says
+   the IP address is unrecognised) even though the key is right.
+5. Redeploy and look for `Mail server reachable and login accepted` in the log (the start-up check reads the Brevo
+   account, which confirms the key without sending anything). Then sign up with a test address to see a mail arrive:
+   the start-up check alone does not prove that sending is allowed.
 
 On a paid instance SMTP works too (`MAIL_TRANSPORT=smtp` with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`).
 
