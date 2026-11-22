@@ -10,7 +10,7 @@ import { ApiError, api } from "../../api/client";
 import type { AiStatus, RecallPointView, RecallReview } from "../../api/types";
 import { dayMonth, plural } from "../../lib/format";
 import { Recorder, canRecord } from "../voice/Recorder";
-import { Comparison } from "./Comparison";
+import { ResultScreens } from "./Comparison";
 import { Back, Chevron, ChevronDown, Glyph, Person, Picture, Plus, Target } from "./icons";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
@@ -18,7 +18,8 @@ const DEPTH = { FOUNDATIONAL: "Foundational", INTERMEDIATE: "Intermediate", MAST
 const STATUS = { ACCURATE: "Remembered", PARTIAL: "Partly", MISSED: "Missed" } as const;
 const GLYPH = { ACCURATE: "ok", PARTIAL: "part", MISSED: "miss" } as const;
 const OUTCOME = { PASS: "Remembered well", HOLD: "Partly remembered", LAPSE: "Mostly forgotten" } as const;
-const OUTCOME_TONE = { PASS: "ok", HOLD: "part", LAPSE: "miss" } as const;
+// Remembered first in the summary bar, then partly, then missed.
+const RANK = { ACCURATE: 0, PARTIAL: 1, MISSED: 2 } as const;
 // Said by the result, not the stage numbers: a first recall that lapses still moves from stage 0 to 1.
 const MOVE = { PASS: "the gap grows", HOLD: "the same gap again", LAPSE: "back to a short gap" } as const;
 
@@ -328,33 +329,28 @@ function Results({ r, busy, run, error, onFollowup, onVerdict }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per review
   }, [r.id]);
   const finish = () => void run(() => api.completeRecall(r.id));
+  const counts = (["ACCURATE", "PARTIAL", "MISSED"] as const).map((s) => [s, group(s).length] as const).filter(([, n]) => n > 0);
+  const tally = counts.map(([s, n]) => `${n} ${STATUS[s].toLowerCase()}`).join(" · ");
+  const bar = [...counted].sort((a, b) => RANK[a.status ?? "MISSED"] - RANK[b.status ?? "MISSED"]);
 
   return (
-    <section className="g-card g-split wide-right" aria-label="Results">
-      <div className="g-aside">
-        <div className="kick">{r.topic} · {r.subtopic}</div>
-        <div className="g-score">
-          <Ring score={res.score} />
-          <div>
-            <div className="g-t2">{DEPTH[res.depth]}</div>
-            <p className="g-sub">depth · {OUTCOME[res.outcome].toLowerCase()}: {MOVE[res.outcome]}</p>
-          </div>
+    <section className="g-card rs-card" aria-label="Results">
+      <div className="rs-sum">
+        <div className="kick">{r.topic}</div>
+        <h1 className="g-title rs-title">{r.subtopic}</h1>
+        <div className="rs-score"><b>{Math.round(res.score * 100)} %</b><span>recalled</span></div>
+        <p className="rs-outcome">{OUTCOME[res.outcome]}: {MOVE[res.outcome]}.</p>
+        <div className="rs-bar" role="img" aria-label={`Of ${plural(counted.length, "point")}: ${tally}`}>
+          {bar.map((p) => <i key={p.id} className={p.status ? GLYPH[p.status] : "miss"} />)}
         </div>
-        <div className="g-stats">
-          <div><b style={{ color: "var(--success)" }}>{group("ACCURATE").length}</b><span>Remembered</span></div>
-          <div><b style={{ color: "var(--warning)" }}>{group("PARTIAL").length}</b><span>Partly</span></div>
-          <div><b style={{ color: "var(--danger)" }}>{group("MISSED").length}</b><span>Missed</span></div>
-        </div>
+        <p className="rs-tally" aria-hidden="true">{tally}</p>
         <ul className="g-group">
           <li className="g-row"><span className="g-lbl">Next review</span><span className="g-val" style={{ color: "var(--ink)" }}>{res.nextDueDate ? dayMonth(res.nextDueDate) : "None"}</span></li>
-          <li className="g-row"><span className="g-lbl">Outcome</span><span className={`g-sb ${OUTCOME_TONE[res.outcome]}`}>{OUTCOME[res.outcome]}</span></li>
-          <li className="g-row"><span className="g-lbl">Checked against</span><span className="g-val">{plural(counted.length, "point")}</span></li>
+          <li className="g-row"><span className="g-lbl">Depth</span><span className="g-val" style={{ color: "var(--ink)" }}>{DEPTH[res.depth]}</span></li>
         </ul>
-        <p className="g-foot">
-          Worked out in code from what you recalled on your own. The score counts definitions and how it works;
-          edge cases decide Mastery depth. The follow-up never changes it.
-        </p>
+      </div>
 
+      <div className="rs-act">
         {r.status === "COMPLETE" ? (
           <button type="button" className="btn primary wide" onClick={onVerdict}>See the verdict</button>
         ) : !gaps ? (
@@ -377,24 +373,18 @@ function Results({ r, busy, run, error, onFollowup, onVerdict }: {
             <button type="button" className="btn quiet wide" disabled={busy} aria-busy={busy} onClick={finish} style={{ marginTop: -8 }}>{busy ? "Writing the verdict…" : "Finish without it"}</button>
           </>
         )}
+        <details className="rs-about">
+          <summary>About this check</summary>
+          <p>
+            Worked out in code from what you recalled on your own. The score counts definitions and how it works; edge
+            cases decide the depth. The follow-up never changes it.
+          </p>
+          <p>Checked by {res.gradingModel ?? "the AI"} against {plural(counted.length, "point")}. A point that isn't part of this sub-topic? Its ⋯ menu leaves it out of the score from now on.</p>
+        </details>
       </div>
 
-      <div>
-        <h1 className="g-title">How your recall compares</h1>
-        <p className="g-sub">Your words next to the checklist for {r.subtopic}, point by point.</p>
-        {res.misconceptions.length > 0 && (
-          <div className="g-callout miss" role="group" aria-label="Misconceptions" style={{ marginTop: 16 }}>
-            <Glyph kind="warn" />
-            <span>
-              <span className="h">{res.misconceptions.length > 1 ? "To correct" : "One thing to correct"}</span>
-              {res.misconceptions.length > 1
-                ? <ul>{res.misconceptions.map((m, i) => <li key={i}>You said “{m.claim}”. {m.correction}</li>)}</ul>
-                : <>You said “{res.misconceptions[0].claim}”. {res.misconceptions[0].correction}</>}
-            </span>
-          </div>
-        )}
-        <Comparison r={r} busy={busy} run={run} />
-        <p className="g-small" style={{ marginTop: 12 }}>Checked by {res.gradingModel ?? "the AI"} against {plural(counted.length, "point")}.</p>
+      <div className="rs-main">
+        <ResultScreens r={r} busy={busy} run={run} />
       </div>
     </section>
   );

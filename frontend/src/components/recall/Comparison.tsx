@@ -1,47 +1,24 @@
 /**
- * The results' main column: the learner's answer next to the checklist, one row per point (gap-first results). Your words
- * on the left (the stretch of your own text the grader quoted), the complete point on the right; a missed point leaves an
- * empty slot opposite it. Everything here is shown from what was graded: nothing is rewritten and nothing changes the score.
- * The complete point is its statement (what a correct answer says) once written, else the grader's description. Narrow
- * containers stack each row (your words above the complete point).
+ * The results' main column as short screens, one kind of result each (DESIGN.md §10, results): what to correct,
+ * what was partly there, what was missed, and what was remembered with the whole answer. A screen with nothing in it is
+ * left out, so there are at most four. The step bar names every screen and how many points it holds, so nothing is
+ * hidden behind Next; Back, Next and the arrow keys move between them. Everything is shown from what was graded:
+ * nothing is rewritten and nothing changes the score. The complete point is its statement once written, else the
+ * grader's description.
  */
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useState } from "react";
 import { api } from "../../api/client";
 import type { RecallAnswer, RecallPointView, RecallReview } from "../../api/types";
-import { plural } from "../../lib/format";
-import { ChevronDown, Chevron, Glyph, More } from "./icons";
+import { dayMonth, plural } from "../../lib/format";
+import { Back, Chevron, ChevronDown, More } from "./icons";
 
 type Run = (f: () => Promise<RecallReview>) => Promise<boolean>;
 type Status = NonNullable<RecallPointView["status"]>;
+type Result = NonNullable<RecallReview["result"]>;
 
-const TIERS = [[1, "Definition"], [2, "How it works"], [3, "Edge cases"]] as const;
-const STATUS: Record<Status, string> = { ACCURATE: "Remembered", PARTIAL: "Partly", MISSED: "Missed" };
+export const STATUS: Record<Status, string> = { ACCURATE: "Remembered", PARTIAL: "Partly", MISSED: "Missed" };
 const TONE: Record<Status, "ok" | "part" | "miss"> = { ACCURATE: "ok", PARTIAL: "part", MISSED: "miss" };
-const FOCUS_KEY = "bp.recall.focusGaps";
-/** How many sentences "Also in your answer" lists before the whole answer is the way to see the rest. */
-const ALSO_SHOWN = 4;
-/** Longer sentences are cut at a word near this many characters; the whole answer shows them in full. */
-const EXCERPT = 240;
-const excerpt = (t: string) => {
-  if (t.length <= EXCERPT) return t;
-  const cut = t.lastIndexOf(" ", EXCERPT);
-  return `${t.slice(0, cut > EXCERPT / 2 ? cut : EXCERPT).trimEnd()}…`;
-};
-
-const readFocus = () => {
-  try {
-    return localStorage.getItem(FOCUS_KEY) === "1";
-  } catch {
-    return false;
-  }
-};
-const saveFocus = (on: boolean) => {
-  try {
-    localStorage.setItem(FOCUS_KEY, on ? "1" : "0");
-  } catch {
-    /* per-viewer convenience only */
-  }
-};
+const TIER: Record<number, string> = { 1: "Definition", 2: "How it works", 3: "Edge cases" };
 
 type Mark = { start: number; end: number; cls: string };
 
@@ -85,159 +62,181 @@ function yourWords(p: RecallPointView, answer: RecallAnswer | undefined) {
   );
 }
 
-export function Comparison({ r, busy, run }: { r: RecallReview; busy: boolean; run: Run }) {
-  const res = r.result!;
+type Key = "correct" | "partly" | "missed" | "remembered";
+interface Screen { key: Key; name: string; count: number; tone: "miss" | "part" | "neutral" | "ok" }
+
+/** The screens this result needs, worst first; the last one also carries your whole answer and any left-out points. */
+export function screensFor(res: Result): Screen[] {
   const counted = res.points.filter((p) => !p.leftOut);
-  const gaps = counted.filter((p) => p.status === "MISSED" || p.status === "PARTIAL");
-  const count = (s: Status) => counted.filter((p) => p.status === s).length;
-  const [focus, setFocus] = useState(readFocus);
-  const [whole, setWhole] = useState(false);
-  const [pulse, setPulse] = useState<number | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  const n = (s: Status) => counted.filter((p) => p.status === s).length;
+  const last = n("ACCURATE") > 0 || !!res.answer?.text || res.points.some((p) => p.leftOut);
+  const all: (Screen | false)[] = [
+    res.misconceptions.length > 0 && { key: "correct", name: "To correct", count: res.misconceptions.length, tone: "miss" },
+    n("PARTIAL") > 0 && { key: "partly", name: "Partly", count: n("PARTIAL"), tone: "part" },
+    n("MISSED") > 0 && { key: "missed", name: "Missed", count: n("MISSED"), tone: "neutral" },
+    last && { key: "remembered", name: n("ACCURATE") > 0 ? "Remembered" : "Your answer", count: n("ACCURATE"), tone: "ok" },
+  ];
+  return all.filter((s): s is Screen => !!s);
+}
 
-  const toggleFocus = () => {
-    setFocus((x) => {
-      saveFocus(!x);
-      return !x;
-    });
+export function ResultScreens({ r, busy, run }: { r: RecallReview; busy: boolean; run: Run }) {
+  const res = r.result!;
+  const screens = screensFor(res);
+  const [want, setWant] = useState<Key | null>(null);
+  const at = Math.max(0, screens.findIndex((s) => s.key === want));
+  const screen = screens[at];
+  if (!screen) return null;
+  const go = (i: number) => setWant(screens[Math.max(0, Math.min(screens.length - 1, i))].key);
+  const onKey = (e: KeyboardEvent) => {
+    if ((e.target as HTMLElement).closest("textarea,input,.g-menu")) return;
+    if (e.key === "ArrowRight") go(at + 1);
+    else if (e.key === "ArrowLeft") go(at - 1);
+    else return;
+    e.preventDefault();
   };
-  const goTo = (id: number) => {
-    const row = document.getElementById(`cmp-${r.id}-${id}`);
-    if (!row) return;
-    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    row.scrollIntoView?.({ behavior: still ? "auto" : "smooth", block: "center" });
-    row.focus({ preventScroll: true });
-    setPulse(id);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setPulse(null), 1600);
-  };
+  const next = screens[at + 1];
 
+  return (
+    <div className="rs" onKeyDown={onKey}>
+      <nav className="rs-steps" aria-label="Result screens" style={{ gridTemplateColumns: `repeat(${screens.length}, minmax(0,1fr))` }}>
+        {screens.map((s, i) => (
+          <button key={s.key} type="button" className={`rs-step ${s.tone}${i <= at ? " seen" : ""}`} aria-current={i === at ? "step" : undefined}
+            aria-label={s.count ? `${s.name}: ${plural(s.count, s.key === "correct" ? "idea" : "point")}` : s.name} onClick={() => go(i)}>
+            <span className="rs-sn">{s.name}</span>
+            {/* "Your answer" holds no points: it keeps the row's height without a 0. */}
+            <b aria-hidden={!s.count}>{s.count || " "}</b>
+            <i aria-hidden="true" />
+          </button>
+        ))}
+      </nav>
+      <p className="sr" aria-live="polite">{`${screen.name}, ${at + 1} of ${screens.length}`}</p>
+
+      <section className="rs-screen" aria-label={screen.name}>
+        {screen.key === "correct" && <Correct res={res} />}
+        {screen.key === "partly" && <Points r={r} busy={busy} run={run} status="PARTIAL" lead="You had the idea; the complete point shows what a full answer says." />}
+        {screen.key === "missed" && (
+          <Points r={r} busy={busy} run={run} status="MISSED"
+            lead={`Not in your answer. Read them once${res.nextDueDate ? `; they come back on ${dayMonth(res.nextDueDate)}` : ""}.`} />
+        )}
+        {screen.key === "remembered" && <Remembered r={r} busy={busy} run={run} />}
+      </section>
+
+      {screens.length > 1 && (
+        <div className="rs-nav">
+          <button type="button" className="btn quiet" disabled={at === 0} onClick={() => go(at - 1)}><Back />Back</button>
+          <span className="rs-of">{at + 1} of {screens.length}</span>
+          {next ? <button type="button" className="btn" onClick={() => go(at + 1)}>Next: {next.name}<Chevron /></button> : <span />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Correct({ res }: { res: Result }) {
+  return (
+    <>
+      <p className="rs-lead">{res.misconceptions.length > 1 ? "These ideas in your answer aren't right." : "One idea in your answer isn't right."} Start here.</p>
+      <ul className="rs-list" aria-label="Misconceptions">
+        {res.misconceptions.map((m, i) => (
+          <li key={i} className="rs-item">
+            <div className="rs-mine miss"><span className="g-sb miss">You said</span><p>“{m.claim}”</p></div>
+            <span className="rs-k">Correct</span>
+            <p className="rs-text">{m.correction}</p>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function Points({ r, busy, run, status, lead }: { r: RecallReview; busy: boolean; run: Run; status: Status; lead: string }) {
+  const res = r.result!;
+  const rows = res.points.filter((p) => !p.leftOut && p.status === status).sort((a, b) => a.tier - b.tier);
+  return (
+    <>
+      <p className="rs-lead">{lead}</p>
+      <ul className="rs-list">{rows.map((p) => <Point key={p.id} r={r} p={p} busy={busy} run={run} />)}</ul>
+    </>
+  );
+}
+
+function Remembered({ r, busy, run }: { r: RecallReview; busy: boolean; run: Run }) {
+  const res = r.result!;
+  const rows = res.points.filter((p) => !p.leftOut && p.status === "ACCURATE").sort((a, b) => a.tier - b.tier);
+  const out = res.points.filter((p) => p.leftOut);
+  const [whole, setWhole] = useState(rows.length === 0);
   const answer = res.answer;
   const statusOf = new Map(res.points.map((p) => [p.id, p]));
-  const wholeMarks: Mark[] = (answer?.spans ?? []).flatMap((s): Mark[] => {
+  const marks: Mark[] = (answer?.spans ?? []).flatMap((s): Mark[] => {
     if (s.kind === "claim") return [{ start: s.start, end: s.end, cls: "cmp-wrong" }];
     const p = statusOf.get(s.pointId);
     return p && !p.leftOut && p.status ? [{ start: s.start, end: s.end, cls: `cmp-hit ${TONE[p.status]}` }] : [];
   });
-  const also = answer?.uncovered ?? [];
-
   return (
-    <div className={`cmp${focus ? " focus" : ""}`}>
-      <div className="cmp-head">
-        <div className="g-pills" role="list" aria-label="Summary">
-          {(["ACCURATE", "PARTIAL", "MISSED"] as const).map((s) => count(s) > 0 && (
-            <span key={s} role="listitem" className={`g-sb ${TONE[s]}`}>{count(s)} {STATUS[s].toLowerCase()}</span>
-          ))}
-        </div>
-        {gaps.length > 0 && (
-          <button type="button" className="g-pill cmp-toggle" aria-pressed={focus} onClick={toggleFocus}>{focus ? "Show all" : "Focus on gaps"}</button>
-        )}
-      </div>
-      {gaps.length > 0 && (
-        <p className="cmp-gaps">
-          <span>{gaps.length > 1 ? "Gaps:" : "Gap:"}</span>
-          {gaps.map((p) => <button key={p.id} type="button" className="g-link" onClick={() => goTo(p.id)}>{p.label}</button>)}
-        </p>
-      )}
-
-      <div className="cmp-cols" aria-hidden="true"><span>Your words</span><span>The complete point</span></div>
-      {TIERS.map(([tier, name]) => {
-        const rows = counted.filter((p) => p.tier === tier);
-        return rows.length > 0 && (
-          <section key={tier} aria-label={name}>
-            <h3 className="g-cap">{name} <span className="g-r">{plural(rows.length, "point")}</span></h3>
-            <ul className="g-group cmp-list">
-              {rows.map((p) => <Row key={p.id} r={r} p={p} answer={answer} busy={busy} run={run} pulse={pulse === p.id} />)}
-            </ul>
-          </section>
-        );
-      })}
-      {res.points.some((p) => p.leftOut) && (
-        <section aria-label="Left out">
-          <h3 className="g-cap">Left out · not counted</h3>
-          <ul className="g-group cmp-list">
-            {res.points.filter((p) => p.leftOut).map((p) => <Row key={p.id} r={r} p={p} answer={answer} busy={busy} run={run} pulse={false} />)}
-          </ul>
-        </section>
-      )}
-
-      {answer && also.length > 0 && (
-        <section aria-label="Also in your answer">
-          <h3 className="g-cap">Also in your answer <span className="g-r">Sentences with no matched words</span></h3>
-          <ul className="g-group cmp-also">
-            {also.slice(0, ALSO_SHOWN).map((x, i) => (
-              <li key={i}>{excerpt(answer.text.slice(x.start, x.end))}</li>
-            ))}
-          </ul>
-          {also.length > ALSO_SHOWN && <p className="g-foot">{plural(also.length - ALSO_SHOWN, "more sentence")} in your whole answer.</p>}
-        </section>
-      )}
-
-      {answer && answer.text && (
-        <div className="cmp-whole">
+    <>
+      <p className="rs-lead">{rows.length ? "What you recalled on your own." : "Nothing in your answer matched a point yet."}</p>
+      {rows.length > 0 && <ul className="rs-list">{rows.map((p) => <Point key={p.id} r={r} p={p} busy={busy} run={run} />)}</ul>}
+      {answer?.text && (
+        <div className="rs-whole">
           <button type="button" className="g-link" aria-expanded={whole} onClick={() => setWhole((x) => !x)}>
             {whole ? <ChevronDown /> : <Chevron />}{whole ? "Hide your whole answer" : "Show your whole answer"}
           </button>
           {whole && (
             <>
-              <p className="cmp-key" aria-hidden="true">
-                <mark className="cmp-hit ok">remembered</mark> <mark className="cmp-hit part">partly</mark> <mark className="cmp-wrong">to correct</mark>
-              </p>
-              <div className="g-group cmp-text" aria-label="Your whole answer"><Marked text={answer.text} marks={wholeMarks} /></div>
+              {marks.length > 0 && (
+                <p className="cmp-key" aria-hidden="true">
+                  <mark className="cmp-hit ok">remembered</mark> <mark className="cmp-hit part">partly</mark> <mark className="cmp-wrong">to correct</mark>
+                </p>
+              )}
+              <div className="rs-text-box" aria-label="Your whole answer"><Marked text={answer.text} marks={marks} /></div>
             </>
           )}
         </div>
       )}
-      <p className="g-foot">A point that isn't part of this sub-topic? Its ⋯ menu leaves it out of the score from now on.</p>
-    </div>
+      {out.length > 0 && (
+        <>
+          <h3 className="g-cap">Left out · not counted</h3>
+          <ul className="rs-list">{out.map((p) => <Point key={p.id} r={r} p={p} busy={busy} run={run} />)}</ul>
+        </>
+      )}
+    </>
   );
 }
 
-function Row({ r, p, answer, busy, run, pulse }: { r: RecallReview; p: RecallPointView; answer: RecallAnswer | undefined; busy: boolean; run: Run; pulse: boolean }) {
+function Point({ r, p, busy, run }: { r: RecallReview; p: RecallPointView; busy: boolean; run: Run }) {
   const [menu, setMenu] = useState(false);
   const toggle = () => {
     setMenu(false);
     void run(async () => (await api.leaveOutPoint(p.id, !p.leftOut)).review ?? api.recallReview(r.id));
   };
   const status = p.status;
-  const gap = status === "MISSED" || status === "PARTIAL";
-  const words = status && status !== "MISSED" ? yourWords(p, answer) : null;
-  const cls = ["cmp-row", status ? TONE[status] : "", p.leftOut ? "out" : "", pulse ? "pulse" : ""].filter(Boolean).join(" ");
-
+  const words = status && status !== "MISSED" ? yourWords(p, r.result!.answer) : null;
   return (
-    <li id={`cmp-${r.id}-${p.id}`} className={cls} tabIndex={-1} aria-label={`${p.label}: ${status ? STATUS[status] : "not graded"}`}>
-      <div className="cmp-you">
-        <span className="cmp-k">Your words</span>
-        {words ? (
-          <>
-            <span className={`g-sb ${TONE[status!]}`}>{STATUS[status!]}</span>
-            <p className="cmp-quote">{words}</p>
-          </>
-        ) : (
-          <p className="cmp-ghost"><Glyph kind="miss" />{status === "MISSED" ? "Missed: not in your answer" : "Not graded"}</p>
-        )}
-        {p.recalledWhenAsked && <span className="g-sb out">↑ recalled when asked</span>}
+    <li className={`rs-item${p.leftOut ? " out" : ""}`} aria-label={`${p.label}: ${status ? STATUS[status] : "not graded"}`}>
+      <div className="rs-head">
+        <b>{p.label}</b>
+        <span className="rs-tier">{TIER[p.tier] ?? ""}</span>
+        <span className="g-menu-wrap">
+          <button type="button" className="g-link quiet" aria-label={`Options for ${p.label}`} aria-expanded={menu} onClick={() => setMenu((x) => !x)}><More /></button>
+          {menu && (
+            <div className="g-menu">
+              <button type="button" disabled={busy} onClick={toggle}>
+                {p.leftOut ? "Count it again" : "Not part of this sub-topic"}
+                <small>{p.leftOut ? "It counts in the score again." : "Leaves it out of the score from now on."}</small>
+              </button>
+            </div>
+          )}
+        </span>
       </div>
-      <div className={`cmp-point${gap && !p.leftOut ? " learn" : ""}`}>
-        <span className="cmp-k">{status === "PARTIAL" ? "The full point" : "The complete point"}</span>
-        <div className="cmp-pt">
-          <b>{p.label}</b>
-          {gap && !p.leftOut && <span className="g-sb part cmp-new">To learn</span>}
-          <span className="g-menu-wrap">
-            <button type="button" className="g-link quiet" aria-label={`Options for ${p.label}`} aria-expanded={menu} onClick={() => setMenu((x) => !x)}><More /></button>
-            {menu && (
-              <div className="g-menu">
-                <button type="button" disabled={busy} onClick={toggle}>
-                  {p.leftOut ? "Count it again" : "Not part of this sub-topic"}
-                  <small>{p.leftOut ? "It counts in the score again." : "Leaves it out of the score from now on."}</small>
-                </button>
-              </div>
-            )}
-          </span>
+      {words && (
+        <div className={`rs-mine ${TONE[status!]}`}>
+          {status === "PARTIAL" && <span className="g-sb part">Your words</span>}
+          <p>{words}</p>
         </div>
-        <p>{p.statement || p.description}</p>
-      </div>
+      )}
+      {status === "PARTIAL" && <span className="rs-k">The complete point</span>}
+      {status !== "ACCURATE" && <p className="rs-text">{p.statement || p.description}</p>}
+      {p.recalledWhenAsked && <span className="g-sb out">↑ recalled when asked</span>}
     </li>
   );
 }

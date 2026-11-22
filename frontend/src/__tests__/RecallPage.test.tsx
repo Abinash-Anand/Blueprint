@@ -92,33 +92,63 @@ describe("recall page", () => {
     vi.useRealTimers();
   });
 
-  it("shows the results: score, depth, next date, misconceptions, and the checklist with the learner's own words", async () => {
+  it("shows the summary on the left and the results as screens, worst first", async () => {
     current = checked();
     render(<RecallPage subtopicId={1} onClose={() => {}} />);
     expect(await screen.findByText("62 %")).toBeTruthy();
-    expect(screen.getByText("Intermediate")).toBeTruthy();
-    expect(screen.getByText(/partly remembered: the same gap again/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Subjects" })).toBeTruthy();
+    expect(screen.getByText("Partly remembered: the same gap again.")).toBeTruthy();
     expect(screen.getByText("Next review").closest("li")!.textContent).toMatch(/23 Nov/);
-    expect(screen.getByRole("group", { name: "Misconceptions" }).textContent).toMatch(/You said “a Subject replays old values”. Only a ReplaySubject/);
-    // One row per point, by tier: your words next to the complete point; a missed point leaves an empty slot.
-    const row = (label: string) => screen.getByRole("listitem", { name: new RegExp(`^${label}:`) });
-    expect(within(screen.getByRole("region", { name: "Definition" })).getByRole("listitem", { name: "Observable and observer: Remembered" })).toBeTruthy();
-    expect(within(screen.getByRole("region", { name: "How it works" })).getByRole("listitem", { name: "Multicasting: Partly" })).toBeTruthy();
-    expect(within(screen.getByRole("region", { name: "Edge cases" })).getByRole("listitem", { name: "Late subscribers: Missed" })).toBeTruthy();
-    // A review from before the answer came along still shows the grader's quote.
-    expect(within(row("Observable and observer")).getByText("“it is both an observable and an observer”")).toBeTruthy();
-    expect(within(row("Late subscribers")).getByText("Missed: not in your answer")).toBeTruthy();
-    expect(within(row("Late subscribers")).getByText("They miss earlier values.")).toBeTruthy();
-    expect(within(row("Multicasting")).getByText("The full point")).toBeTruthy();
-    expect(screen.getAllByText("To learn")).toHaveLength(2);
-    expect(screen.getByRole("list", { name: "Summary" }).textContent).toBe("1 remembered1 partly1 missed");
-    expect(screen.queryByRole("region", { name: "Also in your answer" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Show your whole answer" })).toBeNull();
+    expect(screen.getByText("Depth").closest("li")!.textContent).toMatch(/Intermediate/);
+    expect(screen.getByRole("img", { name: "Of 3 points: 1 remembered · 1 partly · 1 missed" })).toBeTruthy();
+    expect(screen.getByText("About this check").closest("details")!.textContent).toMatch(/Checked by qwen3.5-397b-a17b against 3 points/);
+    // Every screen is named with what it holds, so nothing hides behind Next.
+    const steps = within(screen.getByRole("navigation", { name: "Result screens" })).getAllByRole("button");
+    expect(steps.map((b) => b.getAttribute("aria-label"))).toEqual(["To correct: 1 idea", "Partly: 1 point", "Missed: 1 point", "Remembered: 1 point"]);
+    expect(steps[0].getAttribute("aria-current")).toBe("step");
+    // 1 · what to correct
+    expect(within(screen.getByRole("region", { name: "To correct" })).getByRole("list", { name: "Misconceptions" }).textContent)
+      .toMatch(/You said“a Subject replays old values”CorrectOnly a ReplaySubject or BehaviorSubject does\./);
+    // 2 · partly: your words, then the complete point
+    fireEvent.click(screen.getByRole("button", { name: /Next: Partly/ }));
+    const partly = within(screen.getByRole("region", { name: "Partly" })).getByRole("listitem", { name: "Multicasting: Partly" });
+    expect(within(partly).getByText("“it shares”")).toBeTruthy();
+    expect(within(partly).getByText("The complete point")).toBeTruthy();
+    expect(within(partly).getByText("One execution for all subscribers.")).toBeTruthy();
+    // 3 · missed, from the step bar
+    fireEvent.click(screen.getByRole("button", { name: "Missed: 1 point" }));
+    const missed = within(screen.getByRole("region", { name: "Missed" })).getByRole("listitem", { name: "Late subscribers: Missed" });
+    expect(missed.textContent).toMatch(/Late subscribersEdge cases.*They miss earlier values\./);
+    expect(screen.getByText(/they come back on 23 Nov/)).toBeTruthy();
+    // 4 · remembered, with the arrow key; the last screen has no Next
+    fireEvent.keyDown(screen.getByRole("region", { name: "Missed" }), { key: "ArrowRight" });
+    expect(within(screen.getByRole("region", { name: "Remembered" })).getByText("“it is both an observable and an observer”")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Next/ })).toBeNull();
+    expect(screen.getByText("4 of 4")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("region", { name: "Missed" })).toBeTruthy();
     // There is nothing to grade yourself with.
     expect(screen.queryByRole("radio")).toBeNull();
   });
 
-  it("shows your own words from the graded text, mistakes underlined, and what matched no point", async () => {
+  it("leaves out screens with nothing in them: an answer that matched nothing shows what was missed and the answer itself", async () => {
+    const c = checked();
+    c.result!.misconceptions = [];
+    for (const p of c.result!.points) Object.assign(p, { status: "MISSED", evidence: null });
+    c.result!.answer = { text: "dsyof wedufio wefhs", spans: [], uncovered: [{ start: 0, end: 19 }] };
+    current = c;
+    render(<RecallPage subtopicId={1} onClose={() => {}} />);
+    const steps = within(await screen.findByRole("navigation", { name: "Result screens" })).getAllByRole("button");
+    expect(steps.map((b) => b.getAttribute("aria-label"))).toEqual(["Missed: 3 points", "Your answer"]);
+    expect(within(screen.getByRole("region", { name: "Missed" })).getAllByRole("listitem")).toHaveLength(3);
+    fireEvent.click(screen.getByRole("button", { name: /Next: Your answer/ }));
+    expect(screen.getByText("Nothing in your answer matched a point yet.")).toBeTruthy();
+    // Open at once, with nothing to highlight.
+    expect(screen.getByLabelText("Your whole answer").textContent).toBe("dsyof wedufio wefhs");
+    expect(document.querySelector(".cmp-key")).toBeNull();
+  });
+
+  it("shows your own words from the graded text, mistakes underlined, and the whole answer highlighted", async () => {
     const text = "A Subject: it is both an observable and an observer. And it shares. But a Subject replays old values to new subscribers.\n\nWe used them in the chat service for typing indicators and presence.";
     const at = (q: string) => ({ start: text.indexOf(q), end: text.indexOf(q) + q.length });
     const c = checked();
@@ -133,14 +163,12 @@ describe("recall page", () => {
     };
     current = c;
     render(<RecallPage subtopicId={1} onClose={() => {}} />);
-    const multicasting = await screen.findByRole("listitem", { name: "Multicasting: Partly" });
+    fireEvent.click(await screen.findByRole("button", { name: "Partly: 1 point" }));
+    const multicasting = screen.getByRole("listitem", { name: "Multicasting: Partly" });
     // The stretch of the learner's text, not the grader's copy of it; the mistake inside it is marked.
     expect(within(multicasting).getByText(/it shares\. But/).closest("p")!.textContent).toBe("“it shares. But a Subject replays old values”");
     expect(multicasting.querySelector("mark.cmp-wrong")!.textContent).toBe("a Subject replays old values");
-    // Whole sentences with none of the matched words in them.
-    expect(within(screen.getByRole("region", { name: "Also in your answer" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "We used them in the chat service for typing indicators and presence.",
-    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Remembered: 1 point" }));
     fireEvent.click(screen.getByRole("button", { name: "Show your whole answer" }));
     const whole = screen.getByLabelText("Your whole answer");
     expect(whole.textContent).toBe(text);
@@ -153,48 +181,15 @@ describe("recall page", () => {
 
   it("shows a point's statement once written, else its description", async () => {
     const c = checked();
-    c.result!.points[0].statement = "A Subject is both an observable and an observer.";
+    c.result!.points[1].statement = "A Subject runs one execution and shares it with every subscriber.";
     current = c;
     render(<RecallPage subtopicId={1} onClose={() => {}} />);
-    const first = await screen.findByRole("listitem", { name: "Observable and observer: Remembered" });
-    expect(within(first).getByText("A Subject is both an observable and an observer.")).toBeTruthy();
-    expect(within(first).queryByText("A Subject is both.")).toBeNull();
-    expect(within(screen.getByRole("listitem", { name: "Multicasting: Partly" })).getByText("One execution for all subscribers.")).toBeTruthy();
-  });
-
-  it("cuts a long unmatched sentence at a word; the whole answer keeps all of it", async () => {
-    const text = `${"lorem ipsum dolor ".repeat(30)}end`;
-    const c = checked();
-    c.result!.answer = { text, spans: [], uncovered: [{ start: 0, end: text.length }] };
-    current = c;
-    render(<RecallPage subtopicId={1} onClose={() => {}} />);
-    const passage = within(await screen.findByRole("region", { name: "Also in your answer" })).getByRole("listitem").textContent!;
-    expect(passage.length).toBeLessThanOrEqual(241);
-    expect(passage).toMatch(/^lorem ipsum .* (lorem|ipsum|dolor)…$/);
-    fireEvent.click(screen.getByRole("button", { name: "Show your whole answer" }));
-    expect(screen.getByLabelText("Your whole answer").textContent).toBe(text);
-  });
-
-  it("focuses on the gaps when asked, remembers it, and jumps to a gap from the summary", async () => {
-    localStorage.removeItem("bp.recall.focusGaps");
-    current = checked();
-    const first = render(<RecallPage subtopicId={1} onClose={() => {}} />);
-    const toggle = await screen.findByRole("button", { name: "Focus on gaps" });
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(toggle);
-    expect(screen.getByRole("button", { name: "Show all" }).getAttribute("aria-pressed")).toBe("true");
-    expect(document.querySelector(".cmp")!.classList.contains("focus")).toBe(true);
-    first.unmount();
-    render(<RecallPage subtopicId={1} onClose={() => {}} />);
-    expect(await screen.findByRole("button", { name: "Show all" })).toBeTruthy();
-    // The gap links: each goes to its row.
-    const gaps = screen.getByText("Gaps:").parentElement!;
-    fireEvent.click(within(gaps).getByRole("button", { name: "Late subscribers" }));
-    const target = screen.getByRole("listitem", { name: "Late subscribers: Missed" });
-    expect(document.activeElement).toBe(target);
-    expect(target.classList.contains("pulse")).toBe(true);
-    expect(within(gaps).queryByRole("button", { name: "Observable and observer" })).toBeNull();
-    localStorage.removeItem("bp.recall.focusGaps");
+    fireEvent.click(await screen.findByRole("button", { name: "Partly: 1 point" }));
+    const partly = screen.getByRole("listitem", { name: "Multicasting: Partly" });
+    expect(within(partly).getByText("A Subject runs one execution and shares it with every subscriber.")).toBeTruthy();
+    expect(within(partly).queryByText("One execution for all subscribers.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Missed: 1 point" }));
+    expect(within(screen.getByRole("listitem", { name: "Late subscribers: Missed" })).getByText("They miss earlier values.")).toBeTruthy();
   });
 
   it("then the senior engineer asks about the gaps; an answer marks points recalled when asked; the verdict closes it", async () => {
@@ -222,6 +217,7 @@ describe("recall page", () => {
     expect(screen.getByText("↑ Late subscribers")).toBeTruthy();
     // The results stay one tap away.
     fireEvent.click(screen.getByRole("button", { name: "See the results" }));
+    fireEvent.click(screen.getByRole("button", { name: "Missed: 1 point" }));
     expect(screen.getByText("↑ recalled when asked")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "See the verdict" }));
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
@@ -260,7 +256,8 @@ describe("recall page", () => {
   it("can leave a point out from its menu, and put a sub-topic off to tomorrow", async () => {
     current = checked();
     const first = render(<RecallPage subtopicId={1} onClose={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Options for Late subscribers" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Missed: 1 point" }));
+    fireEvent.click(screen.getByRole("button", { name: "Options for Late subscribers" }));
     fireEvent.click(screen.getByRole("button", { name: /Not part of this sub-topic/ }));
     await waitFor(() => expect(leaveOutPoint).toHaveBeenCalled());
     first.unmount();
