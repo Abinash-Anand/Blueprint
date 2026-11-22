@@ -138,7 +138,9 @@ the local database (as with the point statements) before it touches real data.
    tasks moved per city, the days over capacity before and after, and the projected finish before and after. You see
    this before anything changes.
 3. **Wire it in.**
-   - Migration (additive): `Task.pinnedAt`, `Settings.replannedFor`, `PlanChange`.
+   - Migration (additive): `Task.pinnedAt`, `Settings.replannedFor`, `PlanChange`, and `Stage.weekdays` and
+     `Stage.queue`, filled in from each city's curriculum.
+   - The forecast's finish comes from the re-planned work (5a, option 1).
    - The daily run, the runs after settings, start-date and recall changes, and the advisory lock.
    - Hand moves set `pinnedAt`. `syncRecallTasks` goes through the scheduler. "Move all forward" is removed.
 4. **Frontend.** Today's "plan changed" notice and a quieter "Carried over" section. Progress shows the last change.
@@ -182,7 +184,16 @@ German City has no plan. No task was left without a day.
   so its finish is 10 days to 2 months earlier than the plan can deliver. It shares the day rules, but not the stage
   rules.
 
-**Decision needed before step 3: what to do with the empty days**
+**Decided (22 Nov 2026): option 1.** Stage start dates stay fixed, and the forecast's finish comes from the scheduler.
+Step 3 gains:
+- the forecast's projected finish becomes the last day of the re-planned open work, and its target-date check uses
+  that day;
+- revision load and the week's split still come from the day rules;
+- `Stage` stores its weekdays and queue (an additive migration, filled in from each city's applied curriculum or
+  the built-in template), so re-plan no longer reads the curriculum document;
+- Today shows "Nothing planned today: you're ahead" on an empty study day.
+
+The options as they were put:
 1. **Keep stage starts fixed, and take the forecast from the scheduler (suggested).** The projected finish becomes
    the last day of the re-planned work, so the forecast and Today cannot disagree. The empty days stay as buffer, and
    Today says "nothing planned: you are ahead" on them. A stage can be pulled earlier in phase 3's editing sheet.
