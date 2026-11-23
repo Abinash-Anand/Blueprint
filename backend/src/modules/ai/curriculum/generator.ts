@@ -72,7 +72,7 @@ export const Outline = z.object({
       name: s(120),
       priority: z.enum(["CORE", "IMPORTANT", "OPTIONAL"]),
       hours: z.number().int().min(1).max(200),
-    })).min(2).max(15),
+    })).min(1).max(15),
   })).min(2).max(MAX_DISTRICTS),
 });
 export type Outline = z.infer<typeof Outline>;
@@ -81,7 +81,7 @@ export const DistrictDetail = z.object({
   topics: z.array(z.object({
     key: s(60),
     description: s(1000),
-    subtopics: z.array(s(160)).min(2).max(10),
+    subtopics: z.array(s(160)).min(1).max(10),
     exercise: s(1000),
     dependsOn: z.array(z.string().max(60)).max(5),
     question: z.object({
@@ -99,7 +99,7 @@ export const districtJsonSchema = () => z.toJSONSchema(DistrictDetail) as Record
 
 /* ---------------- prompts ---------------- */
 
-export const GENERATION_PROMPT_VERSION = "curriculum-gen-v4";
+export const GENERATION_PROMPT_VERSION = "curriculum-gen-v5";
 
 const SYSTEM = `You design learning curricula for Blueprint, a planning app that turns one learning goal into a "city":
 districts are the large areas of the subject, topics are buildings, sub-topics are floors learned one after another,
@@ -141,20 +141,43 @@ const planTag = (r: GenerationRequest, max?: number) =>
   r.plan?.trim() ? [tag("plan", max && r.plan.length > max ? `${r.plan.slice(0, max)}\n[…]` : r.plan)] : [];
 
 /**
- * Hours of new material to plan. With a target date: what fits before it at the chosen pace. Without one: the
- * learner-confirmed estimate for the goal when there is one, otherwise twelve weeks at the chosen pace.
+ * Hours of new material that fit before the finish-by date at the chosen pace (the real days to it); null without one.
+ */
+export function dateCapacity(r: GenerationRequest): number | null {
+  if (!r.constraints.targetDate) return null;
+  const start = r.constraints.startDate ?? r.today;
+  const weekly = (r.constraints.hoursPerDay ?? 2) * studyWeekdays(r.constraints).length;
+  return Math.max(1, (diffDays(start, r.constraints.targetDate) + 1) / 7) * weekly * paceShare(r.constraints.pace);
+}
+
+/**
+ * Hours to plan: the size of the goal. The learner-confirmed estimate when there is one (a finish-by date then only
+ * checks whether it fits: fitDeadline), else what fits before the date, else twelve weeks at the chosen pace. Never
+ * more than fits in the longest journey a city may have.
  */
 export function hourBudget(r: GenerationRequest) {
-  const start = r.constraints.startDate ?? r.today;
   const weekly = (r.constraints.hoursPerDay ?? 2) * studyWeekdays(r.constraints).length;
   const share = paceShare(r.constraints.pace);
   const estimate = r.requirements.understood?.estimatedHours;
-  const hours = r.constraints.targetDate
-    ? Math.max(2, diffDays(start, r.constraints.targetDate) / 7) * weekly * share
-    : estimate && estimate > 0 ? estimate : 12 * weekly * share;
+  const hours = estimate && estimate > 0 ? estimate : dateCapacity(r) ?? 12 * weekly * share;
   // Never more than fits in the longest journey a city may have (with room for the calendar's buffer).
   const fits = ((MAX_JOURNEY_DAYS * 0.8) / 7) * weekly * share;
-  return Math.max(20, Math.min(1500, Math.round(Math.min(hours, fits))));
+  return Math.max(2, Math.min(1500, Math.round(Math.min(hours, fits))));
+}
+
+/** About how many topics a budget holds (about two hours each), with a range the model keeps to. */
+export function topicCount(budget: number) {
+  const n = Math.max(2, Math.min(90, Math.round(budget / 2)));
+  return { n, min: Math.max(2, Math.floor(n * 0.75)), max: Math.max(3, Math.ceil(n * 1.25)) };
+}
+
+/** The outline's size comes from the hours: topics of about two hours, their hours adding up to the budget. */
+function outlineTask(r: GenerationRequest, lang: string) {
+  const budget = hourBudget(r);
+  const c = topicCount(budget);
+  return `Design the outline: 2 to ${MAX_DISTRICTS} districts, each with 1 to 15 topics. When subjects are given, make one district per subject in that order (if only one subject is given, split it into two or three districts). `
+    + `Size it to the learner's time: the CORE and IMPORTANT topics together take ${budget} hours, no more (their hours must add up to about ${budget}), in about ${c.n} topics in total (between ${c.min} and ${c.max}). `
+    + `Each topic takes whole hours (1 or more) and includes its practice. Skip what the learner already knows (prerequisitesAlreadyKnown). Write names in ${lang}.`;
 }
 
 export function outlinePrompt(r: GenerationRequest) {
@@ -165,7 +188,7 @@ export function outlinePrompt(r: GenerationRequest) {
       tag("stage", "outline"),
       answers(r),
       ...planTag(r),
-      tag("task", `Design the outline: 2 to ${MAX_DISTRICTS} districts, each with 2 to 15 topics. When subjects are given, make one district per subject in that order (if only one subject is given, split it into two or three districts). The CORE and IMPORTANT topics together should take about ${hourBudget(r)} hours. Skip what the learner already knows (prerequisitesAlreadyKnown). Write names in ${lang}.`),
+      tag("task", outlineTask(r, lang)),
     ].join("\n\n"),
   };
 }
@@ -174,12 +197,6 @@ export function outlinePrompt(r: GenerationRequest) {
 export function maxSubtopics(hours: number) {
   const units = Math.round(hours * 2);
   return units - Math.max(1, Math.round(units * PRACTICE_SHARE));
-}
-/** The fewest whole hours that fit `n` sub-topics, never less than the hours the outline gave. */
-export function hoursFor(n: number, hours: number) {
-  let h = Math.max(1, hours);
-  while (maxSubtopics(h) < n) h++;
-  return h;
 }
 
 export function districtPrompt(r: GenerationRequest, outline: Outline, index: number, problems?: string[]) {
@@ -194,8 +211,8 @@ export function districtPrompt(r: GenerationRequest, outline: Outline, index: nu
       ...planTag(r, DISTRICT_PLAN_CHARS),
       tag("outline", outline.districts.map((x) => ({ district: x.name, topics: x.topics.map((t) => t.name) }))),
       tag("district", { key: d.key, name: d.name, goal: d.goal }),
-      tag("topics", d.topics.map((t) => ({ key: t.key, name: t.name, priority: t.priority, hours: t.hours, maxSubtopics: Math.min(8, Math.max(2, maxSubtopics(t.hours))) }))),
-      tag("task", `For every topic in <topics> (same keys): a description (2 to 4 sentences), 2 sub-topics up to that topic's maxSubtopics, in learning order, one practical exercise, dependsOn (keys of topics that must come first, only from: ${earlier.join(", ")}), and one revision question with its expected answer. Write in ${lang}.`),
+      tag("topics", d.topics.map((t) => ({ key: t.key, name: t.name, priority: t.priority, hours: t.hours, maxSubtopics: Math.min(8, Math.max(1, maxSubtopics(t.hours))) }))),
+      tag("task", `For every topic in <topics> (same keys): a description (2 to 4 sentences), 1 sub-topic up to that topic's maxSubtopics (never more: they must fit its hours), in learning order, one practical exercise, dependsOn (keys of topics that must come first, only from: ${earlier.join(", ")}), and one revision question with its expected answer. Write in ${lang}.`),
       ...(problems?.length ? [tag("problems", `Your previous answer was rejected: ${problems.join("; ")}. Fix these and answer again.`)] : []),
     ].join("\n\n"),
   };
@@ -271,6 +288,7 @@ export function buildCalendar(doc: Omit<CurriculumDocument, "stages" | "journey"
 export function assemble(outline: Outline, details: DistrictDetail[], r: GenerationRequest): CurriculumDocument {
   const usedDistricts = new Set<string>(), usedTopics = new Set<string>();
   const keyMap = new Map<string, string>(); // model key → contract key
+  const hoursOf = budgetedHours(outline, hourBudget(r));
   const districts = outline.districts.map((d, di) => {
     const dk = unique(slug(d.key || d.name, 20), usedDistricts, 24);
     const detail = new Map(details[di].topics.map((t) => [t.key, t]));
@@ -278,10 +296,11 @@ export function assemble(outline: Outline, details: DistrictDetail[], r: Generat
       const tk = unique(`${dk}.${slug(t.key || t.name, 40)}`, usedTopics, 48);
       keyMap.set(t.key, tk);
       const x = detail.get(t.key);
-      const subtopics = (x?.subtopics ?? [t.name]).slice(0, 20).map((v) => clip(v, 160));
+      const hours = hoursOf.get(t) ?? t.hours;
+      // Sub-topics fit the hours (never the other way round): extra ones join the last that fits, so nothing is lost.
+      const subtopics = fitSubtopics((x?.subtopics ?? [t.name]).slice(0, 20), hours).map((v) => clip(v, 160));
       return {
-        // More sub-topics than the hours can hold: give the topic just enough hours rather than drop any of them.
-        key: tk, name: clip(t.name, 120), priority: t.priority, hours: hoursFor(subtopics.length, t.hours),
+        key: tk, name: clip(t.name, 120), priority: t.priority, hours,
         description: clip(x?.description ?? `${t.name}.`, 1000),
         subtopics,
         exercise: clip(x?.exercise ?? `Apply ${t.name} in a small project of your own.`, 1000),
@@ -309,6 +328,25 @@ export function assemble(outline: Outline, details: DistrictDetail[], r: Generat
   return { contractVersion: CURRICULUM_CONTRACT_VERSION, title: clip(outline.title, 80), ...calendar, districts, queues };
 }
 
+/**
+ * The outline's hours, scaled down when its planned (CORE and IMPORTANT) topics add up to more than 10 % over the
+ * budget: the model's sizes are kept in proportion, every topic keeps at least one hour.
+ */
+export function budgetedHours(outline: Outline, budget: number) {
+  const all = outline.districts.flatMap((d) => d.topics);
+  const planned = all.filter((t) => t.priority !== "OPTIONAL");
+  const total = planned.reduce((a, t) => a + t.hours, 0);
+  const f = total > budget * 1.1 ? budget / total : 1;
+  return new Map(all.map((t) => [t, Math.max(1, Math.round(t.hours * f))]));
+}
+
+/** At most the sub-topics `hours` can hold; the extra ones join the last that fits ("A · B · C"). */
+export function fitSubtopics(subtopics: string[], hours: number) {
+  const max = Math.max(1, maxSubtopics(hours));
+  if (subtopics.length <= max) return subtopics;
+  return [...subtopics.slice(0, max - 1), subtopics.slice(max - 1).join(" · ")];
+}
+
 type AssembledDistrict = { topics: { key: string; priority: string; hours: number; dependsOn: string[] }[] };
 
 /**
@@ -318,8 +356,9 @@ type AssembledDistrict = { topics: { key: string; priority: string; hours: numbe
  * Returns the keys it moved.
  */
 export function fitDeadline(districts: AssembledDistrict[], r: GenerationRequest): string[] {
-  if (!r.constraints.targetDate) return [];
-  const limit = hourBudget(r) * 1.1;
+  const capacity = dateCapacity(r);
+  if (capacity === null) return [];
+  const limit = capacity * 1.1;
   const planned = () => districts.flatMap((d) => d.topics).filter((t) => t.priority !== "OPTIONAL");
   let total = planned().reduce((a, t) => a + t.hours, 0);
   const moved: string[] = [];

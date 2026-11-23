@@ -92,12 +92,14 @@ describe("generation from the new intake", () => {
     const at = (pace: string) => req({ constraints: { hoursPerDay: 2, daysPerWeek: 5, startDate: "2026-11-23", targetDate: "2027-02-15", pace }, requirements: {} });
     expect(hourBudget(at("LIGHT"))).toBeLessThan(hourBudget(at("STEADY")));
     expect(hourBudget(at("STEADY"))).toBeLessThan(hourBudget(at("INTENSIVE")));
-    expect(hourBudget(at("STEADY"))).toBe(90); // 12 weeks × 10 h × 0.75
+    expect(hourBudget(at("STEADY"))).toBe(91); // 85 days (the finish day included) × 10 h a week × 0.75
     expect(PACE_SHARE).toEqual({ LIGHT: 0.6, STEADY: 0.75, INTENSIVE: 0.9 });
   });
 
-  it("uses the confirmed estimate of hours when there is no target date", () => {
+  it("uses the confirmed estimate of hours, with or without a target date", () => {
     expect(hourBudget(req())).toBe(300);
+    // A finish-by date doesn't resize the goal: it only checks whether the goal fits (fitDeadline).
+    expect(hourBudget(req({ constraints: { hoursPerDay: 2, daysPerWeek: 5, startDate: "2026-11-23", targetDate: "2027-02-15", pace: "STEADY" } }))).toBe(300);
     expect(hourBudget(req({ requirements: {} }))).toBe(90); // twelve weeks at the steady pace
   });
 
