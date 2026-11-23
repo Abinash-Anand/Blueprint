@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { App } from "./App";
 import { AccountSettings, Onboarding } from "./components/account/Account";
-import { CalendarPage } from "./components/account/CalendarPage";
+import { CalendarDisconnect, CalendarPage } from "./components/account/CalendarPage";
 import { type AuthRoute, AuthScreens } from "./components/account/AuthScreens";
 import { CityManager } from "./components/cities/Cities";
 import { CreateCity } from "./components/cities/create/CreateCity";
@@ -127,7 +127,7 @@ function Page({ children }: { children: React.ReactNode }) {
         <a className="brand-link" href={city ? "#/today" : "#/cities"}>{city ? `← ${city.name}` : "Blueprint"}</a>
         <TopBar />
       </header>
-      {children}
+      <main className="page-main">{children}</main>
     </div>
   );
 }
@@ -150,7 +150,7 @@ export function Root() {
   if (first === "privacy" || first === "terms") return <AuthScreens route={first} />;
   if (!s.user?.onboardedAt && first !== "cities") return <Onboarding />;
   if (first === "account") return <Page><AccountSettings /></Page>;
-  if (first === "calendar") return <Page><CalendarPage /></Page>;
+  if (first === "calendar") return <Page>{second === "disconnect" ? <CalendarDisconnect /> : <CalendarPage />}</Page>;
   if (first === "cities" && second === "new") {
     const draft = hash.split("?")[0].split("/")[3] ?? null;
     return <Page><CreateCity key={draft ?? "new"} draftId={draft} /></Page>;
