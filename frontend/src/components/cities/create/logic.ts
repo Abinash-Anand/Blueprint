@@ -29,6 +29,8 @@ export interface TimeInput {
   pace: Pace;
   startDate: string;
   targetDate?: string;
+  /** When study starts each day ("18:00"), so goals don't clash (docs/Google-Calendar-MVP-Plan.md §9). */
+  studyStart?: string;
   /** The understood estimate of hours the goal needs. */
   estimatedHours?: number;
 }

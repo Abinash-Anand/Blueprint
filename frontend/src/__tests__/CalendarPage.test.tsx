@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarStatus } from "../api/types";
 
 const base: CalendarStatus = { configured: true, connected: true, status: "ACTIVE", startTime: "18:00", lastSyncedAt: new Date().toISOString(), lastError: null, instant: false, pollMinutes: 15, blocks: 12,
-  reminderMinutes: 10, cities: [{ id: "a", name: "Angular City" }, { id: "b", name: "German B2" }] };
+  reminderMinutes: 10, cities: [{ id: "a", name: "Angular City", start: "09:00" }, { id: "b", name: "German B2", start: null }] };
 let current: CalendarStatus = base;
 const status = vi.fn(async () => current);
 const setStart = vi.fn(async (t: string) => (current = { ...current, startTime: t }));
@@ -94,7 +94,7 @@ describe("Google Calendar page", () => {
     expect((screen.getByRole("button", { name: "Move Angular City up" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Move Angular City down" }));
     await waitFor(() => expect(setCityOrder).toHaveBeenCalledWith(["b", "a"]));
-    await waitFor(() => expect(screen.getAllByRole("listitem").map((li) => li.textContent?.replace(/[↑↓]/g, ""))).toEqual(["German B2", "Angular City"]));
+    await waitFor(() => expect(screen.getAllByRole("listitem").map((li) => li.querySelector("span")?.firstChild?.textContent?.trim())).toEqual(["German B2", "Angular City"]));
   });
 
   it("can be left without disconnecting", () => {

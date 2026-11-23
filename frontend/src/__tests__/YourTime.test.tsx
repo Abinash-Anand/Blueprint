@@ -5,13 +5,13 @@ import type { TimeChoice, TimePreview, YourTime } from "../api/types";
 
 const now: YourTime = {
   minutesPerDay: 240, studyDays: [1, 2, 3, 4, 5, 6], pace: "CURRENT", share: 1, uniform: true,
-  targetDate: null, timezone: "Europe/Berlin", paces: { LIGHT: 0.6, STEADY: 0.75, INTENSIVE: 0.9 },
+  targetDate: null, timezone: "Europe/Berlin", paces: { LIGHT: 0.6, STEADY: 0.75, INTENSIVE: 0.9 }, studyStart: null, slot: { start: null, clashes: [], suggest: null },
 };
 const unchanged: TimePreview = {
   split: { available: 1440, newMaterial: 1440, revision: 0 }, finish: { before: "2027-08-12", after: "2027-08-12" },
   target: { date: null, meets: null, neededNewMinutesPerWeek: null },
   revisionLoad: [0, 1, 2, 3].map((i) => ({ weekStart: `2026-11-${23 + 7 * i > 30 ? 30 : 23 + 7 * i}`, recalls: i, minutes: 8 * i })),
-  moved: 0, splitTasks: 0, movedToday: 0, unchanged: true,
+  moved: 0, splitTasks: 0, movedToday: 0, unchanged: true, slot: { start: null, clashes: [], suggest: null },
 };
 const more: TimePreview = {
   ...unchanged, split: { available: 1800, newMaterial: 1350, revision: 450 }, finish: { before: "2027-08-12", after: "2027-07-03" },
@@ -27,7 +27,7 @@ vi.mock("../api/client", () => ({
 }));
 vi.mock("../state/AppData", () => ({ useAppData: () => ({ mutate: (fn: () => Promise<unknown>) => fn() }) }));
 
-import { YourTimePage, shiftText } from "../components/time/YourTime";
+import { SlotNote, YourTimePage, shiftText } from "../components/time/YourTime";
 
 describe("Your time", () => {
   beforeEach(() => {
@@ -42,7 +42,7 @@ describe("Your time", () => {
     expect(screen.getByRole("button", { name: "Sunday" }).getAttribute("aria-pressed")).toBe("false");
     // No preset matches all new material: it shows as Current.
     expect(screen.getByText(/All new material, no revision time/)).toBeTruthy();
-    expect(previewTime).toHaveBeenCalledWith({ minutesPerDay: 240, studyDays: [1, 2, 3, 4, 5, 6], pace: "CURRENT", targetDate: null, timezone: "Europe/Berlin" });
+    expect(previewTime).toHaveBeenCalledWith({ minutesPerDay: 240, studyDays: [1, 2, 3, 4, 5, 6], pace: "CURRENT", targetDate: null, timezone: "Europe/Berlin", studyStart: null });
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -59,10 +59,10 @@ describe("Your time", () => {
     expect(within(box).getByText(/Not by 1 Jun 2027 at this pace: it needs about 26.7 h of new material a week \(this plans 22.5 h\)/)).toBeTruthy();
     expect(within(box).getByText(/483 tasks would move, 24 tasks split to fill your days/)).toBeTruthy();
     // Only the last choice is previewed (one call after load, one after the changes settle).
-    expect(previewTime).toHaveBeenLastCalledWith({ minutesPerDay: 255, studyDays: [1, 2, 3, 4, 5, 6], pace: "STEADY", targetDate: "2027-06-01", timezone: "Europe/Berlin" });
+    expect(previewTime).toHaveBeenLastCalledWith({ minutesPerDay: 255, studyDays: [1, 2, 3, 4, 5, 6], pace: "STEADY", targetDate: "2027-06-01", timezone: "Europe/Berlin", studyStart: null });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(saveTime).toHaveBeenCalledWith({ minutesPerDay: 255, studyDays: [1, 2, 3, 4, 5, 6], pace: "STEADY", targetDate: "2027-06-01", timezone: "Europe/Berlin" });
+    expect(saveTime).toHaveBeenCalledWith({ minutesPerDay: 255, studyDays: [1, 2, 3, 4, 5, 6], pace: "STEADY", targetDate: "2027-06-01", timezone: "Europe/Berlin", studyStart: null });
   });
 
   it("says what is wrong with a choice and does not let it be saved", async () => {
@@ -83,6 +83,17 @@ describe("Your time", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(saveTime).not.toHaveBeenCalled();
+  });
+
+  it("says when a study time clashes with another city, and offers the next free time", () => {
+    const use = vi.fn();
+    const { unmount } = render(<SlotNote slot={{ start: "18:00", clashes: [{ city: "German C1", from: "18:00", to: "21:00", days: [1, 2, 3] }], suggest: "21:00" }} onUse={use} />);
+    expect(screen.getByRole("alert").textContent).toMatch(/Clashes with German C1 \(18:00–21:00\) on Mon, Tue, Wed\./);
+    fireEvent.click(screen.getByRole("button", { name: "Use 21:00 instead" }));
+    expect(use).toHaveBeenCalledWith("21:00");
+    unmount();
+    render(<SlotNote slot={{ start: "09:00", clashes: [], suggest: null }} onUse={use} />);
+    expect(screen.getByText("Study from 09:00: clashes with none of your other cities.")).toBeTruthy();
   });
 
   it("says how far the finish moves in days, then weeks", () => {

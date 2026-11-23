@@ -192,6 +192,38 @@ suite("google calendar", () => {
     expect((await asUser(app, H).get("/api/calendar").expect(200)).body).toMatchObject({ reminderMinutes: 10, cities: [{ id: "engineering", name: "Engineering City" }] });
   });
 
+  it("leaves work finished ahead (a sub-topic ticked learned) out of today's block", async () => {
+    const today = clock.date;
+    const ahead = await prisma.task.findFirstOrThrow({ where: { cityId: "engineering", recallStateId: null, status: "TODO", scheduledDate: { gt: new Date(addDays(today, 2)) } } });
+    await prisma.task.update({ where: { id: ahead.id }, data: { status: "DONE", completedAt: new Date(), scheduledDate: new Date(today) } });
+    await calendar.push(userId);
+    expect((await byDay()).get(today)?.description ?? "").not.toContain(`${ahead.title} · `);
+  });
+
+  it("never takes a block from before the update as moved by the learner, and puts each city in its own study time", async () => {
+    // A row from before richer events: Blueprint doesn't know where it put it.
+    const row = await prisma.calendarEvent.findFirstOrThrow({ where: { userId, kind: "STUDY", googleEventId: { not: null } }, orderBy: { day: "desc" } });
+    await prisma.calendarEvent.update({ where: { id: row.id }, data: { placedMinute: null, etag: "old" } });
+    await calendar.pull(userId);
+    expect((await prisma.calendarEvent.findUniqueOrThrow({ where: { id: row.id } })).startMinute).toBeNull();
+    // Study from 09:00, saved on Your time: the blocks move there.
+    const now = (await asUser(app, H).get("/api/schedule/availability").expect(200)).body;
+    const saved = await asUser(app, H).put("/api/schedule/availability")
+      .send({ minutesPerDay: now.minutesPerDay, studyDays: now.studyDays, pace: now.pace, studyStart: "09:00" }).expect(200);
+    expect(saved.body).toMatchObject({ studyStart: "09:00", slot: { start: "09:00", clashes: [] } });
+    await prisma.calendarEvent.updateMany({ where: { userId }, data: { startMinute: null } });
+    await calendar.push(userId);
+    const days = [...(await byDay()).values()];
+    expect(days.length).toBeGreaterThan(3);
+    expect(days.some((e) => e.start!.dateTime!.endsWith("T09:00:00"))).toBe(true);
+    expect((await asUser(app, H).get("/api/calendar").expect(200)).body.cities).toEqual([{ id: "engineering", name: "Engineering City", start: "09:00" }]);
+    // Back to no set time (the default start), so the next tests see the calendar's own start time.
+    await prisma.settings.updateMany({ where: { cityId: "engineering" }, data: { studyStartMinute: null } });
+    // The save also asked for a push (a few seconds later): let it run, so the next tests start clean.
+    later(20_000);
+    await calendar.runDue();
+  });
+
   it("hides a block deleted in Google and doesn't write it again; the plan doesn't change", async () => {
     const days = await byDay();
     const [day, ev] = [...days.entries()].sort()[6];

@@ -265,6 +265,14 @@ export interface TimeChoice {
   /** A date to set, null to clear, absent to keep. */
   targetDate?: ISODate | null;
   timezone?: string;
+  /** When study starts each day ("18:00"), null = not chosen (docs/Google-Calendar-MVP-Plan.md §9). */
+  studyStart?: string | null;
+}
+/** A study slot against your other cities: what it clashes with, and the next time that clashes with nothing. */
+export interface SlotReport {
+  start: string | null;
+  clashes: { city: string; from: string; to: string; days: number[] }[];
+  suggest: string | null;
 }
 /** The current week, described as the sheet's choice. */
 export interface YourTime extends TimeChoice {
@@ -275,6 +283,8 @@ export interface YourTime extends TimeChoice {
   targetDate: ISODate | null;
   timezone: string;
   paces: Record<"LIGHT" | "STEADY" | "INTENSIVE", number>;
+  studyStart: string | null;
+  slot: SlotReport;
 }
 /** What a choice would do (nothing saved). Minutes. */
 export interface TimePreview {
@@ -286,6 +296,7 @@ export interface TimePreview {
   splitTasks: number;
   movedToday: number;
   unchanged: boolean;
+  slot: SlotReport;
 }
 
 /** A re-plan that moved tasks (docs/Scheduler-Phase2-Plan.md). */
@@ -572,6 +583,8 @@ export interface CityConstraints {
   timezone?: string;
   /** ISO weekdays the learner studies (1 = Monday). */
   weekdays?: number[];
+  /** When study starts each day ("18:00"). */
+  studyStart?: string;
 }
 
 export interface CitySummary {
@@ -845,5 +858,5 @@ export interface CalendarStatus {
   /** Minutes before a block that Google reminds you; 0 = none. */
   reminderMinutes: number;
   /** Your active cities, in the order their blocks follow each other on a day. */
-  cities: { id: string; name: string }[];
+  cities: { id: string; name: string; start: string | null }[];
 }

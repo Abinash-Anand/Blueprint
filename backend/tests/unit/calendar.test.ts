@@ -51,11 +51,22 @@ describe("calendar sync, in code", () => {
     expect(hm(60)).toBe("1 h");
   });
 
-  it("lays a day out one event after another, around events the learner moved", () => {
-    expect(layoutDay(1080, [{ minutes: 20, fixed: null }, { minutes: 90, fixed: null }, { minutes: 60, fixed: null }])).toEqual([1080, 1100, 1190]);
+  it("lays a day out: each city from its own slot, nothing overlapping, around events the learner moved", () => {
+    const at = (earliest: number, minutes: number, fixed: number | null = null) => ({ earliest, minutes, fixed });
+    // Same start (no slots of their own): one after another.
+    expect(layoutDay([at(1080, 20), at(1080, 90), at(1080, 60)])).toEqual([1080, 1100, 1190]);
+    // Angular from 09:00, German from 18:00: each in its own time.
+    expect(layoutDay([at(540, 10), at(540, 180), at(1080, 10), at(1080, 180)])).toEqual([540, 550, 1080, 1090]);
     // Moved to 18:30–19:30: the others go around it.
-    expect(layoutDay(1080, [{ minutes: 20, fixed: null }, { minutes: 60, fixed: 1110 }, { minutes: 45, fixed: null }])).toEqual([1080, 1110, 1170]);
-    expect(layoutDay(1080, [{ minutes: 60, fixed: 1070 }, { minutes: 30, fixed: null }])).toEqual([1070, 1130]);
+    expect(layoutDay([at(1080, 20), at(1080, 60, 1110), at(1080, 45)])).toEqual([1080, 1110, 1170]);
+    expect(layoutDay([at(1080, 60, 1070), at(1080, 30)])).toEqual([1070, 1130]);
+  });
+
+  it("flags a day that holds more than the city's study time", () => {
+    const c = { cityId: "c1", cityName: "Angular City", day: "2026-11-23" as const, timeZone: "Europe/Berlin", appUrl: "https://bp.example", reminderMinutes: 10 };
+    const b = studyBody({ ...c, over: { minutes: 240, slot: 180 }, stage: null, tasks: [{ title: "Signals", minutes: 420, done: false }] }, 540)!;
+    expect(b.summary).toBe("⚠ Angular City · Study · 7 h");
+    expect(b.description!.split("\n")[0]).toBe("⚠ This day holds 7 h: 4 h more than your 3 h study time (work carried over from earlier days lands here).");
   });
 
   it("reads where an event starts in the city's time zone", () => {

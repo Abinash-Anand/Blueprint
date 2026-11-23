@@ -78,7 +78,7 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
           setReadFrom(`${(r.brief ?? "").trim()}|${fs.map((f) => f.id).join(",")}`);
         }
         if (con.startDate) {
-          setTime((t) => ({ ...t, hoursPerDay: con.hoursPerDay ?? t.hoursPerDay, weekdays: con.weekdays?.length ? con.weekdays : t.weekdays, pace: con.pace ?? t.pace, startDate: con.startDate!, targetDate: con.targetDate }));
+          setTime((t) => ({ ...t, studyStart: con.studyStart ?? t.studyStart, hoursPerDay: con.hoursPerDay ?? t.hoursPerDay, weekdays: con.weekdays?.length ? con.weekdays : t.weekdays, pace: con.pace ?? t.pace, startDate: con.startDate!, targetDate: con.targetDate }));
           setTargetTouched(true);
         }
         if (con.timezone) setTimezone(con.timezone);
@@ -232,6 +232,7 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
       const constraints: CityConstraints = {
         hoursPerDay: time.hoursPerDay, daysPerWeek: time.weekdays.length, weekdays: time.weekdays, pace: time.pace,
         startDate: time.startDate, ...(time.targetDate ? { targetDate: time.targetDate } : {}), timezone,
+        ...(time.studyStart ? { studyStart: time.studyStart } : {}),
       };
       await api.update(idRef.current!, { constraints });
       setStep("build");
@@ -322,7 +323,7 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
           )}
           {step === "time" && (
             <TimeStep
-              t={tInput} onT={(t) => { if (t.targetDate !== time.targetDate) setTargetTouched(true); setTime({ hoursPerDay: t.hoursPerDay, weekdays: t.weekdays, pace: t.pace, startDate: t.startDate, targetDate: t.targetDate }); }}
+              t={tInput} onT={(t) => { if (t.targetDate !== time.targetDate) setTargetTouched(true); setTime({ hoursPerDay: t.hoursPerDay, weekdays: t.weekdays, pace: t.pace, startDate: t.startDate, targetDate: t.targetDate, studyStart: t.studyStart }); }}
               plan={plan} paces={paces} timezone={timezone} onTimezone={setTimezone} edit={setEdit} error={error} busy={busy} onContinue={() => void confirmTime()}
             />
           )}

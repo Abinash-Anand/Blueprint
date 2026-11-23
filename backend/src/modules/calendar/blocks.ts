@@ -11,7 +11,11 @@ import type { EventBody, EventTime } from "./google.js";
 export type BlockKind = "STUDY" | "RECALL";
 export interface StudyTask { title: string; minutes: number; done: boolean }
 export interface RecallItem { subtopicId: number; name: string; topic: string; minutes: number; done: boolean; lastReview: ISODate | null; overdueSince: ISODate | null }
-export interface Ctx { cityId: string; cityName: string; day: ISODate; timeZone: string; appUrl: string; reminderMinutes: number }
+export interface Ctx {
+  cityId: string; cityName: string; day: ISODate; timeZone: string; appUrl: string; reminderMinutes: number;
+  /** The day's work beyond the city's study time (minutes), with that time: flagged on the block, never hidden. */
+  over?: { minutes: number; slot: number } | null;
+}
 
 /** Google's event colours: Peacock for study, Grape for recall, Graphite once done. */
 export const COLORS = { STUDY: "7", RECALL: "3", DONE: "8" } as const;
@@ -44,6 +48,10 @@ function frame(c: Ctx, kind: BlockKind, startMinute: number, minutes: number, do
   };
 }
 
+const warn = (c: Ctx) => (c.over ? "⚠ " : "");
+const overLine = (c: Ctx, total: number) =>
+  c.over ? [`⚠ This day holds ${hm(total)}: ${hm(c.over.minutes)} more than your ${hm(c.over.slot)} study time (work carried over from earlier days lands here).`, ""] : [];
+
 const link = (c: Ctx, path: string) => `${c.appUrl}/#/${path}${path.includes("?") ? "&" : "?"}city=${encodeURIComponent(c.cityId)}`;
 
 /** The study block: study and practice tasks with the stage; null when there are none. */
@@ -53,8 +61,8 @@ export function studyBody(c: Ctx & { stage: string | null; tasks: StudyTask[] },
   const done = c.tasks.every((t) => t.done);
   const lines = c.tasks.map((t) => `${t.done ? "✓" : "•"} ${t.title} · ${hm(t.minutes)}`);
   return {
-    summary: `${done ? "✓ " : ""}${c.cityName} · Study · ${hm(total)}`,
-    description: [...(c.stage ? [`Stage: ${c.stage}`, ""] : []), ...lines, "", `Open in Blueprint: ${link(c, "today")}`, "", FOOT].join("\n"),
+    summary: `${done ? "✓ " : warn(c)}${c.cityName} · Study · ${hm(total)}`,
+    description: [...overLine(c, (c.over?.slot ?? 0) + (c.over?.minutes ?? 0)), ...(c.stage ? [`Stage: ${c.stage}`, ""] : []), ...lines, "", `Open in Blueprint: ${link(c, "today")}`, "", FOOT].join("\n"),
     ...frame(c, "STUDY", startMinute, total, done),
   };
 }
@@ -79,15 +87,15 @@ export const hashBody = (b: EventBody) =>
   createHash("sha256").update(JSON.stringify([b.summary, b.description, b.start, b.end, b.colorId, b.reminders])).digest("hex").slice(0, 32);
 
 /**
- * A day's events, one after another from `start` in the order given. An event the learner moved keeps its time
- * (`fixed`), and the others are placed around it. Answers each event's start, in the same order.
+ * A day's events in the order given. Each starts at its `earliest` (its city's study slot), or later if that time is
+ * already taken, so nothing overlaps; an event the learner moved keeps its time (`fixed`) and the others go around it.
+ * Answers each event's start, in the same order.
  */
-export function layoutDay(start: number, blocks: { minutes: number; fixed: number | null }[]): number[] {
-  const taken = blocks.filter((b) => b.fixed !== null).map((b) => [b.fixed!, b.fixed! + b.minutes] as const);
-  let cursor = start;
+export function layoutDay(blocks: { minutes: number; fixed: number | null; earliest: number }[]): number[] {
+  const taken: [number, number][] = blocks.filter((b) => b.fixed !== null).map((b) => [b.fixed!, b.fixed! + b.minutes]);
   return blocks.map((b) => {
     if (b.fixed !== null) return b.fixed;
-    let at = cursor;
+    let at = b.earliest;
     for (let moved = true; moved;) {
       moved = false;
       for (const [s, e] of taken) {
@@ -97,7 +105,7 @@ export function layoutDay(start: number, blocks: { minutes: number; fixed: numbe
         }
       }
     }
-    cursor = at + b.minutes;
+    taken.push([at, at + b.minutes]);
     return at;
   });
 }

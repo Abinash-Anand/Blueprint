@@ -8,6 +8,15 @@ import { validate } from "../../lib/http.js";
 import { isoDate } from "../../lib/schemas.js";
 import { curriculumJsonSchema } from "./contract.js";
 import { cityService } from "./service.js";
+import { otherSlots, slotReport } from "../schedule/yourTime.js";
+import { toMinute } from "../../domain/slots.js";
+
+/** A study slot to check against the learner's cities before a city exists (city creation, §9). */
+const slotCheckBody = z.object({
+  studyStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 18:00"),
+  hoursPerDay: z.number().min(0.25).max(12),
+  weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
+}).strict();
 
 const cityId = z.object({ id: z.string().regex(/^[a-z0-9][a-z0-9-]{1,40}$/) });
 const versionParam = cityId.extend({ version: z.coerce.number().int().positive() });
@@ -50,6 +59,8 @@ const constraints = z.object({
   timezone: str(64).optional(),
   /** ISO weekdays the learner studies (1 = Monday). */
   weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7).optional(),
+  /** When study starts each day ("18:00"; docs/Google-Calendar-MVP-Plan.md §9). */
+  studyStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 18:00").optional(),
 }).strict().refine((c) => !c.startDate || !c.targetDate || c.startDate <= c.targetDate, { message: "The target date is before the start date", path: ["targetDate"] });
 
 const createBody = z.object({
@@ -111,6 +122,12 @@ export function cityRoutes({ prisma, clock, generation, intake, ai }: Deps) {
     res.json(svc(req.user!.id).templates());
   });
 
+  // Does this study time clash with another city? And the next time that doesn't (docs/Google-Calendar-MVP-Plan.md §9).
+  r.post("/cities/slot-check", requireUser, async (req, res) => {
+    const b = validate(slotCheckBody, req.body);
+    const minutes = Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((d) => [d, b.weekdays.includes(d) ? Math.round(b.hoursPerDay * 60) : 0]));
+    res.json(slotReport(toMinute(b.studyStart), minutes, await otherSlots(prisma, req.user!.id, null)));
+  });
   r.get("/cities", requireUser, async (req, res) => {
     res.json(await svc(req.user!.id).list());
   });

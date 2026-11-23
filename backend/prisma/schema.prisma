@@ -265,6 +265,9 @@ model Settings {
   aiConsentAt                   DateTime? @db.Timestamptz(3)
   /// The city's "today" when the plan was last re-planned for a new day (docs/Scheduler-Phase2-Plan.md §2.4).
   replannedFor                  DateTime? @db.Date
+  /// When this city's study starts each day (minutes after midnight, in its time zone); null = not chosen, the calendar
+  /// uses its default start (docs/Google-Calendar-MVP-Plan.md §9).
+  studyStartMinute              Int?
 }
 
 model WeeklyTarget {

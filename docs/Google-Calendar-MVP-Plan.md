@@ -184,3 +184,35 @@ Built as planned:
   - on 23 Nov the recall event sits at 18:00–18:08 and the study block follows at 18:08;
   - on 24 Nov, with more recalls due, the study block starts at 18:48;
   - a link `#/recall/4?city=engineering` opens that recall in the right city.
+
+## 9. A study time for each city, and two fixes (23 Nov 2026)
+
+The first real week in Google showed three problems.
+
+1. **A 15-hour "German C1" block today.** Ticking a sub-topic learned closes its later study tasks and moves them to
+   today, so today "held" weeks of finished work, drawn as one block running past midnight. **Fix:** work finished
+   ahead of its planned day isn't counted in that day's block.
+2. **Blocks on top of each other on 23–27 Nov.** Blocks written before §8 had no record of where Blueprint had placed
+   them. When Google reported them changed, most likely while Render briefly ran the old and new versions side by side,
+   their times were taken as the learner's choice, so the layout couldn't move them. **Fix:**
+   - a block counts as moved only when Blueprint knows where it put it;
+   - the migration `20261203090000_study_slots` clears those wrongly kept times once (calendar mirror only).
+3. **Goals competing for the same evening.** One shared start time stacks every city one after another, so busy days
+   run to midnight. **Fix: each city gets its own study time.**
+   - **City creation:** the time step asks "Study from" next to the hours a day, and checks it as it changes against
+     your other cities: "Clashes with German C1 (18:00–21:00) on Mon, Tue", with "Use 21:00 instead".
+   - **Your time:** the same field and the same clash check in "What this does"; saved with the hours.
+   - **Calendar:** each city's recalls, then its study, start at its own time. Cities without one follow from the
+     calendar's default start. Nothing ever overlaps.
+   - **Overload:** a day holding more than the city's study time is flagged: "⚠" in the title, and "This day holds 7 h:
+     4 h more than your 3 h study time" in the description.
+   - **The Calendar page** lists each city with its time ("from 09:00" or "no set time").
+
+**How:**
+- `Settings.studyStartMinute`;
+- pure clash rules in `backend/src/domain/slots.ts`;
+- `POST /cities/slot-check` for city creation (before the city exists);
+- `studyStart` in `PUT /schedule/availability` and in the creation constraints.
+
+**Tests:** backend 404, frontend 297. Checked in the dev app: Your time shows "Study from 09:00: clashes with none of
+your other cities".

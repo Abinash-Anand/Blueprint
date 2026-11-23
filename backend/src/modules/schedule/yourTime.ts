@@ -14,6 +14,7 @@ import { replan } from "../../domain/scheduler.js";
 import { PACES, type Pace, type Week, describeWeek, weekFromChoice } from "../../domain/week.js";
 import { HttpError } from "../../lib/http.js";
 import { validTimeZone } from "../../lib/zone.js";
+import { type Slot, clashes, hhmm, nextFree, toMinute } from "../../domain/slots.js";
 import { RULES, gapFor } from "../recall/rules.js";
 import { BULK_TX, loadInput, lockPlan, replanIn } from "./replan.js";
 import { loadWeek } from "./service.js";
@@ -26,7 +27,28 @@ export interface TimeBody {
   targetDate?: string | null;
   /** Absent: keep. */
   timezone?: string;
+  /** When study starts ("18:00"), null to clear, absent to keep (docs/Google-Calendar-MVP-Plan.md §9). */
+  studyStart?: string | null;
 }
+
+/** The owner's other active cities that have a study slot. */
+export async function otherSlots(prisma: PrismaClient, ownerId: string, exceptCityId: string | null): Promise<Slot[]> {
+  const cities = await prisma.city.findMany({
+    where: { ownerId, status: "ACTIVE", settings: { studyStartMinute: { not: null } }, ...(exceptCityId ? { id: { not: exceptCityId } } : {}) },
+    select: { name: true, settings: { select: { studyStartMinute: true } }, weeklyTargets: { select: { weekday: true, availableMinutes: true, targetMinutes: true } } },
+  });
+  return cities.map((c) => ({ name: c.name, start: c.settings!.studyStartMinute!, minutes: Object.fromEntries(c.weeklyTargets.map((t) => [t.weekday, t.availableMinutes ?? t.targetMinutes])) }));
+}
+
+/** A slot against the other cities: what it clashes with, and the next time that clashes with nothing. */
+export function slotReport(start: number | null, minutes: Record<number, number>, others: Slot[]) {
+  if (start === null) return { start: null, clashes: [], suggest: null };
+  const mine: Slot = { name: "", start, minutes };
+  const found = clashes(mine, others);
+  const free = found.length ? nextFree(mine, others) : null;
+  return { start: hhmm(start), clashes: found, suggest: free === null ? null : hhmm(free) };
+}
+const weekMinutes = (week: Week) => Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((d) => [d, week[d].available]));
 
 /** The longest journey Blueprint plans (the contract's limit): a target date beyond it is refused. */
 const MAX_DAYS = 3 * 366;
@@ -45,9 +67,12 @@ function check(body: TimeBody, today: ISODate) {
 }
 
 /** The sheet's starting point: the current week as a choice, the target date and time zone, and the paces. */
-export async function describeTime(db: PrismaClient) {
+export async function describeTime(db: PrismaClient, others: Slot[] = []) {
   const [week, s] = await Promise.all([loadWeek(db), settingsOf(db)]);
-  return { ...describeWeek(week), targetDate: s.targetDate ? d2i(s.targetDate) : null, timezone: s.timezone, paces: PACES, week };
+  return {
+    ...describeWeek(week), targetDate: s.targetDate ? d2i(s.targetDate) : null, timezone: s.timezone, paces: PACES, week,
+    studyStart: s.studyStartMinute === null ? null : hhmm(s.studyStartMinute), slot: slotReport(s.studyStartMinute, weekMinutes(week), others),
+  };
 }
 
 /** The last day with open new material, with some tasks moved and some split (their parts on later days). */
@@ -58,7 +83,7 @@ async function finishWith(db: PrismaClient, to: Map<number, ISODate>, partDays: 
 }
 
 /** What a choice would do, saving nothing. */
-export async function previewTime(db: PrismaClient, today: ISODate, body: TimeBody) {
+export async function previewTime(db: PrismaClient, today: ISODate, body: TimeBody, others: Slot[] = []) {
   check(body, today);
   const [input, s, recalls] = await Promise.all([
     loadInput(db, today), settingsOf(db),
@@ -75,6 +100,7 @@ export async function previewTime(db: PrismaClient, today: ISODate, body: TimeBo
     recalls: recalls.map((r) => ({ stage: r.stage, nextDueDate: d2i(r.nextDueDate!) })), recallMinutes: RULES.minutesPerReview, gapFor,
     plannedFinish: after.finish,
   });
+  const start = body.studyStart === undefined ? s.studyStartMinute : body.studyStart ? toMinute(body.studyStart) : null;
   const sameWeek = [1, 2, 3, 4, 5, 6, 7].every((d) => week[d].available === input.week[d].available && week[d].newTarget === input.week[d].newTarget);
   return {
     week,
@@ -86,13 +112,15 @@ export async function previewTime(db: PrismaClient, today: ISODate, body: TimeBo
     /** Tasks that would be split to fill a day's room. */
     splitTasks: splits.length,
     movedToday: moves.filter((m) => m.from === today || m.to === today).length,
+    /** The study slot with this week: what it clashes with in your other cities, and the next free time. */
+    slot: slotReport(start, weekMinutes(week), others),
     unchanged: sameWeek && changed === 0 && (body.targetDate === undefined || targetDate === (s.targetDate ? d2i(s.targetDate) : null))
-      && (body.timezone === undefined || body.timezone === s.timezone),
+      && (body.timezone === undefined || body.timezone === s.timezone) && start === s.studyStartMinute,
   };
 }
 
 /** Saves a choice and re-plans, in one transaction under the city's lock. */
-export async function saveTime(db: PrismaClient, today: ISODate, body: TimeBody) {
+export async function saveTime(db: PrismaClient, today: ISODate, body: TimeBody, others: Slot[] = []) {
   check(body, today);
   await db.$transaction(async (tx) => {
     const s = await tx.settings.findFirst({ select: { cityId: true } });
@@ -107,9 +135,10 @@ export async function saveTime(db: PrismaClient, today: ISODate, body: TimeBody)
       data: {
         ...(body.targetDate !== undefined && { targetDate: body.targetDate ? i2d(body.targetDate) : null }),
         ...(body.timezone !== undefined && { timezone: body.timezone }),
+        ...(body.studyStart !== undefined && { studyStartMinute: body.studyStart ? toMinute(body.studyStart) : null }),
       },
     });
     await replanIn(tx, s.cityId, today, "AVAILABILITY");
   }, BULK_TX);
-  return describeTime(db);
+  return describeTime(db, others);
 }

@@ -46,11 +46,16 @@ export async function loadWeek(prisma: Db): Promise<Record<number, { available: 
  * what is not recorded yet, so approving a later curriculum version changes nothing the learner set.
  */
 export async function recordAvailability(prisma: Db, constraints: unknown) {
-  const c = (constraints ?? {}) as { hoursPerDay?: unknown; targetDate?: unknown };
+  const c = (constraints ?? {}) as { hoursPerDay?: unknown; targetDate?: unknown; studyStart?: unknown };
   const perDay = typeof c.hoursPerDay === "number" && c.hoursPerDay > 0 ? Math.round(c.hoursPerDay * 60) : null;
   for (const r of await prisma.weeklyTarget.findMany({ where: { availableMinutes: null } })) {
     const available = r.targetMinutes === 0 ? 0 : Math.max(r.targetMinutes, perDay ?? r.targetMinutes);
     await prisma.weeklyTarget.updateMany({ where: { weekday: r.weekday }, data: { availableMinutes: available } });
+  }
+  // When study starts, as chosen at creation (docs/Google-Calendar-MVP-Plan.md §9).
+  if (typeof c.studyStart === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(c.studyStart)) {
+    const [h, m] = c.studyStart.split(":").map(Number);
+    await prisma.settings.updateMany({ where: { studyStartMinute: null }, data: { studyStartMinute: h * 60 + m } });
   }
   if (typeof c.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.targetDate)) {
     await prisma.settings.updateMany({ where: { targetDate: null }, data: { targetDate: i2d(c.targetDate) } });
