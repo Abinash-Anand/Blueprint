@@ -30,5 +30,14 @@ describe("format", () => {
     expect(parseHash("#/recall/42")).toMatchObject({ recall: 42 });
     expect(parseHash("#/recall/x").recall).toBeUndefined();
     expect(parseHash("#/progress/history/7")).toMatchObject({ view: "progress", param: "history", sub: "7" });
+    // A task, adding a task and logging time on a day: pages of their own, opened from Today.
+    expect(parseHash("#/task/2026-11-23/12")).toMatchObject({ day: { page: "task", date: "2026-11-23", id: 12 } });
+    expect(parseHash("#/add-task/2026-11-23")).toMatchObject({ day: { page: "add-task", date: "2026-11-23" } });
+    expect(parseHash("#/log-time/2026-11-23")).toMatchObject({ day: { page: "log-time", date: "2026-11-23" } });
+    expect(parseHash("#/task/x/12").day).toBeUndefined();
+    // A stage's dates, opened from Progress.
+    expect(parseHash("#/stage/fe")).toMatchObject({ view: "progress", stage: "fe" });
+    // From a building's panel: adding a task on its topic.
+    expect(parseHash("#/add-task/2026-11-23/fe.ts")).toMatchObject({ day: { page: "add-task", date: "2026-11-23", topic: "fe.ts" } });
   });
 });

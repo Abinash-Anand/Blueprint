@@ -1,4 +1,4 @@
-/** Recall coaching on the Progress tab (Recall-Plan §3.5, §7): blind spots across sub-topics and each sub-topic's progress. */
+/** Recall coaching on the Progress tab (Recall-Plan §3.5, §7): each sub-topic's progress, with its blind spots in its own row. */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RecallCoaching } from "../api/types";
@@ -21,17 +21,17 @@ const c: RecallCoaching = {
 };
 
 describe("recall coaching", () => {
-  it("lists blind spots across sub-topics, then each sub-topic's progress, and opens its history", () => {
+  it("lists each sub-topic's progress with its blind spots in the same row, and the whole row opens its history", () => {
     render(<RecallCoachingView c={c} />);
-    expect(within(screen.getByRole("list", { name: "Blind spots" })).getByRole("listitem").textContent).toMatch(/Unsubscribing \(Subjects\).*missed 3×/);
+    // Blind spots are not listed a second time on their own.
+    expect(screen.queryByRole("list", { name: "Blind spots" })).toBeNull();
     const rows = within(screen.getByRole("list", { name: "Recall by sub-topic" })).getAllByRole("listitem");
-    expect(rows[0].textContent).toMatch(/Subjects.*3 recalls · last 23 Nov/);
+    expect(rows[0].textContent).toMatch(/Subjects.*3 recalls · last 23 Nov · 62% of the checklist, up 14 points since last time/);
     expect(rows[0].textContent).toMatch(/Late subscribers are now solid/);
-    expect(rows[0].textContent).toMatch(/Newly remembered: Late subscribers.*Slipped: Multicasting.*Keeps missing: Unsubscribing.*A corrected mistake came back/);
-    expect(rows[0].textContent).toMatch(/62%.*\+14 points since last time/);
-    expect(rows[1].textContent).toMatch(/Guards.*40%.*first recall/);
+    expect(rows[0].textContent).toMatch(/Newly remembered: Late subscribers.*Slipped: Multicasting.*Keeps missing: Unsubscribing \(3× in a row\).*A corrected mistake came back/);
+    expect(rows[1].textContent).toMatch(/Guards.*40% of the checklist, first recall/);
     // Recall over time is a page of its own inside Progress, with an address.
-    fireEvent.click(within(rows[1]).getByRole("button", { name: "Recall over time: Guards" }));
+    fireEvent.click(within(rows[1]).getByRole("button", { name: /^Guards.*recall over time$/ }));
     expect(location.hash).toBe(`#/progress/history/${c.subtopics[1].subtopicId}`);
   });
 

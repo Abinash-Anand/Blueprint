@@ -7,6 +7,7 @@ import { api } from "../../api/client";
 import type { RecallHome } from "../../api/types";
 import { addDays, dayMonth, plural } from "../../lib/format";
 import { useAppData } from "../../state/AppData";
+import { Chevron } from "./icons";
 
 export function RecallToday({ onOpen }: { onOpen?: () => void }) {
   const { version } = useAppData();
@@ -20,17 +21,18 @@ export function RecallToday({ onOpen }: { onOpen?: () => void }) {
   }, [version]);
   if (!h) return null;
 
-  const names = (xs: { subtopic: string }[]) => xs.slice(0, 4).map((s) => s.subtopic).join(", ") + (xs.length > 4 ? `, +${xs.length - 4} more` : "");
+  const names = (xs: { subtopic: string }[]) => xs.slice(0, 3).map((s) => s.subtopic).join(", ") + (xs.length > 3 ? `, +${xs.length - 3} more` : "");
   if (h.due.length) {
+    // Due recall is the day's next action: Today's one hero card.
     return (
-      <div className="card rh-banner" role="region" aria-label="Recall today">
-        <div>
-          <div className="kick">Revision · today</div>
-          <b>{plural(h.due.length, "sub-topic")} to recall</b>
-          <span className="m"> · {names(h.due)}</span>
+      <section className="g-hero" aria-labelledby="rt-due">
+        <div className="g-grow">
+          <div className="kick">Up next · Recall</div>
+          <h3 id="rt-due" className="g-hero-name">{plural(h.due.length, "sub-topic")} to recall</h3>
+          <p className="g-sub">{names(h.due)}</p>
         </div>
-        {onOpen && <button className="btn primary" onClick={onOpen}>Recall now</button>}
-      </div>
+        {onOpen && <button type="button" className="btn primary big" onClick={onOpen}>Recall now</button>}
+      </section>
     );
   }
   // By the day each recall is planned (the daily limit may move some past their due date).
@@ -39,14 +41,18 @@ export function RecallToday({ onOpen }: { onOpen?: () => void }) {
   if (!next) return null;
   const on = planned.filter((s) => s.scheduledDate === next);
   const when = next === addDays(h.today, 1) ? "Tomorrow" : dayMonth(next);
+  const body = (
+    <>
+      <span className="g-lbl">
+        <span>{when}: {plural(on.length, "sub-topic")} to recall</span>
+        <small>{names(on)}</small>
+      </span>
+      {onOpen && <Chevron />}
+    </>
+  );
   return (
-    <div className="card rh-banner soft" role="region" aria-label="Next recall">
-      <div>
-        <div className="kick">Revision · next</div>
-        <b>{when}: {plural(on.length, "sub-topic")} to recall</b>
-        <span className="m"> · {names(on)}</span>
-      </div>
-      {onOpen && <button className="btn" onClick={onOpen}>See revision</button>}
-    </div>
+    <ul className="g-group td-soon" aria-label="Next recall">
+      <li>{onOpen ? <button type="button" className="g-row" onClick={onOpen}>{body}</button> : <div className="g-row">{body}</div>}</li>
+    </ul>
   );
 }
