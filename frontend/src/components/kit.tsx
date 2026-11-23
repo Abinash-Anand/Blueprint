@@ -240,3 +240,32 @@ export function Sheet({ open, title, children, onClose, dismissible = true }: { 
     document.body,
   );
 }
+
+/* ---------------- study time ---------------- */
+
+/** One tap for the usual times of day; the stepper fine-tunes in 15-minute steps. 24-hour clock, as everywhere else. */
+const TIMES_OF_DAY: [string, string][] = [["Morning", "07:00"], ["Midday", "12:00"], ["Afternoon", "15:00"], ["Evening", "18:00"], ["Night", "21:00"]];
+const asMinutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+const asTime = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+/**
+ * When study starts each day (docs/Google-Calendar-MVP-Plan.md §9), in the app's own controls instead of the browser's
+ * clock: a time of day as pills, then the round − / + stepper for the exact time, or no set time.
+ */
+export function StudyTime({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+  const preset = TIMES_OF_DAY.find(([, t]) => t === value);
+  return (
+    <div className="kit-time" role="group" aria-label="Study from">
+      <div className="kit-label">Study from</div>
+      <div className="kit-pill-row">
+        {TIMES_OF_DAY.map(([label, t]) => <Pill key={t} pressed={value === t} onClick={() => onChange(t)}>{label} · {t}</Pill>)}
+        <Pill pressed={value === null} onClick={() => onChange(null)}>No set time</Pill>
+      </div>
+      {value !== null && (
+        <NumberStepper label="Study starts at" value={asMinutes(value) / 60} min={0} max={23.75} step={0.25}
+          unit={preset ? `${preset[0].toLowerCase()}, study starts` : "study starts"}
+          format={(h) => asTime(Math.round(h * 60))} onChange={(h) => onChange(asTime(Math.round(h * 60)))} />
+      )}
+    </div>
+  );
+}

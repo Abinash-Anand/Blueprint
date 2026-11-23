@@ -918,3 +918,7 @@ aside:hover,aside:focus-within{scrollbar-color:rgba(60,64,67,.28) transparent}
 .gc-check{display:flex;gap:8px;align-items:center;font-size:14px}
 .gc-foot{margin:8px 0 0;font-size:12.5px;color:var(--muted)}
 .gc a.btn{text-decoration:none}
+/* study time (kit StudyTime): times of day as pills, then the stepper */
+.kit-time{display:grid;gap:10px}
+.kit-label{font-size:13px;font-weight:600;color:var(--muted)}
+.kit-pill-row{display:flex;flex-wrap:wrap;gap:8px}
