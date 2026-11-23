@@ -57,6 +57,14 @@ function Shell({ title, sub, back, children }: { title: string; sub?: string; ba
   );
 }
 
+const REMINDERS: [number, string][] = [[0, "No reminder"], [5, "5 minutes before"], [10, "10 minutes before"], [15, "15 minutes before"], [30, "30 minutes before"]];
+/** The city ids with the one at `i` moved one place up (-1) or down (1). */
+const moved = (cities: { id: string }[], i: number, by: -1 | 1) => {
+  const ids = cities.map((c) => c.id);
+  [ids[i], ids[i + by]] = [ids[i + by], ids[i]];
+  return ids;
+};
+
 export function CalendarPage() {
   const [st, setSt] = useState<CalendarStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +117,7 @@ export function CalendarPage() {
       ) : !st.connected ? (
         <div className="gc-sec">
           <ul className="gc-list">
-            <li><b>One block per study day</b> for the next two weeks, in a separate calendar called "Blueprint". Each block lists the day's tasks.</li>
+            <li><b>Your study days for the next two weeks,</b> in a separate calendar called "Blueprint": a study block with the day's tasks, and your recalls as their own event, each with a link that opens it.</li>
             <li><b>Move a block in Google</b> to another time and Blueprint keeps it; move it to another day and that day's tasks move with it.</li>
             <li><b>Only its own calendar.</b> Blueprint can't see or change your other events.</li>
           </ul>
@@ -139,8 +147,31 @@ export function CalendarPage() {
               </label>
               <button type="submit" className="btn" disabled={busy || start === st.startTime || !start}>Save</button>
             </form>
-            <p className="g-foot">In each city's time zone. A block you moved to another time in Google keeps your time.</p>
+            <p className="g-foot">Each day starts here: a city's recalls first, then its study block, then the next city. In each city's time zone. A block you moved to another time in Google keeps your time.</p>
+            <label className="gc-field">
+              Remind me
+              <select className="inp" value={st.reminderMinutes} disabled={busy}
+                onChange={(e) => void act(() => calendarApi.setReminder(Number(e.target.value)), "Saved. Reminders change on the next sync.")}>
+                {REMINDERS.map(([m, label]) => <option key={m} value={m}>{label}</option>)}
+              </select>
+            </label>
           </div>
+
+          {st.cities.length > 1 && (
+            <div className="gc-sec">
+              <h3 className="p-h">Order of cities</h3>
+              <p className="g-foot">On a day with several cities, their blocks follow each other in this order.</p>
+              <ol className="gc-order">
+                {st.cities.map((c, i) => (
+                  <li key={c.id}>
+                    <span>{c.name}</span>
+                    <button type="button" className="btn" disabled={busy || i === 0} aria-label={`Move ${c.name} up`} onClick={() => void act(() => calendarApi.setCityOrder(moved(st.cities, i, -1)))}>↑</button>
+                    <button type="button" className="btn" disabled={busy || i === st.cities.length - 1} aria-label={`Move ${c.name} down`} onClick={() => void act(() => calendarApi.setCityOrder(moved(st.cities, i, 1)))}>↓</button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
 
           <div className="gc-sec gc-end">
             <a className="btn danger" href="#/calendar/disconnect">Disconnect…</a>

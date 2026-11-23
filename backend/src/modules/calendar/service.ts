@@ -18,7 +18,7 @@ import { cityScoped } from "../../lib/cityScope.js";
 import { HttpError } from "../../lib/http.js";
 import { withTimeZone } from "../../lib/zone.js";
 import { replanCity } from "../schedule/replan.js";
-import { blockBody, hashBody, localStart } from "./blocks.js";
+import { type BlockKind, type RecallItem, hashBody, layoutDay, localStart, recallBody, studyBody } from "./blocks.js";
 import { decrypt, encrypt } from "./crypto.js";
 import { type CalendarConfig, type EventBody, GoogleError, type GoogleCalendarApi, type GoogleEvent } from "./google.js";
 
@@ -47,6 +47,10 @@ export interface CalendarStatus {
   instant: boolean;
   pollMinutes: number;
   blocks: number;
+  /** Minutes before a block that Google reminds you; 0 = none. */
+  reminderMinutes: number;
+  /** Your active cities, in the order their blocks follow each other on a day. */
+  cities: { id: string; name: string }[];
 }
 
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -146,12 +150,22 @@ export function calendarService(d: CalendarDeps) {
 
   /* ---------------- what should be in the calendar ---------------- */
 
-  interface Want { cityId: string; day: ISODate; timeZone: string; body: (startMinute: number) => EventBody | null }
+  /** One event Blueprint wants: a city's recalls or its study block on a day (docs/Google-Calendar-MVP-Plan.md §8). */
+  interface Want { key: string; cityId: string; day: ISODate; kind: BlockKind; timeZone: string; minutes: number; body: (startMinute: number) => EventBody | null }
+  const keyOf = (cityId: string, day: ISODate, kind: string) => `${cityId}|${day}|${kind}`;
 
-  /** Each active city's blocks for the window, and each city's first and last day. */
-  async function wanted(userId: string) {
-    const cities = await prisma.city.findMany({ where: { ownerId: userId, status: "ACTIVE" }, include: { settings: { select: { timezone: true } } } });
-    const want = new Map<string, Want>();
+  /** The cities in the learner's order (unlisted ones last, oldest first). */
+  const ordered = <T extends { id: string; createdAt: Date }>(cities: T[], order: string[]) =>
+    [...cities].sort((a, b) => {
+      const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
+      if (ia !== ib) return (ia < 0 ? Infinity : ia) - (ib < 0 ? Infinity : ib);
+      return a.createdAt.getTime() - b.createdAt.getTime();
+    });
+
+  /** Every event for the window, in day order (each city's recalls, then its study block, cities in order). */
+  async function wanted(c: GoogleConnection) {
+    const cities = ordered(await prisma.city.findMany({ where: { ownerId: c.userId, status: "ACTIVE" }, include: { settings: { select: { timezone: true } } } }), c.cityOrder);
+    const want: Want[] = [];
     const windows = new Map<string, { from: ISODate; to: ISODate; timeZone: string }>();
     for (const city of cities) {
       const timeZone = city.settings?.timezone ?? "Europe/Berlin";
@@ -161,15 +175,33 @@ export function calendarService(d: CalendarDeps) {
       const tasks = await prisma.task.findMany({
         where: { cityId: city.id, scheduledDate: { gte: i2d(from), lte: i2d(to) }, status: { in: ["TODO", "DONE"] } },
         orderBy: [{ scheduledDate: "asc" }, { originalDate: "asc" }, { position: "asc" }, { id: "asc" }],
-        select: { title: true, estimatedMinutes: true, status: true, scheduledDate: true },
+        select: {
+          title: true, estimatedMinutes: true, status: true, scheduledDate: true, originalDate: true, recallStateId: true, subtopicId: true,
+          stage: { select: { name: true } }, subtopic: { select: { name: true, topic: { select: { name: true } } } }, recallState: { select: { lastReviewDate: true } },
+        },
       });
       const byDay = new Map<ISODate, typeof tasks>();
       for (const t of tasks) byDay.set(d2i(t.scheduledDate), [...(byDay.get(d2i(t.scheduledDate)) ?? []), t]);
       for (const [day, list] of byDay) {
-        want.set(`${city.id}|${day}`, {
-          cityId: city.id, day, timeZone,
-          body: (startMinute) => blockBody({ cityId: city.id, cityName: city.name, day, timeZone, startMinute, tasks: list.map((t) => ({ title: t.title, minutes: t.estimatedMinutes, done: t.status === "DONE" })) }),
-        });
+        const ctx = { cityId: city.id, cityName: city.name, day, timeZone, appUrl: config.appUrl, reminderMinutes: c.reminderMinutes };
+        const recalls = list.filter((t) => t.recallStateId !== null);
+        const study = list.filter((t) => t.recallStateId === null);
+        if (recalls.length) {
+          const items: RecallItem[] = recalls.map((t) => ({
+            subtopicId: t.subtopicId ?? 0, name: t.subtopic?.name ?? t.title.replace(/^Recall:\s*/, ""), topic: t.subtopic?.topic.name ?? "", minutes: t.estimatedMinutes,
+            done: t.status === "DONE", lastReview: t.recallState?.lastReviewDate ? d2i(t.recallState.lastReviewDate) : null,
+            overdueSince: t.status === "TODO" && d2i(t.originalDate) < day ? d2i(t.originalDate) : null,
+          }));
+          want.push({ key: keyOf(city.id, day, "RECALL"), cityId: city.id, day, kind: "RECALL", timeZone, minutes: items.reduce((s, x) => s + x.minutes, 0), body: (m) => recallBody({ ...ctx, items }, m) });
+        }
+        if (study.length) {
+          // The stage most of the day's work belongs to.
+          const stages = new Map<string, number>();
+          for (const t of study) if (t.stage) stages.set(t.stage.name, (stages.get(t.stage.name) ?? 0) + t.estimatedMinutes);
+          const stage = [...stages.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+          const items = study.map((t) => ({ title: t.title, minutes: t.estimatedMinutes, done: t.status === "DONE" }));
+          want.push({ key: keyOf(city.id, day, "STUDY"), cityId: city.id, day, kind: "STUDY", timeZone, minutes: items.reduce((s, x) => s + x.minutes, 0), body: (m) => studyBody({ ...ctx, stage, tasks: items }, m) });
+        }
       }
     }
     return { want, windows, firstZone: cities[0]?.settings?.timezone ?? "Europe/Berlin" };
@@ -192,23 +224,34 @@ export function calendarService(d: CalendarDeps) {
 
   async function push(userId: string) {
     const c = await prisma.googleConnection.findUniqueOrThrow({ where: { userId } });
-    const { want, windows, firstZone } = await wanted(userId);
+    const { want, windows, firstZone } = await wanted(c);
     const rows = await prisma.calendarEvent.findMany({ where: { userId } });
-    const rowOf = new Map(rows.map((r) => [`${r.cityId}|${d2i(r.day)}`, r]));
+    const rowOf = new Map(rows.map((r) => [keyOf(r.cityId, d2i(r.day), r.kind), r]));
 
-    type Op = { kind: "insert" | "patch"; w: Want; row?: CalendarEvent; body: EventBody; hash: string } | { kind: "delete"; row: CalendarEvent };
+    // Each day laid out across cities: events one after another from the start time, moved ones where they were put.
+    const starts = new Map<string, number>();
+    const days = [...new Set(want.map((w) => w.day))];
+    for (const day of days) {
+      const list = want.filter((w) => w.day === day && !rowOf.get(w.key)?.hidden);
+      const at = layoutDay(c.startMinute, list.map((w) => ({ minutes: w.minutes, fixed: rowOf.get(w.key)?.startMinute ?? null })));
+      list.forEach((w, i) => starts.set(w.key, at[i]));
+    }
+
+    type Op = { kind: "insert" | "patch"; w: Want; row?: CalendarEvent; body: EventBody; hash: string; start: number } | { kind: "delete"; row: CalendarEvent };
     const ops: Op[] = [];
-    for (const [k, w] of want) {
-      const row = rowOf.get(k);
+    for (const w of want) {
+      const row = rowOf.get(w.key);
       if (row?.hidden) continue;
-      const body = w.body(row?.startMinute ?? c.startMinute);
+      const start = starts.get(w.key)!;
+      const body = w.body(start);
       if (!body) continue;
       const hash = hashBody(body);
-      if (!row?.googleEventId) ops.push({ kind: "insert", w, row, body, hash });
-      else if (row.contentHash !== hash) ops.push({ kind: "patch", w, row, body, hash });
+      if (!row?.googleEventId) ops.push({ kind: "insert", w, row, body, hash, start });
+      else if (row.contentHash !== hash) ops.push({ kind: "patch", w, row, body, hash, start });
     }
+    const wantedKeys = new Set(want.map((w) => w.key));
     for (const row of rows) {
-      if (!row.googleEventId || want.has(`${row.cityId}|${d2i(row.day)}`)) continue;
+      if (!row.googleEventId || wantedKeys.has(keyOf(row.cityId, d2i(row.day), row.kind))) continue;
       const win = windows.get(row.cityId);
       // A city that is gone or no longer active loses its blocks; past days and days beyond the window are left alone.
       if (!win || (d2i(row.day) >= win.from && d2i(row.day) <= win.to)) ops.push({ kind: "delete", row });
@@ -224,9 +267,9 @@ export function calendarService(d: CalendarDeps) {
       try {
         if (op.kind === "insert") {
           const ev = await google.insertEvent(at, calendarId, op.body);
-          await saveRow(userId, op.w.cityId, op.w.day, { googleEventId: ev.id, etag: ev.etag, contentHash: op.hash, hidden: false });
+          await saveRow(userId, op.w, { googleEventId: ev.id, etag: ev.etag, contentHash: op.hash, hidden: false, placedMinute: op.start });
         } else if (op.kind === "patch") {
-          await patch(at, calendarId, c, op.w, op.row!, op.body, op.hash);
+          await patch(at, calendarId, op.w, op.row!, op.body, op.hash, op.start);
         } else {
           const row = op.row!;
           await google.deleteEvent(at, calendarId, row.googleEventId!).catch((e) => {
@@ -247,35 +290,38 @@ export function calendarService(d: CalendarDeps) {
     return ops.length;
   }
 
-  async function saveRow(userId: string, cityId: string, day: ISODate, data: Partial<Pick<CalendarEvent, "googleEventId" | "etag" | "contentHash" | "hidden" | "startMinute">>) {
-    await prisma.calendarEvent.upsert({ where: { userId_cityId_day: { userId, cityId, day: i2d(day) } }, create: { userId, cityId, day: i2d(day), ...data }, update: data });
+  type RowData = Partial<Pick<CalendarEvent, "googleEventId" | "etag" | "contentHash" | "hidden" | "startMinute" | "placedMinute">>;
+  async function saveRow(userId: string, w: Pick<Want, "cityId" | "day" | "kind">, data: RowData) {
+    const where = { userId_cityId_day_kind: { userId, cityId: w.cityId, day: i2d(w.day), kind: w.kind } };
+    await prisma.calendarEvent.upsert({ where, create: { userId, cityId: w.cityId, day: i2d(w.day), kind: w.kind, ...data }, update: data });
   }
 
   /** A patch with If-Match; when the learner changed the event in Google meanwhile (412), their time is kept. */
-  async function patch(at: string, calendarId: string, c: GoogleConnection, w: Want, row: CalendarEvent, body: EventBody, hash: string) {
+  async function patch(at: string, calendarId: string, w: Want, row: CalendarEvent, body: EventBody, hash: string, start: number) {
     try {
       const ev = await google.patchEvent(at, calendarId, row.googleEventId!, body, row.etag ?? undefined);
-      await saveRow(row.userId, w.cityId, w.day, { etag: ev.etag, contentHash: hash });
+      await saveRow(row.userId, w, { etag: ev.etag, contentHash: hash, placedMinute: start });
     } catch (e) {
       if (!(e instanceof GoogleError)) throw e;
       if (e.status === 404 || e.status === 410) {
         // Deleted in Google before the pull noticed: hidden for that day, like any deleted block.
-        await saveRow(row.userId, w.cityId, w.day, { googleEventId: null, etag: null, contentHash: null, hidden: true });
+        await saveRow(row.userId, w, { googleEventId: null, etag: null, contentHash: null, hidden: true });
         return;
       }
       if (e.status !== 412) throw e;
       const remote = await google.getEvent(at, calendarId, row.googleEventId!);
       if (remote.status === "cancelled") {
-        await saveRow(row.userId, w.cityId, w.day, { googleEventId: null, etag: null, contentHash: null, hidden: true });
+        await saveRow(row.userId, w, { googleEventId: null, etag: null, contentHash: null, hidden: true });
         return;
       }
       const local = localStart(remote.start, w.timeZone);
       // Same day: the learner's time wins, Blueprint's title, tasks and length win. Another day: the pull handles it.
       if (local && local.day !== w.day) return;
-      const startMinute = local?.minute ?? row.startMinute ?? c.startMinute;
-      const again = w.body(startMinute)!;
+      const moved = local?.minute != null && local.minute !== row.placedMinute ? local.minute : null;
+      const at2 = moved ?? row.startMinute ?? start;
+      const again = w.body(at2)!;
       const ev = await google.patchEvent(at, calendarId, row.googleEventId!, again, remote.etag);
-      await saveRow(row.userId, w.cityId, w.day, { etag: ev.etag, contentHash: hashBody(again), startMinute: startMinute === c.startMinute ? null : startMinute });
+      await saveRow(row.userId, w, { etag: ev.etag, contentHash: hashBody(again), placedMinute: at2, ...(moved !== null ? { startMinute: moved } : {}) });
     }
   }
 
@@ -320,7 +366,7 @@ export function calendarService(d: CalendarDeps) {
     let changed = 0;
     const replan = new Set<string>();
     for (const ev of items) {
-      if (ev.extendedProperties?.private?.bp !== "1") continue; // not one of Blueprint's blocks: left alone
+      if (ev.extendedProperties?.private?.bp !== "1") continue; // not one of Blueprint's events: left alone
       const row = rowOf.get(ev.id);
       if (!row || ev.etag === row.etag) continue; // unknown, or our own write coming back
       changed++;
@@ -331,11 +377,10 @@ export function calendarService(d: CalendarDeps) {
       const timeZone = zones.get(row.cityId) ?? "Europe/Berlin";
       const local = localStart(ev.start, timeZone);
       if (!local) continue;
-      const day = d2i(row.day);
-      if (local.day === day) {
-        const minute = local.minute ?? row.startMinute ?? c.startMinute;
-        // The new time is kept; contentHash is cleared so the next push writes the planned length back if it changed.
-        await prisma.calendarEvent.update({ where: { id: row.id }, data: { etag: ev.etag, startMinute: minute === c.startMinute ? null : minute, contentHash: null } });
+      if (local.day === d2i(row.day)) {
+        // Moved to another time: kept from now on. Any other edit: the next push writes Blueprint's version back.
+        const moved = local.minute !== null && local.minute !== row.placedMinute;
+        await prisma.calendarEvent.update({ where: { id: row.id }, data: { etag: ev.etag, contentHash: null, ...(moved ? { startMinute: local.minute, placedMinute: local.minute } : {}) } });
       } else if (await moveDay(userId, row, local.day, local.minute, ev, c, timeZone)) replan.add(row.cityId);
     }
     for (const cityId of replan) {
@@ -348,8 +393,9 @@ export function calendarService(d: CalendarDeps) {
   }
 
   /**
-   * A block dragged to another day: that day's open tasks move there and are pinned (as if moved by hand). If the new
-   * day already has a block, the moved one is folded into it. A move into the past is ignored (the push puts it back).
+   * An event dragged to another day: that day's open tasks of its kind (recalls for a recall event, the rest for a
+   * study block) move there and are pinned, as if moved by hand. If the new day already has that event, the moved one
+   * is folded into it. A move into the past is ignored (the push puts it back).
    */
   async function moveDay(userId: string, row: CalendarEvent, to: ISODate, minute: number | null, ev: GoogleEvent, c: GoogleConnection, timeZone: string) {
     const from = d2i(row.day);
@@ -360,10 +406,10 @@ export function calendarService(d: CalendarDeps) {
     }
     const at = d.clock.now();
     await prisma.task.updateMany({
-      where: { cityId: row.cityId, scheduledDate: i2d(from), status: "TODO" },
+      where: { cityId: row.cityId, scheduledDate: i2d(from), status: "TODO", recallStateId: row.kind === "RECALL" ? { not: null } : null },
       data: { scheduledDate: i2d(to), pinnedAt: at, rescheduleCount: { increment: 1 } },
     });
-    const there = await prisma.calendarEvent.findUnique({ where: { userId_cityId_day: { userId, cityId: row.cityId, day: i2d(to) } } });
+    const there = await prisma.calendarEvent.findUnique({ where: { userId_cityId_day_kind: { userId, cityId: row.cityId, day: i2d(to), kind: row.kind } } });
     if (there?.googleEventId && !there.hidden) {
       const token = await accessToken(userId);
       await google.deleteEvent(token, c.calendarId!, ev.id).catch(() => undefined);
@@ -373,7 +419,7 @@ export function calendarService(d: CalendarDeps) {
       if (there) await prisma.calendarEvent.delete({ where: { id: there.id } });
       await prisma.calendarEvent.update({
         where: { id: row.id },
-        data: { day: i2d(to), etag: ev.etag, contentHash: null, startMinute: minute === null || minute === c.startMinute ? null : minute },
+        data: { day: i2d(to), etag: ev.etag, contentHash: null, startMinute: minute, placedMinute: minute },
       });
     }
     return true;
@@ -421,10 +467,12 @@ export function calendarService(d: CalendarDeps) {
     async status(userId: string): Promise<CalendarStatus> {
       const c = await prisma.googleConnection.findUnique({ where: { userId } });
       const blocks = c ? await prisma.calendarEvent.count({ where: { userId, googleEventId: { not: null } } }) : 0;
+      const cities = c ? ordered(await prisma.city.findMany({ where: { ownerId: userId, status: "ACTIVE" }, select: { id: true, name: true, createdAt: true } }), c.cityOrder) : [];
       return {
         configured: config.enabled, connected: !!c, status: (c?.status as CalendarStatus["status"]) ?? null,
         startTime: hhmm(c?.startMinute ?? 1080), lastSyncedAt: c?.lastSyncedAt?.toISOString() ?? null, lastError: c?.lastError ?? null,
         instant: !!config.webhookUrl, pollMinutes: config.pollMinutes, blocks,
+        reminderMinutes: c?.reminderMinutes ?? 10, cities: cities.map((x) => ({ id: x.id, name: x.name })),
       };
     },
 
@@ -447,10 +495,20 @@ export function calendarService(d: CalendarDeps) {
       if (config.webhookUrl) await enqueue(userId, "WATCH", 5_000);
     },
 
-    async setStart(userId: string, startTime: string) {
-      const [h, m] = startTime.split(":").map(Number);
-      const startMinute = h * 60 + m;
-      const r = await prisma.googleConnection.updateMany({ where: { userId }, data: { startMinute } });
+    /** The start time, the reminder and the city order; blocks follow on the next push. */
+    async setSettings(userId: string, s: { startTime?: string; reminderMinutes?: number; cityOrder?: string[] }) {
+      const data: { startMinute?: number; reminderMinutes?: number; cityOrder?: string[] } = {};
+      if (s.startTime) {
+        const [h, m] = s.startTime.split(":").map(Number);
+        data.startMinute = h * 60 + m;
+      }
+      if (s.reminderMinutes !== undefined) data.reminderMinutes = s.reminderMinutes;
+      if (s.cityOrder) {
+        // Only your own cities, each once.
+        const mine = new Set((await prisma.city.findMany({ where: { ownerId: userId }, select: { id: true } })).map((x) => x.id));
+        data.cityOrder = [...new Set(s.cityOrder)].filter((id) => mine.has(id));
+      }
+      const r = await prisma.googleConnection.updateMany({ where: { userId }, data });
       if (!r.count) throw new HttpError(404, "CALENDAR_NOT_CONNECTED", "Connect Google Calendar first.");
       await enqueue(userId, "PUSH");
     },

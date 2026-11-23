@@ -23,8 +23,11 @@ export interface GoogleEvent {
   start?: EventTime;
   end?: EventTime;
   extendedProperties?: { private?: Record<string, string> };
+  /** One of Google's 11 event colours ("1"–"11"). */
+  colorId?: string;
+  reminders?: { useDefault: boolean; overrides?: { method: "popup" | "email"; minutes: number }[] };
 }
-export type EventBody = Pick<GoogleEvent, "summary" | "description" | "start" | "end" | "extendedProperties">;
+export type EventBody = Pick<GoogleEvent, "summary" | "description" | "start" | "end" | "extendedProperties" | "colorId" | "reminders">;
 export interface EventPage { items: GoogleEvent[]; nextPageToken?: string; nextSyncToken?: string }
 export interface Tokens { accessToken: string; expiresInSec: number; refreshToken?: string; scope?: string }
 
@@ -117,6 +120,8 @@ export interface CalendarConfig {
   clientSecret?: string;
   key: Buffer | null;
   redirectUri: string;
+  /** Blueprint's own address, for the links in event descriptions. */
+  appUrl: string;
   /** Where Google sends change notifications: only an https address Google can reach; null = poll instead. */
   webhookUrl: string | null;
   /** Days written ahead, today included. */
@@ -157,6 +162,7 @@ export function loadCalendarConfig(env: NodeJS.ProcessEnv, publicUrl: string, pa
     clientId,
     clientSecret,
     key,
+    appUrl: base,
     redirectUri: env.GOOGLE_REDIRECT_URI?.trim() || `${base}/api/calendar/google/callback`,
     webhookUrl: reachable && !fake ? hook : null,
     windowDays: 14,

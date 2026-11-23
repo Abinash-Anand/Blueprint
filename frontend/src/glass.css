@@ -605,3 +605,10 @@ aside.side .blist .opt .n{color:#555a5e}
   .gl{--g-fill:rgba(246,244,239,.95);--g-strong:rgba(246,244,239,.97);--g-row:rgba(255,255,255,.93)}
 }
 @media (prefers-reduced-motion:reduce){.g-spin{animation:none;border-style:dotted}.rs-step{transition:none}}
+/* Calendar page: reminder and the order of cities */
+.gc-field{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;font-size:14px}
+.gc-field .inp{width:auto}
+.gc-order{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
+.gc-order li{display:flex;align-items:center;gap:8px;font-size:14px}
+.gc-order li span{flex:1;min-width:0}
+.gc-order .btn{min-width:40px;min-height:40px;justify-content:center}

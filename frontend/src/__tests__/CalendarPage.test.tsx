@@ -3,14 +3,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarStatus } from "../api/types";
 
-const base: CalendarStatus = { configured: true, connected: true, status: "ACTIVE", startTime: "18:00", lastSyncedAt: new Date().toISOString(), lastError: null, instant: false, pollMinutes: 15, blocks: 12 };
+const base: CalendarStatus = { configured: true, connected: true, status: "ACTIVE", startTime: "18:00", lastSyncedAt: new Date().toISOString(), lastError: null, instant: false, pollMinutes: 15, blocks: 12,
+  reminderMinutes: 10, cities: [{ id: "a", name: "Angular City" }, { id: "b", name: "German B2" }] };
 let current: CalendarStatus = base;
 const status = vi.fn(async () => current);
 const setStart = vi.fn(async (t: string) => (current = { ...current, startTime: t }));
 const syncNow = vi.fn(async () => (current = { ...current, status: "ACTIVE", lastError: null }));
+const setReminder = vi.fn(async (m: number) => (current = { ...current, reminderMinutes: m }));
+const setCityOrder = vi.fn(async (ids: string[]) => (current = { ...current, cities: ids.map((id) => current.cities.find((c) => c.id === id)!) }));
 const disconnect = vi.fn(async (_r: boolean) => { current = { ...current, connected: false, status: null }; });
 vi.mock("../api/client", () => ({
-  calendarApi: { status: () => status(), setStart: (t: string) => setStart(t), syncNow: () => syncNow(), disconnect: (r: boolean) => disconnect(r) },
+  calendarApi: { status: () => status(), setStart: (t: string) => setStart(t), setReminder: (m: number) => setReminder(m), setCityOrder: (ids: string[]) => setCityOrder(ids), syncNow: () => syncNow(), disconnect: (r: boolean) => disconnect(r) },
   ApiError: class extends Error {},
 }));
 
@@ -20,7 +23,7 @@ describe("Google Calendar page", () => {
   beforeEach(() => {
     current = base;
     location.hash = "#/calendar";
-    for (const f of [status, setStart, syncNow, disconnect]) f.mockClear();
+    for (const f of [status, setStart, setReminder, setCityOrder, syncNow, disconnect]) f.mockClear();
   });
 
   it("says when the server isn't set up, and offers to connect when it is", async () => {
@@ -82,6 +85,16 @@ describe("Google Calendar page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Disconnect and delete" }));
     await waitFor(() => expect(disconnect).toHaveBeenCalledWith(true));
     await waitFor(() => expect(location.hash).toBe("#/calendar?done=disconnected"));
+  });
+
+  it("changes the reminder and the order cities follow each other in", async () => {
+    render(<CalendarPage />);
+    fireEvent.change(await screen.findByLabelText("Remind me"), { target: { value: "30" } });
+    await waitFor(() => expect(setReminder).toHaveBeenCalledWith(30));
+    expect((screen.getByRole("button", { name: "Move Angular City up" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Move Angular City down" }));
+    await waitFor(() => expect(setCityOrder).toHaveBeenCalledWith(["b", "a"]));
+    await waitFor(() => expect(screen.getAllByRole("listitem").map((li) => li.textContent?.replace(/[↑↓]/g, ""))).toEqual(["German B2", "Angular City"]));
   });
 
   it("can be left without disconnecting", () => {

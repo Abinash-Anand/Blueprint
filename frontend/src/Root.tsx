@@ -136,8 +136,17 @@ export function Root() {
   const s = useSession();
   const hash = useHash();
   const [, first, second] = hash.replace(/^#/, "").split("?")[0].split("/");
+  // A link from a calendar event (#/today?city=…, #/recall/12?city=…) opens that city first, then the page.
+  const linked = /[?&]city=([^&]+)/.exec(hash)?.[1] ?? null;
+  useEffect(() => {
+    if (!linked || s.status !== "signedIn") return;
+    const id = decodeURIComponent(linked);
+    if (s.cities.some((c) => c.id === id)) s.selectCity(id);
+    location.replace(hash.replace(/([?&])city=[^&]+&?/, "$1").replace(/[?&]$/, "") || "#/today");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per link
+  }, [linked, s.status]);
 
-  if (s.status === "loading") return <Loading text="Loading Blueprint…" />;
+  if (s.status === "loading" || (linked && s.status === "signedIn")) return <Loading text="Loading Blueprint…" />;
   if (s.status === "signedOut") {
     const r = AUTH.includes(first as AuthRoute) ? (first as AuthRoute) : "login";
     return (

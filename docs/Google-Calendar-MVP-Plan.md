@@ -126,3 +126,61 @@ calendar, 18:00 by default (changeable on the page), a deleted block is hidden, 
   Engineering City within seconds, no failed jobs.
 - **Not checked yet, needs your Google Cloud setup:** the real consent screen, the real API answers, and webhooks
   on Render.
+
+## 8. Richer events (plan, 23 Nov 2026)
+
+With real blocks in Google, three things were missing. Revision hid as lines inside the study block. Every city
+started at 18:00, so on busy days blocks sat on top of each other. And an event said nothing about where you are or
+how to get back into Blueprint.
+
+### What changes
+1. **Recall gets its own event,** per city and day, placed just before that city's study block:
+   - title "Angular City · Recall · 3 sub-topics";
+   - one line per sub-topic: its name, its topic, "last recalled 12 Nov", "first recall" or "overdue since 20 Nov",
+     and a link that opens that recall in Blueprint;
+   - finished recalls are ticked.
+2. **The study block** lists only study and practice tasks, with:
+   - the current stage;
+   - a ✓ on finished tasks;
+   - a link that opens Blueprint on that city.
+3. **The whole day is laid out across cities.** From the start time, each city in your order gets its recall event,
+   then its study block, one after another, so nothing overlaps. A block you moved to another time in Google keeps
+   your time, and the rest is placed around it.
+4. **Done:** when all of a block's tasks are done, its title starts with ✓ and it turns grey.
+5. **Colours:** study in Peacock (blue), recall in Grape (purple), done in Graphite.
+6. **Reminders:** a phone notification before each block, 10 minutes by default. Changeable on the Calendar page:
+   none, 5, 10, 15 or 30 minutes.
+7. **Links into Blueprint:** opening `#/today?city=<id>` or `#/recall/<sub-topic>?city=<id>` switches to that city
+   first.
+8. **City order** for the day is set on the Calendar page; new cities go last.
+
+### How
+- **Migration:**
+  - `CalendarEvent` gets a `kind` (`STUDY` or `RECALL`), unique per account, city, day and kind; existing rows
+    become `STUDY`;
+  - `GoogleConnection` gets `reminderMinutes` (default 10) and `cityOrder`.
+  Nothing existing is deleted.
+- **Push:** builds every block for the window, lays each day out across cities, and writes only what changed (the
+  hash now includes colour and reminders). Existing study blocks are patched once, without their recall lines, and the
+  recall events are added.
+- **Pull:** a block dragged to another day moves only its own kind of tasks: study tasks for a study block, recall
+  tasks for a recall block.
+- **API:** `GET /calendar` also returns the reminder and the cities in order; `PUT /calendar` takes `startTime`,
+  `reminderMinutes` and `cityOrder`.
+- **Not now:** splitting long days into sessions with breaks, and one time budget across cities (each city still
+  plans its own hours; the calendar now shows the total honestly).
+
+### Results (23 Nov 2026)
+
+Built as planned:
+- **Backend:** `blocks.ts` (`studyBody`, `recallBody`, `layoutDay`) and the sync in `service.ts`.
+- **Migration:** `20261202090000_calendar_events`.
+- **Frontend:** the reminder and city-order settings on the Calendar page, and `?city=` links handled in `Root.tsx`.
+- **The moved-block rule:** a block counts as moved only when its time in Google differs from the time Blueprint last
+  wrote (`placedMinute`). Editing a description in Google is simply written back.
+- **Tests:** backend 399 (22 for the calendar, including recall events, the day layout, ✓ when done and the reminder
+  setting), frontend 296.
+- **Checked in the dev app** with the fake Google:
+  - on 23 Nov the recall event sits at 18:00–18:08 and the study block follows at 18:08;
+  - on 24 Nov, with more recalls due, the study block starts at 18:48;
+  - a link `#/recall/4?city=engineering` opens that recall in the right city.
