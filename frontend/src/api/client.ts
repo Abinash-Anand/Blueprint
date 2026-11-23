@@ -194,6 +194,8 @@ export const account = {
 export const calendarApi = {
   status: () => request<CalendarStatus>("GET", "/calendar"),
   setStart: (startTime: string) => request<CalendarStatus>("PUT", "/calendar", { startTime }),
+  setReminder: (reminderMinutes: number) => request<CalendarStatus>("PUT", "/calendar", { reminderMinutes }),
+  setCityOrder: (cityOrder: string[]) => request<CalendarStatus>("PUT", "/calendar", { cityOrder }),
   syncNow: () => request<CalendarStatus>("POST", "/calendar/sync"),
   disconnect: (removeCalendar: boolean) => request<void>("DELETE", "/calendar", { removeCalendar }),
 };

@@ -842,4 +842,8 @@ export interface CalendarStatus {
   instant: boolean;
   pollMinutes: number;
   blocks: number;
+  /** Minutes before a block that Google reminds you; 0 = none. */
+  reminderMinutes: number;
+  /** Your active cities, in the order their blocks follow each other on a day. */
+  cities: { id: string; name: string }[];
 }

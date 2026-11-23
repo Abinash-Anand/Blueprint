@@ -32,7 +32,7 @@ suite("google calendar", () => {
   const later = (ms: number) => { wall = new Date(wall.getTime() + ms); };
   const google: FakeGoogle = fakeGoogle();
   const config: CalendarConfig = {
-    enabled: true, fake: true, key: Buffer.alloc(32, 1), redirectUri: "http://localhost/api/calendar/google/callback",
+    enabled: true, fake: true, key: Buffer.alloc(32, 1), appUrl: "https://bp.example", redirectUri: "http://localhost/api/calendar/google/callback",
     webhookUrl: "https://bp.example/api/calendar/google/webhook", windowDays: 14, pollMinutes: 15,
   };
   let app: ReturnType<typeof createApp>;
@@ -41,7 +41,8 @@ suite("google calendar", () => {
   let userId = "";
   const conn = () => prisma.googleConnection.findUniqueOrThrow({ where: { userId } });
   const calId = async () => (await conn()).calendarId!;
-  const byDay = async () => new Map(google.events(await calId()).map((e) => [e.extendedProperties!.private!.bpDay, e]));
+  const ofKind = async (kind: "STUDY" | "RECALL") => new Map(google.events(await calId()).filter((e) => e.extendedProperties!.private!.bpKind === kind).map((e) => [e.extendedProperties!.private!.bpDay, e]));
+  const byDay = () => ofKind("STUDY");
 
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
@@ -86,14 +87,17 @@ suite("google calendar", () => {
   it("writes one block per study day for the next 14 days, at the start time, and never writes an unchanged block again", async () => {
     await calendar.runDue();
     const days = await byDay();
-    const planned = await prisma.task.groupBy({ by: ["scheduledDate"], where: { cityId: "engineering", status: { in: ["TODO", "DONE"] }, scheduledDate: { gte: new Date("2026-11-20"), lte: new Date(addDays("2026-11-20", 13)) } } });
+    const planned = await prisma.task.groupBy({ by: ["scheduledDate"], where: { cityId: "engineering", recallStateId: null, status: { in: ["TODO", "DONE"] }, scheduledDate: { gte: new Date("2026-11-20"), lte: new Date(addDays("2026-11-20", 13)) } } });
     expect(days.size).toBe(planned.length);
     expect(days.size).toBeGreaterThan(5);
     const first = [...days.values()][0];
-    expect(first.summary).toMatch(/ · (\d+ h( \d+ min)?|\d+ min)$/);
+    expect(first.summary).toMatch(/^Engineering City · Study · (\d+ h( \d+ min)?|\d+ min)$/);
+    expect(first.colorId).toBe("7");
+    expect(first.reminders).toEqual({ useDefault: false, overrides: [{ method: "popup", minutes: 10 }] });
+    expect(first.description).toContain("Open in Blueprint: https://bp.example/#/today?city=engineering");
     expect(first.start!.dateTime).toMatch(/T18:00:00$/);
     expect(first.start!.timeZone).toBe("Europe/Berlin");
-    expect(first.extendedProperties!.private).toMatchObject({ bp: "1", bpCity: "engineering" });
+    expect(first.extendedProperties!.private).toMatchObject({ bp: "1", bpCity: "engineering", bpKind: "STUDY" });
     expect(first.description).toMatch(/Planned by Blueprint/);
     expect(google.calendars.get(await calId())!.summary).toBe("Blueprint");
     // Nothing changed: no call to Google at all.
@@ -140,7 +144,7 @@ suite("google calendar", () => {
     const from = [...days.keys()].sort()[3];
     const to = addDays(from, 1);
     const ev = days.get(from)!;
-    const open = await prisma.task.findMany({ where: { cityId: "engineering", scheduledDate: new Date(from), status: "TODO" }, select: { id: true } });
+    const open = await prisma.task.findMany({ where: { cityId: "engineering", scheduledDate: new Date(from), status: "TODO", recallStateId: null }, select: { id: true } });
     expect(open.length).toBeGreaterThan(0);
     google.userMove(await calId(), ev.id, `${to}T18:00:00`, `${to}T19:00:00`);
     await calendar.pull(userId);
@@ -148,6 +152,44 @@ suite("google calendar", () => {
     expect(after.every((t) => d2i(t.scheduledDate) === to && t.pinnedAt !== null)).toBe(true);
     await calendar.runDue();
     expect((await byDay()).get(to)!.description).toContain("Planned by Blueprint");
+  });
+
+  it("gives recall its own event before the study block, each sub-topic with a link that opens it", async () => {
+    const sub = await prisma.subtopic.findFirstOrThrow({ where: { topic: { cityId: "engineering" }, completedAt: null }, orderBy: { id: "asc" } });
+    await asUser(app, H).patch(`/api/subtopics/${sub.id}`).send({ completed: true }).expect(200);
+    const task = await prisma.task.findFirstOrThrow({ where: { subtopicId: sub.id, recallStateId: { not: null }, status: "TODO" } });
+    const day = d2i(task.scheduledDate);
+    // An earlier test moved a study block by hand; this day is laid out by Blueprint.
+    await prisma.calendarEvent.updateMany({ where: { userId, day: new Date(day) }, data: { startMinute: null } });
+    await calendar.push(userId);
+    const recall = (await ofKind("RECALL")).get(day)!;
+    expect(recall.summary).toBe("Engineering City · Recall · 1 sub-topic");
+    expect(recall.colorId).toBe("3");
+    expect(recall.description).toContain(`1. ${sub.name} (`);
+    expect(recall.description).toContain("first recall");
+    expect(recall.description).toContain(`https://bp.example/#/recall/${sub.id}?city=engineering`);
+    // Recall first, then study right after it: nothing overlaps.
+    const study = (await byDay()).get(day);
+    if (study) {
+      expect(recall.start!.dateTime! < study.start!.dateTime!).toBe(true);
+      expect(study.start!.dateTime).toBe(recall.end!.dateTime);
+    }
+    expect(study?.description ?? "").not.toContain("Recall:");
+  });
+
+  it("marks a finished block with ✓ and grey, and follows the reminder setting", async () => {
+    const days = await byDay();
+    const day = [...days.keys()].sort()[0];
+    await prisma.task.updateMany({ where: { cityId: "engineering", scheduledDate: new Date(day), recallStateId: null }, data: { status: "DONE", completedAt: new Date() } });
+    await asUser(app, H).put("/api/calendar").send({ reminderMinutes: 0 }).expect(200);
+    await calendar.push(userId);
+    const done = (await byDay()).get(day)!;
+    expect(done.summary).toMatch(/^✓ Engineering City · Study/);
+    expect(done.colorId).toBe("8");
+    expect(done.reminders).toEqual({ useDefault: false, overrides: [] });
+    await asUser(app, H).put("/api/calendar").send({ reminderMinutes: 10 }).expect(200);
+    await asUser(app, H).put("/api/calendar").send({ reminderMinutes: 7 }).expect(400);
+    expect((await asUser(app, H).get("/api/calendar").expect(200)).body).toMatchObject({ reminderMinutes: 10, cities: [{ id: "engineering", name: "Engineering City" }] });
   });
 
   it("hides a block deleted in Google and doesn't write it again; the plan doesn't change", async () => {

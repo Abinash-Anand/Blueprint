@@ -1,13 +1,23 @@
 /**
- * What a study block looks like in Google Calendar (docs/Google-Calendar-MVP-Plan.md §3), worked out in code only:
- * one event per city and day, starting at the chosen time in the city's time zone and lasting the day's planned
- * minutes, with the tasks in the description and Blueprint's markers in private extended properties.
+ * What Blueprint's events look like in Google Calendar (docs/Google-Calendar-MVP-Plan.md §3, §8), worked out in code
+ * only. Per city and day there are up to two: the recalls due (each with a link that opens it in Blueprint) and the
+ * study block (study and practice tasks, the stage, a link to the city). A day's events are laid out one after another
+ * across cities (`layoutDay`); finished blocks get a ✓ and turn grey.
  */
 import { createHash } from "node:crypto";
 import type { ISODate } from "../../domain/dates.js";
 import type { EventBody, EventTime } from "./google.js";
 
-export interface DayTask { title: string; minutes: number; done: boolean }
+export type BlockKind = "STUDY" | "RECALL";
+export interface StudyTask { title: string; minutes: number; done: boolean }
+export interface RecallItem { subtopicId: number; name: string; topic: string; minutes: number; done: boolean; lastReview: ISODate | null; overdueSince: ISODate | null }
+export interface Ctx { cityId: string; cityName: string; day: ISODate; timeZone: string; appUrl: string; reminderMinutes: number }
+
+/** Google's event colours: Peacock for study, Grape for recall, Graphite once done. */
+export const COLORS = { STUDY: "7", RECALL: "3", DONE: "8" } as const;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dm = (iso: ISODate) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]}`;
+const FOOT = "Planned by Blueprint. Move this block to another time or day and Blueprint follows.";
 
 /** "3 h 45 min", "2 h", "45 min". */
 export function hm(minutes: number) {
@@ -24,22 +34,73 @@ function wallClock(day: ISODate, minute: number) {
   return `${t.toISOString().slice(0, 10)}T${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}:00`;
 }
 
-/** The event for a city's day, or null when nothing is planned that day. */
-export function blockBody(o: { cityId: string; cityName: string; day: ISODate; timeZone: string; startMinute: number; tasks: DayTask[] }): EventBody | null {
-  const total = o.tasks.reduce((s, t) => s + t.minutes, 0);
-  if (!o.tasks.length || total <= 0) return null;
-  const lines = o.tasks.map((t) => `${t.done ? "✓" : "•"} ${t.title} · ${hm(t.minutes)}`);
+function frame(c: Ctx, kind: BlockKind, startMinute: number, minutes: number, done: boolean): EventBody {
   return {
-    summary: `${o.cityName} · ${hm(total)}`,
-    description: `${lines.join("\n")}\n\nPlanned by Blueprint. Move this block to another time or day and Blueprint follows.`,
-    start: { dateTime: wallClock(o.day, o.startMinute), timeZone: o.timeZone },
-    end: { dateTime: wallClock(o.day, o.startMinute + total), timeZone: o.timeZone },
-    extendedProperties: { private: { bp: "1", bpCity: o.cityId, bpDay: o.day } },
+    start: { dateTime: wallClock(c.day, startMinute), timeZone: c.timeZone },
+    end: { dateTime: wallClock(c.day, startMinute + minutes), timeZone: c.timeZone },
+    colorId: done ? COLORS.DONE : COLORS[kind],
+    reminders: { useDefault: false, overrides: c.reminderMinutes > 0 ? [{ method: "popup", minutes: c.reminderMinutes }] : [] },
+    extendedProperties: { private: { bp: "1", bpCity: c.cityId, bpDay: c.day, bpKind: kind } },
   };
 }
 
-/** What was written, as a short hash: an unchanged block is never written again. */
-export const hashBody = (b: EventBody) => createHash("sha256").update(JSON.stringify([b.summary, b.description, b.start, b.end])).digest("hex").slice(0, 32);
+const link = (c: Ctx, path: string) => `${c.appUrl}/#/${path}${path.includes("?") ? "&" : "?"}city=${encodeURIComponent(c.cityId)}`;
+
+/** The study block: study and practice tasks with the stage; null when there are none. */
+export function studyBody(c: Ctx & { stage: string | null; tasks: StudyTask[] }, startMinute: number): EventBody | null {
+  const total = c.tasks.reduce((s, t) => s + t.minutes, 0);
+  if (!c.tasks.length || total <= 0) return null;
+  const done = c.tasks.every((t) => t.done);
+  const lines = c.tasks.map((t) => `${t.done ? "✓" : "•"} ${t.title} · ${hm(t.minutes)}`);
+  return {
+    summary: `${done ? "✓ " : ""}${c.cityName} · Study · ${hm(total)}`,
+    description: [...(c.stage ? [`Stage: ${c.stage}`, ""] : []), ...lines, "", `Open in Blueprint: ${link(c, "today")}`, "", FOOT].join("\n"),
+    ...frame(c, "STUDY", startMinute, total, done),
+  };
+}
+
+/** The recall event: one line per sub-topic due, each with a link that opens it; null when none is due. */
+export function recallBody(c: Ctx & { items: RecallItem[] }, startMinute: number): EventBody | null {
+  const total = c.items.reduce((s, t) => s + t.minutes, 0);
+  if (!c.items.length || total <= 0) return null;
+  const done = c.items.every((t) => t.done);
+  const when = (r: RecallItem) => (r.done ? "done" : r.overdueSince ? `overdue since ${dm(r.overdueSince)}` : r.lastReview ? `last recalled ${dm(r.lastReview)}` : "first recall");
+  const lines = c.items.flatMap((r, i) => [`${i + 1}. ${r.done ? "✓ " : ""}${r.name} (${r.topic}) · ${when(r)}`, ...(r.done ? [] : [`   ${link(c, `recall/${r.subtopicId}`)}`])]);
+  const n = c.items.length;
+  return {
+    summary: `${done ? "✓ " : ""}${c.cityName} · Recall · ${n} sub-topic${n === 1 ? "" : "s"}`,
+    description: ["Recall from memory first, then check in Blueprint.", "", ...lines, "", FOOT].join("\n"),
+    ...frame(c, "RECALL", startMinute, total, done),
+  };
+}
+
+/** What was written, as a short hash: an unchanged event is never written again. */
+export const hashBody = (b: EventBody) =>
+  createHash("sha256").update(JSON.stringify([b.summary, b.description, b.start, b.end, b.colorId, b.reminders])).digest("hex").slice(0, 32);
+
+/**
+ * A day's events, one after another from `start` in the order given. An event the learner moved keeps its time
+ * (`fixed`), and the others are placed around it. Answers each event's start, in the same order.
+ */
+export function layoutDay(start: number, blocks: { minutes: number; fixed: number | null }[]): number[] {
+  const taken = blocks.filter((b) => b.fixed !== null).map((b) => [b.fixed!, b.fixed! + b.minutes] as const);
+  let cursor = start;
+  return blocks.map((b) => {
+    if (b.fixed !== null) return b.fixed;
+    let at = cursor;
+    for (let moved = true; moved;) {
+      moved = false;
+      for (const [s, e] of taken) {
+        if (at < e && at + b.minutes > s) {
+          at = e;
+          moved = true;
+        }
+      }
+    }
+    cursor = at + b.minutes;
+    return at;
+  });
+}
 
 /** The local day and minute an event starts at in `timeZone`; minute is null for an all-day event. */
 export function localStart(t: EventTime | undefined, timeZone: string): { day: ISODate; minute: number | null } | null {

@@ -11,7 +11,11 @@ import { readCookie } from "../auth/security.js";
 import type { CalendarService } from "./service.js";
 
 const STATE_COOKIE = "bp_gstate";
-const startBody = z.object({ startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 18:00") }).strict();
+const settingsBody = z.object({
+  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 18:00").optional(),
+  reminderMinutes: z.union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(30)]).optional(),
+  cityOrder: z.array(z.string().min(1).max(60)).max(50).optional(),
+}).strict().refine((b) => b.startTime || b.reminderMinutes !== undefined || b.cityOrder, { message: "Nothing to change" });
 const disconnectBody = z.object({ removeCalendar: z.boolean().optional() }).strict();
 
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -31,7 +35,7 @@ export function calendarRoutes(calendar: CalendarService, secure: boolean) {
 
   r.put("/calendar", requireUser, async (req, res, next) => {
     try {
-      await calendar.setStart(req.user!.id, validate(startBody, req.body).startTime);
+      await calendar.setSettings(req.user!.id, validate(settingsBody, req.body));
       res.json(await calendar.status(req.user!.id));
     } catch (e) {
       next(e);

@@ -1222,6 +1222,10 @@ model GoogleConnection {
   syncToken       String?
   /// When study blocks start, in minutes after midnight in each city's time zone (18:00).
   startMinute     Int               @default(1080)
+  /// Minutes before a block that Google reminds you (popup); 0 = no reminder.
+  reminderMinutes Int               @default(10)
+  /// The order cities' blocks follow each other on a day (city ids); cities not listed go last, oldest first.
+  cityOrder       String[]          @default([])
   /// ACTIVE; PAUSED (sync failed too often: "Retry"); RECONNECT (Google refused the token).
   status          String            @default("ACTIVE")
   lastError       String?
@@ -1241,17 +1245,21 @@ model CalendarEvent {
   /// No foreign key: a deleted city's blocks are removed from Google by the next push, then from here.
   cityId        String
   day           DateTime         @db.Date
+  /// STUDY (study and practice tasks) or RECALL (the day's recalls), each its own event.
+  kind          String           @default("STUDY")
   googleEventId String?
   etag          String?
   /// Hash of what was last written, so an unchanged block is never written again.
   contentHash   String?
-  /// The start the learner chose by moving the block in Google (minutes after midnight); null = the default.
+  /// The start the learner chose by moving the block in Google (minutes after midnight); null = laid out by Blueprint.
   startMinute   Int?
+  /// The start last written to Google, so a move in Google can be told from other edits.
+  placedMinute  Int?
   /// Deleted in Google: not written again for that day; the plan is unchanged.
   hidden        Boolean          @default(false)
   updatedAt     DateTime         @updatedAt @db.Timestamptz(3)
 
-  @@unique([userId, cityId, day])
+  @@unique([userId, cityId, day, kind])
   @@index([userId, googleEventId])
 }
 
