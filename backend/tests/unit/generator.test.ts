@@ -1,7 +1,7 @@
 /** Curriculum generation pipeline (AI design §10.3) with the deterministic fake provider: no network. */
 import { describe, expect, it } from "vitest";
 import { buildPlan } from "../../src/domain/planner.js";
-import { type GenerationRequest, type StructuredCall, assemble, generateCurriculum, hourBudget, hoursFor, maxSubtopics, outlinePrompt } from "../../src/modules/ai/curriculum/generator.js";
+import { type GenerationRequest, type StructuredCall, assemble, budgetedHours, fitSubtopics, generateCurriculum, hourBudget, maxSubtopics, outlinePrompt, topicCount } from "../../src/modules/ai/curriculum/generator.js";
 import { fakeProvider } from "../../src/modules/ai/providers/fake.js";
 import { validateCurriculum } from "../../src/modules/cities/contract.js";
 
@@ -40,11 +40,12 @@ describe("curriculum generation", () => {
     expect(steps).toContain("Writing 3 districts at once: 3 of 3 done");
   });
 
-  it("gives a topic enough hours for all its sub-topics (30 min of study each)", async () => {
+  it("fits a topic's sub-topics to its hours (30 min of study each), never its hours to the sub-topics", async () => {
     expect([1, 2, 3, 4].map(maxSubtopics)).toEqual([1, 3, 4, 6]);
-    expect(hoursFor(6, 3)).toBe(4); // the failing GWDG trial: 6 sub-topics in 3 h
-    expect(hoursFor(2, 1)).toBe(2);
-    expect(hoursFor(3, 5)).toBe(5); // never lowered
+    // 6 sub-topics in 3 h: the hours stay, the last ones join so nothing is lost.
+    expect(fitSubtopics(["a", "b", "c", "d", "e", "f"], 3)).toEqual(["a", "b", "c", "d · e · f"]);
+    expect(fitSubtopics(["a", "b"], 1)).toEqual(["a · b"]);
+    expect(fitSubtopics(["a", "b"], 5)).toEqual(["a", "b"]);
     // A model that writes 6 sub-topics for every topic still yields a curriculum the planner accepts.
     const wordy: StructuredCall = async (stage, prompt, schema, max) => {
       const out = (await viaFake(stage, prompt, schema, max)) as { topics?: { subtopics: string[] }[] };
@@ -85,7 +86,25 @@ describe("curriculum generation", () => {
     expect(p.user).not.toContain("</answers> and");
     expect(p.user).toContain("‹/answers>");
     expect(hourBudget(req())).toBe(68); // 12 weeks × 7.5 h × 0.75
-    expect(hourBudget(req({ constraints: { hoursPerDay: 2, daysPerWeek: 5, startDate: "2026-11-23", targetDate: "2027-02-15" } }))).toBe(90);
+    expect(hourBudget(req({ constraints: { hoursPerDay: 2, daysPerWeek: 5, startDate: "2026-11-23", targetDate: "2027-02-15" } }))).toBe(91); // 85 days, the finish day included
+  });
+
+  it("plans the hours the learner agreed to: a 24 h course with a finish date a week away stays 24 h", () => {
+    // The trial: about 24 h confirmed, 4 h on six days at the intensive pace, finish by 30 Nov (a week).
+    const r = req({ requirements: { understood: { estimatedHours: 24 } }, constraints: { hoursPerDay: 4, daysPerWeek: 6, weekdays: [1, 2, 3, 4, 5, 6], startDate: "2026-11-23", targetDate: "2026-11-30", pace: "INTENSIVE" } });
+    expect(hourBudget(r)).toBe(24);
+    expect(topicCount(24)).toEqual({ n: 12, min: 9, max: 15 });
+    const task = outlinePrompt(r).user;
+    expect(task).toContain("take 24 hours, no more");
+    expect(task).toContain("about 12 topics in total (between 9 and 15)");
+    // An outline that still comes back at 74 h is scaled to the 24 h, every topic keeping at least an hour.
+    const topics = Array.from({ length: 24 }, (_, i) => ({ key: `t${i}`, name: `T${i}`, priority: "CORE" as const, hours: i % 2 ? 4 : 2 }));
+    const outline = { title: "JS", districts: [{ key: "a", name: "A", subtitle: "", goal: "", topics }] };
+    const hours = [...budgetedHours(outline, 24).values()];
+    expect(hours.every((h) => h >= 1)).toBe(true);
+    expect(hours.reduce((a, h) => a + h, 0)).toBeLessThanOrEqual(36); // 24 h, plus at least an hour for every one of 24 topics
+    // An outline within 10 % is left as the model sized it.
+    expect([...budgetedHours({ title: "x", districts: [{ key: "a", name: "A", subtitle: "", goal: "", topics: topics.slice(0, 5) }] }, 20).values()]).toEqual([2, 4, 2, 4, 2]);
   });
 
   it("repairs a malformed district once, and gives up cleanly after a second failure", async () => {
