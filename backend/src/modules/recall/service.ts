@@ -22,6 +22,7 @@ import type { AiConfig } from "../ai/config.js";
 import { jobCaller } from "../ai/jobCaller.js";
 import { type AiProviders, ProviderError, asProviderError, isProviderOutage } from "../ai/providers/types.js";
 import { generateSwitching } from "../ai/switching.js";
+import { BULK_TX } from "../schedule/replan.js";
 import type { UsageService } from "../ai/usage.js";
 import type { AuthService } from "../auth/service.js";
 import {
@@ -308,7 +309,7 @@ export function recallService(d: RecallDeps) {
         });
       }
       await syncRecallTasks(tx, today());
-    });
+    }, BULK_TX); // the next recall task re-plans the city: longer than the 5 s default on a slow server
     if (graded.rejectedQuotes) console.log(JSON.stringify({ level: "info", msg: "Recall quotes rejected", count: graded.rejectedQuotes }));
   }
 
@@ -849,7 +850,7 @@ export function recallService(d: RecallDeps) {
       await db.$transaction(async (tx) => {
         await tx.recallState.update({ where: { subtopicId }, data: { nextDueDate: i2d(tomorrow) } });
         await syncRecallTasks(tx, today());
-      });
+      }, BULK_TX);
       return { subtopicId, nextDueDate: tomorrow };
     },
 
