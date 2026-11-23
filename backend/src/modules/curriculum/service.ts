@@ -15,7 +15,7 @@ const topicInclude = {
     // Recall (docs/Recall-Plan.md): when it is next due, and how the last check went.
     include: {
       recallState: { select: { nextDueDate: true, stage: true } },
-      recallReviews: { where: { status: { in: ["CHECKED" as const, "COMPLETE" as const] } }, orderBy: [{ date: "desc" as const }, { id: "desc" as const }], take: 1, select: { date: true, score: true, depth: true } },
+      recallReviews: { where: { status: { in: ["CHECKED" as const, "COMPLETE" as const] } }, orderBy: [{ date: "desc" as const }, { id: "desc" as const }], take: 1, select: { date: true, score: true, depth: true, outcome: true } },
     },
   },
   resources: { orderBy: { position: "asc" as const } },
@@ -51,7 +51,7 @@ export function topicDTO(t: TopicRow, agg?: TopicAggregates) {
         ? {
             nextDueDate: s.recallState?.nextDueDate ? d2i(s.recallState.nextDueDate) : null,
             stage: s.recallState?.stage ?? 0,
-            last: s.recallReviews[0] ? { date: d2i(s.recallReviews[0].date), score: s.recallReviews[0].score!, depth: s.recallReviews[0].depth! } : null,
+            last: s.recallReviews[0] ? { date: d2i(s.recallReviews[0].date), score: s.recallReviews[0].score!, depth: s.recallReviews[0].depth!, outcome: s.recallReviews[0].outcome ?? null } : null,
           }
         : null,
     })),

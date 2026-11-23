@@ -32,7 +32,11 @@ export interface Subtopic {
   completedAt: string | null;
   presentation?: Presentation;
   /** Recall (docs/Recall-Plan.md): when it is next due, and how the last check went. */
-  recall?: { nextDueDate: ISODate | null; stage: number; last: { date: ISODate; score: number; depth: RecallDepth } | null } | null;
+  recall?: {
+    nextDueDate: ISODate | null; stage: number;
+    /** The latest checked recall; outcome is its result (null for recalls checked before outcomes were stored). */
+    last: { date: ISODate; score: number; depth: RecallDepth; outcome?: "PASS" | "HOLD" | "LAPSE" | null } | null;
+  } | null;
 }
 
 export interface Resource {

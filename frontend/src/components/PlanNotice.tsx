@@ -1,5 +1,5 @@
 /**
- * One line on Today after a re-plan moved tasks (docs/Scheduler-Phase2-Plan.md): what moved, why, and what it did to
+ * One short note on Today after a re-plan moved tasks (docs/Scheduler-Phase2-Plan.md): what moved, why, and what it did to
  * the projected finish. Shown until dismissed; which change was seen is remembered per city in this browser only.
  */
 import { useEffect, useState } from "react";
@@ -56,11 +56,12 @@ export function PlanNotice({ version }: { version: number }) {
     setSeen(change.at);
   };
   return (
-    <div className="plan-note" role="status">
-      <span>
-        <b>{changeText(change)}</b> {finishText(change)} Their original dates are kept, and tasks you moved by hand stay put.
-      </span>
+    // Not a live region: it is there when the page opens, so it is read in order like the rest of the page.
+    <section className="g-panel td-note" aria-label="Plan change">
+      <p>
+        <b>{changeText(change)}</b> {finishText(change)}
+      </p>
       <button className="btn" onClick={dismiss}>Got it</button>
-    </div>
+    </section>
   );
 }

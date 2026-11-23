@@ -26,17 +26,25 @@ const useHash = () => {
 };
 
 /** Account and city screens share a slim header with the way back to the open city. */
-export function TopBar() {
-  const { city, cities, selectCity, user, signOut } = useSession();
-  const openable = cities.filter((c) => c.status !== "DRAFT" && c.status !== "ARCHIVED");
-  const [menu, setMenu] = useState(false);
-  const acct = useRef<HTMLDivElement>(null);
-  // The account menu closes on a click or tap outside it, on Escape and when the page changes.
+/**
+ * A button that shows a short list of links and buttons under it (a disclosure, not an ARIA menu: Tab moves through it).
+ * Opening it moves focus to its first item; it closes on Escape (focus back on the button), on a click or tap outside
+ * it, and when the page changes.
+ */
+function usePopover() {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (!menu) return;
-    const outside = (e: PointerEvent) => !acct.current?.contains(e.target as Node) && setMenu(false);
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setMenu(false);
-    const nav = () => setMenu(false);
+    if (!open) return;
+    box.current?.querySelector<HTMLElement>(".acct-menu a, .acct-menu button")?.focus();
+    const outside = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(false);
+      button.current?.focus();
+    };
+    const nav = () => setOpen(false);
     document.addEventListener("pointerdown", outside);
     document.addEventListener("keydown", key);
     addEventListener("hashchange", nav);
@@ -45,40 +53,65 @@ export function TopBar() {
       document.removeEventListener("keydown", key);
       removeEventListener("hashchange", nav);
     };
-  }, [menu]);
+  }, [open]);
+  return { open, setOpen, box, button };
+}
+
+const statusNote = (s: string) => (s === "PAUSED" ? " (paused)" : s === "COMPLETED" ? " (completed)" : "");
+
+export function TopBar() {
+  const { city, cities, selectCity, user, signOut } = useSession();
+  const openable = cities.filter((c) => c.status !== "DRAFT" && c.status !== "ARCHIVED");
+  const cityPop = usePopover();
+  const acctPop = usePopover();
   return (
     <div className="topctl">
-      <label className="city-switch">
-        <span className="sr">Current city</span>
-        <select
-          className="inp"
-          value={city?.id ?? ""}
-          onChange={(e) => {
-            if (e.target.value === "__manage") location.hash = "#/cities";
-            else if (e.target.value === "__new") location.hash = "#/cities/new";
-            else {
-              selectCity(e.target.value);
-              location.hash = "#/today";
-            }
-          }}
-        >
-          {!city && <option value="">Choose a city…</option>}
-          {openable.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "PAUSED" ? " (paused)" : c.status === "COMPLETED" ? " (completed)" : ""}</option>)}
-          <option value="__new">+ New city…</option>
-          <option value="__manage">Manage cities…</option>
-        </select>
-      </label>
-      <div className="acct" ref={acct}>
-        <button className="btn acct-btn" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((x) => !x)} title={user?.email}>
-          <span className="acct-av" aria-hidden="true">{(user?.name ?? "?").slice(0, 1).toUpperCase()}</span>
-          <span className="sr">Account menu</span>
+      {/* Choosing a city is a deliberate press, never a side effect of moving through a list. */}
+      <div className="acct city-pop" ref={cityPop.box}>
+        <button ref={cityPop.button} type="button" className="btn city-btn" aria-expanded={cityPop.open} aria-controls="city-list" onClick={() => cityPop.setOpen((x) => !x)}>
+          <span className="sr">City: </span>
+          <span className="city-name">{city?.name ?? "Choose a city"}</span>
+          <span className="city-chev" aria-hidden="true">▾</span>
         </button>
-        {menu && (
-          <div className="acct-menu" role="menu" onClick={() => setMenu(false)}>
-            <a role="menuitem" href="#/account">Account settings</a>
-            <a role="menuitem" href="#/calendar">Google Calendar</a>
-            <a role="menuitem" href="#/cities">Manage cities</a>
-            <button role="menuitem" onClick={() => void signOut()}>Sign out</button>
+        {cityPop.open && (
+          <div id="city-list" className="acct-menu">
+            {openable.length > 0 && (
+              <ul aria-label="Your cities">
+                {openable.map((c) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      aria-current={c.id === city?.id ? "true" : undefined}
+                      onClick={() => {
+                        cityPop.setOpen(false);
+                        if (c.id !== city?.id) selectCity(c.id);
+                        location.hash = "#/today";
+                      }}
+                    >
+                      {c.name}{statusNote(c.status)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <hr />
+            <a href="#/cities/new">New city</a>
+            <a href="#/cities">Manage cities</a>
+          </div>
+        )}
+      </div>
+      <div className="acct" ref={acctPop.box}>
+        <button ref={acctPop.button} type="button" className="btn acct-btn" aria-expanded={acctPop.open} aria-controls="acct-list" onClick={() => acctPop.setOpen((x) => !x)}>
+          <span className="acct-av" aria-hidden="true">{(user?.name ?? "?").slice(0, 1).toUpperCase()}</span>
+          <span className="sr">Account</span>
+        </button>
+        {acctPop.open && (
+          <div id="acct-list" className="acct-menu">
+            {user?.email && <p className="acct-who">{user.email}</p>}
+            <a href="#/account">Account settings</a>
+            <a href="#/calendar">Google Calendar</a>
+            <a href="#/cities">Manage cities</a>
+            <button type="button" onClick={() => void signOut()}>Sign out</button>
           </div>
         )}
       </div>

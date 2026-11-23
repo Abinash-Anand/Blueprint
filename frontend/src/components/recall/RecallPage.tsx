@@ -17,7 +17,7 @@ const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something 
 const DEPTH = { FOUNDATIONAL: "Foundational", INTERMEDIATE: "Intermediate", MASTERY: "Mastery" } as const;
 const STATUS = { ACCURATE: "Remembered", PARTIAL: "Partly", MISSED: "Missed" } as const;
 const GLYPH = { ACCURATE: "ok", PARTIAL: "part", MISSED: "miss" } as const;
-const OUTCOME = { PASS: "Remembered well", HOLD: "Partly remembered", LAPSE: "Mostly forgotten" } as const;
+export const OUTCOME = { PASS: "Remembered well", HOLD: "Partly remembered", LAPSE: "Mostly forgotten" } as const;
 // Remembered first in the summary bar, then partly, then missed.
 const RANK = { ACCURATE: 0, PARTIAL: 1, MISSED: 2 } as const;
 // Said by the result, not the stage numbers: a first recall that lapses still moves from stage 0 to 1.

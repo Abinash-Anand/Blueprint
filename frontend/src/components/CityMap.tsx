@@ -219,6 +219,16 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
     carAnim.current = requestAnimationFrame(step);
   }, [L, progress.road, draw]);
 
+  // Closing a building's panel puts keyboard focus back on that building (the panel takes it when it opens).
+  const shownId = useRef(selectedId);
+  useEffect(() => {
+    const was = shownId.current;
+    shownId.current = selectedId;
+    if (!was || selectedId) return;
+    const panelHadFocus = !document.activeElement || document.activeElement === document.body || !!document.activeElement.closest(".panel");
+    if (panelHadFocus) layerRef.current?.querySelector<SVGGElement>(`g.bld[data-t="${CSS.escape(was)}"]`)?.focus({ preventScroll: true });
+  }, [selectedId]);
+
   // Initial camera: this city's camera from earlier in the session, or its current district (the whole city once
   // every district is passed). Framing needs the map's real size, so it waits until the map has been laid out.
   const framed = useRef(false);
@@ -378,7 +388,8 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
   const roadPct = useAnimatedNumber(road0.overall * 100);
 
   return (
-    <main className="map" aria-label="City map">
+    // A region, not <main>: the app's content area is already the page's main landmark.
+    <section className="map" aria-label="City map">
       <svg ref={svgRef} className="world" role="img" aria-label="Isometric city map of the roadmap. Each district is a skill domain and each building a topic.">
         <g ref={layerRef} />
       </svg>
@@ -408,6 +419,6 @@ export function CityMap({ layout: L, curriculum, progress, currentTopicId, selec
         <button className="btn" onClick={whereAmI}>Where am I</button>
       </div>
       <div className="tip" ref={tipRef} />
-    </main>
+    </section>
   );
 }

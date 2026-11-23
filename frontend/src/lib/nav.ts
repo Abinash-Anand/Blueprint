@@ -7,6 +7,13 @@ export const recallHash = (subtopicId: number) => `#/recall/${subtopicId}`;
 export const historyHash = (view: "revision" | "progress", subtopicId: number) => `#/${view}/history/${subtopicId}`;
 /** Your hours, study days and pace (docs/Availability-Phase3-Plan.md). */
 export const YOUR_TIME = "#/your-time";
+/** A task on a day (#/task/<date>/<id>), and adding a task or logging time on a day: pages of their own, opened from Today. */
+export const taskHash = (date: string, id: number) => `#/task/${date}/${id}`;
+/** With a topic, the new task starts as "Study: <topic>" on that topic (opened from a building's panel). */
+export const addTaskHash = (date: string, topicId?: string) => `#/add-task/${date}${topicId ? `/${encodeURIComponent(topicId)}` : ""}`;
+export const logTimeHash = (date: string) => `#/log-time/${date}`;
+/** A stage's dates, a page of its own opened from Progress. */
+export const stageHash = (id: string) => `#/stage/${encodeURIComponent(id)}`;
 
 export function openPage(hash: string) {
   if (location.hash === hash) return;

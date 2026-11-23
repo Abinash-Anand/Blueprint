@@ -1,17 +1,50 @@
-/** Weekly learning schedule (SRS §3.5). */
+/**
+ * The week (SRS §3.5), in glass (DESIGN.md §10): study time once, what is coming up, and the seven days, each a way into
+ * its day. A day planned beyond its target says so. On a wide screen the days sit side by side; on a phone they are a
+ * list.
+ */
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { Week } from "../api/types";
+import type { Week, WeekDay } from "../api/types";
 import { addDays, dayMonth, hm, hours1, plural, weekdayShort } from "../lib/format";
 import { useAppData } from "../state/AppData";
-import { Bar, Loading, Stat } from "./ui";
+import { Chevron } from "./recall/icons";
 import { StatusBadge } from "./Status";
+import { Bar, Loading } from "./ui";
 
 interface Props {
   date: string | null;
   onDate: (date: string | null) => void;
   onOpenDay: (date: string) => void;
   onOpenTopic: (id: string) => void;
+}
+
+const weekdayLong = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
+
+/** One day: its time against its target, its tasks, its recalls, and a warning when it is planned beyond its target. */
+function DayBody({ d, today }: { d: WeekDay; today: string }) {
+  if (!d.inJourney) return <span className="wk-line">{d.date < today ? "Before the journey" : "Outside the journey"}</span>;
+  if (d.isRestDay) {
+    return (
+      <>
+        <span className="wk-line">Rest day</span>
+        {d.actualMinutes > 0 && <span className="wk-line"><b>{hm(d.actualMinutes)}</b> bonus</span>}
+      </>
+    );
+  }
+  const learning = d.tasksTotal - d.revisionTasks;
+  const past = d.date <= today;
+  return (
+    <>
+      <span className="wk-time"><b>{hm(d.actualMinutes)}</b> of {hm(d.targetMinutes)}</span>
+      <Bar value={d.targetMinutes ? d.actualMinutes / d.targetMinutes : 0} />
+      <span className="wk-line">
+        {learning > 0 ? `${past && d.tasksTotal ? `${d.tasksDone} of ` : ""}${plural(d.tasksTotal, "task")} · ${hm(d.plannedMinutes)}` : "Buffer day"}
+      </span>
+      {d.recall.length > 0 && <span className="wk-line wk-recall"><span aria-hidden="true">↻ </span>{plural(d.recall.length, "recall")}</span>}
+      {d.overTargetMinutes > 0 && <StatusBadge className="wk-over" p={{ state: "day.over", tone: "warning", variant: "soft", icon: "alert-triangle", label: `${hm(d.overTargetMinutes)} over` }} />}
+    </>
+  );
 }
 
 export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
@@ -30,133 +63,99 @@ export function WeekView({ date, onDate, onOpenDay, onOpenTopic }: Props) {
     };
   }, [date, version]);
 
-  if (error) return <div className="view"><div className="wrap"><div className="card empty">{error}</div></div></div>;
-  if (!w) return <div className="view"><Loading /></div>;
+  if (error) return <div className="view gl gl-bg"><div className="wrap"><p className="g-err" role="alert">{error}</p></div></div>;
+  if (!w) return <div className="view gl gl-bg"><Loading /></div>;
 
   const t = w.totals;
   const thisWeek = w.today >= w.weekStart && w.today <= w.weekEnd;
   const studyDays = w.days.filter((d) => !d.isRestDay && d.inJourney);
   // The rest days come from the city's own week (Settings), never a fixed weekday.
-  const restNames = w.days.filter((d) => d.isRestDay).map((d) => new Date(`${d.date}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" }));
-  const rest = restNames.length === 0 ? "no rest day" : `${restNames.join(" and ")} ${restNames.length > 1 ? "are" : "is"} rest`;
-  const todo = w.tasks.filter((x) => x.status === "TODO");
-  // Recall tasks count as assignments too; say how many of the done ones were recalls.
-  const recallDone = w.tasks.filter((x) => x.status === "DONE" && x.kind === "REVISION").length;
-  const doneSplit = `${t.tasksDone - recallDone} study · ${recallDone} recall`;
+  const restNames = w.days.filter((d) => d.isRestDay && d.inJourney).map((d) => weekdayLong(d.date));
+  const rest = restNames.length === 0 ? "no rest day" : `${restNames.join(" and ")} ${restNames.length > 1 ? "are rest days" : "is a rest day"}`;
+  // Study days usually share one target; when they don't, the header says only how many there are.
+  const sameTarget = studyDays.every((d) => d.targetMinutes === studyDays[0]?.targetMinutes);
 
   return (
-    <div className="view">
-      <div className="wrap">
-        <div className="vhead">
+    <div className="view gl gl-bg">
+      <div className="wrap wk">
+        <header className="td-head">
           <div>
             <div className="kick">{thisWeek ? "This week" : "Week"}</div>
-            <h2>
-              {dayMonth(w.weekStart)} – {dayMonth(w.weekEnd)}
-            </h2>
-            <div className="sub">
-              {plural(studyDays.length, "study day")} × {hm(studyDays[0]?.targetMinutes ?? 0)} · {rest}{restNames.length ? ", no target" : ""}
-            </div>
+            <h2 className="g-title">{dayMonth(w.weekStart)} – {dayMonth(w.weekEnd)}</h2>
+            <p className="g-sub">
+              {plural(studyDays.length, "study day")}{sameTarget && studyDays.length ? ` of ${hm(studyDays[0].targetMinutes)}` : ""} · {rest}
+            </p>
           </div>
-          <div className="nav">
+          <nav className="td-nav" aria-label="Week">
             <button className="btn" aria-label="Previous week" onClick={() => onDate(addDays(w.weekStart, -7))}>←</button>
             <button className="btn" disabled={thisWeek} onClick={() => onDate(null)}>This week</button>
             <button className="btn" aria-label="Next week" onClick={() => onDate(addDays(w.weekStart, 7))}>→</button>
-          </div>
-        </div>
+          </nav>
+        </header>
 
-        <div className="grid4">
-          <Stat label="Target" value={hours1(t.targetMinutes)} detail={`${plural(studyDays.length, "study day")}, ${rest}`} />
-          <Stat label="Planned" value={hours1(t.plannedMinutes)} detail={`${plural(w.tasks.filter((x) => x.status !== "SKIPPED").length, "assignment")}`} />
-          <Stat
-            label="Actual"
-            value={hours1(t.actualMinutes)}
-            detail={<Bar value={t.targetMinutes ? t.actualMinutes / t.targetMinutes : 0} />}
-          />
-          <Stat label="Completed" value={t.tasksDone} unit={`/ ${t.tasksDone + t.tasksRemaining}`} detail={`${doneSplit}${t.tasksRemaining ? ` · ${hm(t.remainingMinutes)} remaining` : " · nothing remaining"}`} />
-        </div>
+        <div className="wk-grid">
+          <section className="td-card wk-sum" aria-labelledby="wk-time">
+            <h3 id="wk-time" className="kick">Study time</h3>
+            <div className="td-v">
+              {hours1(t.actualMinutes)}
+              {t.targetMinutes > 0 && <small>of {hours1(t.targetMinutes)}</small>}
+            </div>
+            {t.targetMinutes > 0 && <Bar value={t.actualMinutes / t.targetMinutes} />}
+            <p className="g-small">
+              {t.tasksRemaining ? `${plural(t.tasksRemaining, "task")} left · ${hm(t.remainingMinutes)}` : t.tasksDone ? "All tasks done." : "Nothing assigned."}
+            </p>
+          </section>
 
-        <div className="section">
-          <h3>Days</h3>
-          <div className="wgrid">
-            {w.days.map((d) => (
-              <button
-                key={d.date}
-                className={`wday${d.date === w.today ? " today" : ""}${d.isRestDay || !d.inJourney ? " rest" : ""}`}
-                onClick={() => onOpenDay(d.date)}
-                aria-label={`Open ${weekdayShort(d.date)} ${dayMonth(d.date)}`}
-              >
-                <div>
-                  <div className="dn">{weekdayShort(d.date)}</div>
-                  <div className="dd">{dayMonth(d.date)}</div>
-                </div>
-                <div className="num">
-                  {!d.inJourney ? (
-                    <>{d.date < w.today ? "Before the journey" : "Outside the journey"}</>
-                  ) : d.isRestDay ? (
-                    <>
-                      Rest day
-                      {d.actualMinutes > 0 && <><br /><b>{hm(d.actualMinutes)}</b> bonus</>}
-                    </>
-                  ) : (
-                    <>
-                      <b>{hm(d.actualMinutes)}</b> of {hm(d.targetMinutes)}
-                      <div className="mini"><i style={{ width: `${Math.min(1, d.actualMinutes / (d.targetMinutes || 1)) * 100}%` }} /></div>
-                      <div style={{ marginTop: 6 }}>
-                        {d.tasksTotal - d.revisionTasks > 0 ? `${d.tasksDone}/${d.tasksTotal} tasks · ${hm(d.plannedMinutes)}` : "Buffer day"}
-                      </div>
-                      {d.revisionPlannedMinutes > 0 && <div>incl. {hm(d.revisionPlannedMinutes)} revision</div>}
-                    </>
-                  )}
-                  {d.recall.length > 0 && <div className="wk-recall" title={d.recall.join(", ")}>↻ {plural(d.recall.length, "recall")}</div>}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="section">
-          <h3>Milestones · this week and the next</h3>
-          <div className="card">
+          <section className="wk-up" aria-labelledby="wk-up">
+            <h3 id="wk-up" className="g-cap">Coming up</h3>
             {w.milestones.length === 0 ? (
-              <div className="empty" style={{ padding: 0 }}>No practical milestones or stage deadlines in this window.</div>
+              <p className="g-foot">No practice or stage deadline this week or next.</p>
             ) : (
-              <ul className="list">
-                {w.milestones.map((m, i) => (
-                  <li key={i}>
-                    <span className="sind">
+              <ul className="g-group">
+                {w.milestones.map((m, i) => {
+                  const body = (
+                    <>
+                      <span className="g-lbl">
+                        {m.title}
+                        <small>{m.type === "STAGE_END" ? "Stage deadline · " : ""}{weekdayShort(m.date)} {dayMonth(m.date)}</small>
+                      </span>
+                      {(m.done || (m.presentation && m.presentation.state !== "milestone.planned")) && <StatusBadge p={m.presentation} fallback={m.done ? "Done" : undefined} />}
+                    </>
+                  );
+                  return (
+                    <li key={i}>
                       {m.topicId ? (
-                        <button className="btn" style={{ padding: "2px 8px", fontSize: 13 }} onClick={() => onOpenTopic(m.topicId!)}>{m.title}</button>
+                        <button type="button" className="g-row" onClick={() => onOpenTopic(m.topicId!)}>{body}<Chevron /></button>
                       ) : (
-                        <b>{m.title}</b>
+                        <div className="g-row">{body}</div>
                       )}
-                      <StatusBadge p={m.presentation} fallback={m.done ? "Done" : undefined} />
-                    </span>
-                    <span className="m">{m.type === "STAGE_END" ? "Stage deadline · " : "Practice · "}{weekdayShort(m.date)} {dayMonth(m.date)}</span>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
-          </div>
-        </div>
+          </section>
 
-        {todo.length > 0 && (
-          <div className="section">
-            <h3>Remaining this week · {plural(todo.length, "task")}</h3>
-            <div className="card">
-              <ul className="list">
-                {todo.map((x) => (
-                  <li key={x.id}>
-                    <span>
-                      {x.title}
-                      {x.topic && <span className="m"> · {x.topic.name}</span>}
-                    </span>
-                    <span className="m">{weekdayShort(x.scheduledDate)} · {hm(x.estimatedMinutes)}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
+          <section className="wk-daysec" aria-labelledby="wk-days">
+            <h3 id="wk-days" className="g-cap">Days</h3>
+            <ul className="wk-days">
+              {w.days.map((d) => (
+                <li key={d.date}>
+                  <button
+                    type="button"
+                    className={`wk-day${d.date === w.today ? " today" : ""}${d.isRestDay || !d.inJourney ? " rest" : ""}`}
+                    aria-current={d.date === w.today ? "date" : undefined}
+                    onClick={() => onOpenDay(d.date)}
+                  >
+                    <span className="wk-dn"><span>{weekdayShort(d.date)}</span> <b>{dayMonth(d.date)}</b></span>
+                    <span className="wk-body"><DayBody d={d} today={w.today} /></span>
+                    <Chevron />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
       </div>
     </div>
   );

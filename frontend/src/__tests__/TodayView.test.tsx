@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { PlanChange, Task, Today } from "../api/types";
 
@@ -70,7 +70,7 @@ vi.mock("../state/AppData", () => ({
 import { TodayView } from "../components/TodayView";
 import { pres, WEAK } from "./fixtures";
 
-describe("TodayView (Mission Control)", () => {
+describe("TodayView", () => {
   it("shows the date, current topic, target, actual time and tasks", async () => {
     render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
     await waitFor(() => expect(screen.getByText(/17 November 2026/)).toBeInTheDocument());
@@ -84,7 +84,20 @@ describe("TodayView (Mission Control)", () => {
     expect(screen.getByRole("checkbox", { name: /Utility types.*as done/ })).not.toBeChecked();
   });
 
-  it("shows a recall task with Revise and no tick box; it is done only by its recall", async () => {
+  it("has one next action: the next study task, with its topic one click away", async () => {
+    const onOpenTopic = vi.fn();
+    const { container } = render(<TodayView date={null} onDate={() => {}} onOpenTopic={onOpenTopic} />);
+    const hero = await screen.findByRole("region", { name: "Utility types" });
+    expect(container.querySelectorAll(".btn.primary")).toHaveLength(1);
+    fireEvent.click(within(hero).getByRole("button", { name: "Open topic" }));
+    expect(onOpenTopic).toHaveBeenCalledWith("fe.ts");
+    // Each number once: no assigned time, no done count, no total in the time log heading.
+    expect(screen.getByText("1 task left")).toBeInTheDocument();
+    expect(screen.queryByText(/assigned|of 2 done/)).toBeNull();
+    expect(screen.getByRole("heading", { name: "Time log" })).toBeInTheDocument();
+  });
+
+  it("shows a recall task without a tick box; the row opens the task's own page", async () => {
     current = {
       ...today,
       tasks: [...today.tasks, task({
@@ -93,10 +106,30 @@ describe("TodayView (Mission Control)", () => {
       })],
     };
     render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
-    expect(await screen.findByRole("button", { name: "Revise: Generics" })).toBeInTheDocument();
+    expect(await screen.findByText("2 days overdue")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /Recall: Generics.*done/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /done when you recall it/ })).toBeInTheDocument();
-    expect(screen.getByText("2 days overdue")).toBeInTheDocument();
+    // No Revise on the row: the day has one primary action.
+    expect(screen.queryByRole("button", { name: /^Revise/ })).toBeNull();
+    fireEvent.click(screen.getByText("Recall: Generics"));
+    expect(location.hash).toBe("#/task/2026-11-17/9");
+    history.replaceState(null, "", "#/today");
+    current = today;
+  });
+
+  it("says a rest day once, in place of the next action", async () => {
+    current = { ...today, isRestDay: true, targetMinutes: 0, plannedMinutes: 0, tasks: [], sessions: [] };
+    render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
+    expect(await screen.findByRole("heading", { name: "Rest day" })).toBeInTheDocument();
+    expect(screen.getAllByText(/no target/i)).toHaveLength(1);
+    expect(screen.queryByText(/Nothing assigned/)).toBeNull();
+    current = today;
+  });
+
+  it("has no time log on a day still to come", async () => {
+    current = { ...today, date: "2026-11-19", tasks: [], sessions: [] };
+    render(<TodayView date="2026-11-19" onDate={() => {}} onOpenTopic={() => {}} />);
+    expect(await screen.findByText("Upcoming day")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Time log" })).toBeNull();
     current = today;
   });
 
@@ -116,7 +149,9 @@ describe("TodayView (Mission Control)", () => {
     localStorage.clear();
     changes = [{ at: "2026-11-17T06:00:00.000Z", reason: "DAILY", moved: 6, finishBefore: "2027-03-09", finishAfter: "2027-03-12" }];
     const first = render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
-    const note = await screen.findByRole("status");
+    // A plain note, not a live region: it is there when the page opens.
+    const note = await screen.findByRole("region", { name: "Plan change" });
+    expect(screen.queryByRole("status")).toBeNull();
     expect(note.textContent).toMatch(/^The plan moved 6 tasks to fit work left from earlier days\. Projected finish 12 Mar \(3 days later\)\./);
     fireEvent.click(screen.getByRole("button", { name: "Got it" }));
     expect(screen.queryByText(/The plan moved/)).toBeNull();
@@ -133,11 +168,9 @@ describe("TodayView (Mission Control)", () => {
     render(<TodayView date={null} onDate={() => {}} onOpenTopic={() => {}} />);
     expect(await screen.findByRole("heading", { name: "Nothing planned today: you're ahead" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Move all forward" })).toBeNull();
-    expect(screen.getByText(/moves unfinished work forward on its own each day/)).toBeInTheDocument();
-    // A pinned task says so, and can be unpinned.
+    expect(screen.getByText(/Unfinished work moves forward on its own/)).toBeInTheDocument();
+    // A pinned task says so; unpinning is on its own page.
     expect(screen.getByText("Pinned")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Unpin "Pinned earlier"/ }));
-    expect(patchTask).toHaveBeenCalledWith(9, { pinned: false });
     current = today;
   });
 });
