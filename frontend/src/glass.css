@@ -548,6 +548,17 @@ aside.side .blist .opt .n{color:#555a5e}
   aside.side .kick{padding-right:44px}
 }
 
+/* Account pages: their content is the page's main landmark. Google Calendar in glass. */
+.page-main{flex:1;min-height:0;display:flex;flex-direction:column}
+.gc .gc-sec{margin-top:18px;padding-top:16px;border-top:1px solid var(--g-hair)}
+.gc .p-h{margin-top:0}
+.gc .gc-p{color:var(--ink)}
+.gc .gc-list{margin:0;padding-left:18px}
+.gc-state{margin:0 0 6px}
+.gc .btn{min-height:40px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.gc .tp-form .inp{width:auto}
+.gc code{font-size:12.5px;background:rgba(255,255,255,.7);border-radius:6px;padding:1px 5px}
+
 /* A task, adding a task, logging time: pages of their own, opened from Today */
 /* A page drawn without the app shell fills the screen and scrolls itself (the body never scrolls). */
 #root>.view{height:100vh;height:100dvh}
