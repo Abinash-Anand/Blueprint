@@ -59,10 +59,10 @@ describe("Your time", () => {
     expect(within(box).getByText(/Not by 1 Jun 2027 at this pace: it needs about 26.7 h of new material a week \(this plans 22.5 h\)/)).toBeTruthy();
     expect(within(box).getByText(/483 tasks would move, 24 tasks split to fill your days/)).toBeTruthy();
     // Only the last choice is previewed (one call after load, one after the changes settle).
-    expect(previewTime).toHaveBeenLastCalledWith({ minutesPerDay: 255, studyDays: [1, 2, 3, 4, 5, 6], pace: "STEADY", targetDate: "2027-06-01", timezone: "Europe/Berlin", studyStart: null });
+    expect(previewTime).toHaveBeenLastCalledWith({ minutesPerDay: 150, studyDays: [1, 2, 3, 4, 5, 6], pace: "STEADY", targetDate: "2027-06-01", timezone: "Europe/Berlin", studyStart: null });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(saveTime).toHaveBeenCalledWith({ minutesPerDay: 255, studyDays: [1, 2, 3, 4, 5, 6], pace: "STEADY", targetDate: "2027-06-01", timezone: "Europe/Berlin", studyStart: null });
+    expect(saveTime).toHaveBeenCalledWith({ minutesPerDay: 150, studyDays: [1, 2, 3, 4, 5, 6], pace: "STEADY", targetDate: "2027-06-01", timezone: "Europe/Berlin", studyStart: null });
   });
 
   it("says what is wrong with a choice and does not let it be saved", async () => {
@@ -83,6 +83,31 @@ describe("Your time", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(saveTime).not.toHaveBeenCalled();
+  });
+
+  it("picks the study time with the app's own controls: a time of day, then 15-minute steps, or none", async () => {
+    render(<YourTimePage backLabel="Progress" onClose={() => {}} />);
+    await screen.findByText("Your plan as it is.");
+    fireEvent.click(screen.getByRole("button", { name: "Evening · 18:00" }));
+    fireEvent.click(screen.getByRole("button", { name: "More (study starts at)" }));
+    await waitFor(() => expect(previewTime).toHaveBeenLastCalledWith(expect.objectContaining({ studyStart: "18:15" })));
+    expect(screen.getByRole("spinbutton", { name: "Study starts at" }).getAttribute("aria-valuetext")).toBe("18:15 study starts");
+    fireEvent.click(screen.getByRole("button", { name: "No set time" }));
+    await waitFor(() => expect(previewTime).toHaveBeenLastCalledWith(expect.objectContaining({ studyStart: null })));
+    expect(screen.queryByRole("spinbutton", { name: "Study starts at" })).toBeNull();
+  });
+
+  it("lets the pace follow the week, and sets the week when a pace is chosen", async () => {
+    render(<YourTimePage backLabel="Progress" onClose={() => {}} />);
+    await screen.findByText("Your plan as it is.");
+    const checked = () => screen.getAllByRole("radio").find((r) => r.getAttribute("aria-checked") === "true")!.textContent;
+    // 4 h a day on 6 days is 24 h a week: more than 4 h a day stays Intensive.
+    fireEvent.click(screen.getByRole("button", { name: "More (hours on a study day)" }));
+    expect(checked()).toBe("Intensive");
+    // Light: hours a day that keep the week within 8 h (1 h on 6 days).
+    fireEvent.click(screen.getByRole("radio", { name: /Light/ }));
+    expect(screen.getByRole("spinbutton", { name: "Hours on a study day" }).getAttribute("aria-valuetext")).toBe("1 h on a study day");
+    expect(checked()).toBe("Light");
   });
 
   it("says when a study time clashes with another city, and offers the next free time", () => {

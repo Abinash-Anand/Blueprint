@@ -4,11 +4,12 @@
  */
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { SlotNote } from "../../time/YourTime";
+import { bandText, paceFor, weekForPace } from "../../../lib/pace";
 import type { SlotReport } from "../../../api/types";
 import { cities } from "../../../api/client";
 import type { CityAttachment, CityProposal, CurriculumVersion, Understanding } from "../../../api/types";
 import { dayMonth, plural } from "../../../lib/format";
-import { CheckRow, DayToggles, DisclosureRow, Group, NumberStepper, Pill, Segmented, Sheet, TextRow } from "../../kit";
+import { CheckRow, DayToggles, DisclosureRow, Group, NumberStepper, Pill, Segmented, Sheet, StudyTime, TextRow } from "../../kit";
 import { FeedbackMessage, LoadingState } from "../../Status";
 import { canRecord, Recorder } from "../../voice/Recorder";
 import { type Pace, type TimeInput, type TimePlan, fileSummary, longDate } from "./logic";
@@ -196,10 +197,7 @@ function StudyFrom({ t, onT }: { t: TimeInput; onT: (t: TimeInput) => void }) {
   }, [t.studyStart, t.hoursPerDay, t.weekdays]);
   return (
     <div className="cc-block">
-      <label className="yt-field">
-        <span>Study from</span>
-        <input className="inp" type="time" step={900} value={t.studyStart ?? ""} onChange={(e) => onT({ ...t, studyStart: e.target.value || undefined })} />
-      </label>
+      <StudyTime value={t.studyStart ?? null} onChange={(v) => onT({ ...t, studyStart: v ?? undefined })} />
       <p className="cc-split-note">When this goal's study starts each day. Your calendar puts its blocks there, and other goals keep their own time.</p>
       {slot && <SlotNote slot={slot} onUse={(v) => onT({ ...t, studyStart: v })} />}
     </div>
@@ -221,17 +219,17 @@ export function TimeStep(p: {
     <>
       <Title sub="Your plan never asks for more than this.">How much time do you have?</Title>
       <div className="cc-block">
-        <NumberStepper label="Hours a day" value={p.t.hoursPerDay} min={0.5} max={8} step={0.5} unit={p.t.hoursPerDay === 1 ? "hour a day" : "hours a day"} onChange={(h) => p.onT({ ...p.t, hoursPerDay: h })} />
+        <NumberStepper label="Hours a day" value={p.t.hoursPerDay} min={0.5} max={8} step={0.5} unit={p.t.hoursPerDay === 1 ? "hour a day" : "hours a day"} onChange={(h) => p.onT({ ...p.t, hoursPerDay: h, pace: paceFor(h * p.t.weekdays.length) })} />
       </div>
-      <div className="cc-block"><DayToggles value={p.t.weekdays} onChange={(w) => p.onT({ ...p.t, weekdays: w })} /></div>
+      <div className="cc-block"><DayToggles value={p.t.weekdays} onChange={(w) => p.onT({ ...p.t, weekdays: w, pace: paceFor(p.t.hoursPerDay * w.length) })} /></div>
       <StudyFrom t={p.t} onT={p.onT} />
       <div className="cc-block">
         <Segmented<Pace>
-          label="Pace" value={p.t.pace} onChange={(x) => p.onT({ ...p.t, pace: x })}
+          label="Pace" value={p.t.pace} onChange={(x) => p.onT({ ...p.t, ...weekForPace(x, p.t.weekdays), pace: x })}
           options={[
-            { value: "LIGHT", label: "Light", hint: `${pct("LIGHT")} new material, more revision and slack days` },
-            { value: "STEADY", label: "Steady", hint: `${pct("STEADY")} new material, a balance with revision` },
-            { value: "INTENSIVE", label: "Intensive", hint: `${pct("INTENSIVE")} new material, little slack` },
+            { value: "LIGHT", label: "Light", hint: `${bandText("LIGHT")}: ${pct("LIGHT")} new material, more revision and slack days` },
+            { value: "STEADY", label: "Steady", hint: `${bandText("STEADY")}: ${pct("STEADY")} new material, a balance with revision` },
+            { value: "INTENSIVE", label: "Intensive", hint: `${bandText("INTENSIVE")}: ${pct("INTENSIVE")} new material, little slack` },
           ]}
         />
         <div className="cc-pace" aria-live="polite">

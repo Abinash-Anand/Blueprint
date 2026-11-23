@@ -8,7 +8,8 @@ import { ApiError, api } from "../../api/client";
 import type { SlotReport, TimeChoice, TimePace, TimePreview, YourTime } from "../../api/types";
 import { dayMonth, hm, plural } from "../../lib/format";
 import { useAppData } from "../../state/AppData";
-import { DayToggles, NumberStepper, Segmented } from "../kit";
+import { bandText, paceFor, weekForPace } from "../../lib/pace";
+import { StudyTime, DayToggles, NumberStepper, Segmented } from "../kit";
 import { Back } from "../recall/icons";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.message : "Something went wrong. Try again.");
@@ -94,9 +95,9 @@ export function YourTimePage({ backLabel, onClose }: { backLabel: string; onClos
   const set = (c: Partial<TimeChoice>) => setChoice((x) => (x ? { ...x, ...c } : x));
   const paceOptions: { value: TimePace; label: string; hint: string }[] = now ? [
     ...(now.pace === "CURRENT" ? [{ value: "CURRENT" as const, label: "Current", hint: now.share >= 0.999 ? "All new material, no revision time (your split now)" : `${pct(now.share)} new material (your split now)` }] : []),
-    { value: "LIGHT", label: "Light", hint: `${pct(now.paces.LIGHT)} new material, more revision and slack` },
-    { value: "STEADY", label: "Steady", hint: `${pct(now.paces.STEADY)} new material, a balance with revision` },
-    { value: "INTENSIVE", label: "Intensive", hint: `${pct(now.paces.INTENSIVE)} new material, little slack` },
+    { value: "LIGHT", label: "Light", hint: `${bandText("LIGHT")}: ${pct(now.paces.LIGHT)} new material, more revision and slack` },
+    { value: "STEADY", label: "Steady", hint: `${bandText("STEADY")}: ${pct(now.paces.STEADY)} new material, a balance with revision` },
+    { value: "INTENSIVE", label: "Intensive", hint: `${bandText("INTENSIVE")}: ${pct(now.paces.INTENSIVE)} new material, little slack` },
   ] : [];
 
   const p = preview;
@@ -117,21 +118,20 @@ export function YourTimePage({ backLabel, onClose }: { backLabel: string; onClos
               <div className="yt-form">
                 <div className="cc-block">
                   <NumberStepper label="Hours on a study day" value={choice.minutesPerDay / 60} min={0.25} max={16} step={0.25} unit="on a study day"
-                    format={(h) => hm(Math.round(h * 60))} onChange={(h) => set({ minutesPerDay: Math.round(h * 60) })} />
+                    format={(h) => hm(Math.round(h * 60))} onChange={(h) => set({ minutesPerDay: Math.round(h * 60), pace: paceFor(h * choice.studyDays.length) })} />
                 </div>
                 {!now.uniform && <p className="g-foot">Your study days now have different hours; saving gives each of them {hm(choice.minutesPerDay)}.</p>}
-                <div className="cc-block"><DayToggles value={choice.studyDays} onChange={(d) => set({ studyDays: d })} /></div>
+                <div className="cc-block"><DayToggles value={choice.studyDays} onChange={(d) => set({ studyDays: d, pace: paceFor((choice.minutesPerDay / 60) * d.length) })} /></div>
                 <div className="cc-block">
-                  <Segmented<TimePace> label="Pace" value={choice.pace} onChange={(x) => set({ pace: x })} options={paceOptions} />
+                  <Segmented<TimePace> label="Pace" value={choice.pace} options={paceOptions} onChange={(x) => {
+                    // Choosing a pace sets the week that belongs to it; "Current" keeps the week as it is.
+                    if (x === "CURRENT") return set({ pace: x });
+                    const w = weekForPace(x, choice.studyDays, 16);
+                    set({ pace: x, minutesPerDay: Math.round(w.hoursPerDay * 60), studyDays: w.weekdays });
+                  }} />
                 </div>
+                <div className="cc-block"><StudyTime value={choice.studyStart ?? null} onChange={(v) => set({ studyStart: v })} /></div>
                 <div className="yt-fields">
-                  <label className="yt-field">
-                    <span>Study from</span>
-                    <span className="yt-inline">
-                      <input className="inp" type="time" step={900} value={choice.studyStart ?? ""} onChange={(e) => set({ studyStart: e.target.value || null })} />
-                      {choice.studyStart && <button type="button" className="g-link" onClick={() => set({ studyStart: null })}>No set time</button>}
-                    </span>
-                  </label>
                   <label className="yt-field">
                     <span>Finish by</span>
                     <span className="yt-inline">
