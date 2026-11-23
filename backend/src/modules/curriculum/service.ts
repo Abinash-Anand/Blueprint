@@ -7,6 +7,7 @@ import { notFound } from "../../lib/http.js";
 import { type TopicAggregates, topicAggregates } from "../learning.js";
 import { syncRecallState } from "../recall/service.js";
 import { syncRecallTasks } from "../recall/tasks.js";
+import { BULK_TX } from "../schedule/replan.js";
 import { stageDTO, stageInclude } from "../schedule/service.js";
 
 const topicInclude = {
@@ -112,7 +113,7 @@ export function curriculumService(prisma: PrismaClient, clock: Clock) {
         await syncRecallTasks(tx, clock.today());
         const recall = await tx.recallState.findUnique({ where: { subtopicId: id }, select: { nextDueDate: true } });
         return { row, studyDone, recallDue: recall?.nextDueDate ? d2i(recall.nextDueDate) : null };
-      });
+      }, BULK_TX); // adding the recall task re-plans the city: longer than the 5 s default on a slow server
       // When the sub-topic is next due for recall, so the learner sees it was scheduled; and how many study tasks it closed.
       return { id: u.row.id, topicId: u.row.topicId, completedAt: u.row.completedAt?.toISOString() ?? null, recallDue: u.recallDue, studyTasksDone: u.studyDone };
     },
