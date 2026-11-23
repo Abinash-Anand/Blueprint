@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 import { App } from "./App";
 import { AccountSettings, Onboarding } from "./components/account/Account";
+import { CalendarPage } from "./components/account/CalendarPage";
 import { type AuthRoute, AuthScreens } from "./components/account/AuthScreens";
 import { CityManager } from "./components/cities/Cities";
 import { CreateCity } from "./components/cities/create/CreateCity";
@@ -75,6 +76,7 @@ export function TopBar() {
         {menu && (
           <div className="acct-menu" role="menu" onClick={() => setMenu(false)}>
             <a role="menuitem" href="#/account">Account settings</a>
+            <a role="menuitem" href="#/calendar">Google Calendar</a>
             <a role="menuitem" href="#/cities">Manage cities</a>
             <button role="menuitem" onClick={() => void signOut()}>Sign out</button>
           </div>
@@ -115,6 +117,7 @@ export function Root() {
   if (first === "privacy" || first === "terms") return <AuthScreens route={first} />;
   if (!s.user?.onboardedAt && first !== "cities") return <Onboarding />;
   if (first === "account") return <Page><AccountSettings /></Page>;
+  if (first === "calendar") return <Page><CalendarPage /></Page>;
   if (first === "cities" && second === "new") {
     const draft = hash.split("?")[0].split("/")[3] ?? null;
     return <Page><CreateCity key={draft ?? "new"} draftId={draft} /></Page>;

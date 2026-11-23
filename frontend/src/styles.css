@@ -929,3 +929,16 @@ aside:hover,aside:focus-within{scrollbar-color:rgba(60,64,67,.28) transparent}
 .cc-split-legend b{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums}
 .cc-split-note{margin:6px 0 0;font-size:12.5px;color:var(--muted);line-height:1.45}
 @media (prefers-reduced-motion:reduce){.cc-split-bar i{transition:none}}
+/* Google Calendar (#/calendar) */
+.gc .section{margin-top:18px}
+.gc-p{margin:0;font-size:14px;line-height:1.55;color:var(--ink)}
+.gc-list{margin:0 0 14px;padding-left:18px;font-size:14px;line-height:1.6;display:grid;gap:6px}
+.gc-grid{display:grid;gap:12px}
+.gc-ok{color:var(--success)}
+.gc-bad{color:var(--danger)}
+.gc-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.gc-field{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px}
+.gc-field .inp{width:auto}
+.gc-check{display:flex;gap:8px;align-items:center;font-size:14px}
+.gc-foot{margin:8px 0 0;font-size:12.5px;color:var(--muted)}
+.gc a.btn{text-decoration:none}

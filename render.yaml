@@ -58,6 +58,14 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Google Calendar sync (docs/Google-Calendar-MVP-Plan.md): off unless all three are set. Webhooks are used here
+      # automatically, since PUBLIC_URL is https.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: CALENDAR_TOKEN_KEY
+        sync: false
       - key: AI_EVALUATION_PROVIDER
         sync: false
       - key: AI_EVALUATION_MODEL
