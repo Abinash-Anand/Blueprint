@@ -4,7 +4,7 @@ import type { Deps } from "../../app.js";
 import { validate } from "../../lib/http.js";
 import { isoDate, slugParam } from "../../lib/schemas.js";
 import { scheduleService } from "./service.js";
-import { describeTime, previewTime, saveTime } from "./yourTime.js";
+import { describeTime, otherSlots, previewTime, saveTime } from "./yourTime.js";
 
 const stageBody = z
   .object({ startDate: isoDate.optional(), endDate: isoDate.optional() })
@@ -42,21 +42,24 @@ const timeBody = z
     pace: z.enum(["LIGHT", "STEADY", "INTENSIVE", "CURRENT"]),
     targetDate: isoDate.nullable().optional(),
     timezone: z.string().min(1).max(64).optional(),
+    studyStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 18:00").nullable().optional(),
   })
   .strict();
 
 export function scheduleRoutes(deps: Deps) {
   const svc = (req: Request) => scheduleService(req.db, () => deps.clock.today());
+  /** The study slots of the learner's other cities, for clashes (docs/Google-Calendar-MVP-Plan.md §9). */
+  const others = (req: Request) => otherSlots(deps.prisma, req.user!.id, req.city!.id);
   const r = Router();
   r.get("/schedule/availability", async (req, res) => {
-    res.json(await describeTime(req.db));
+    res.json(await describeTime(req.db, await others(req)));
   });
   // What a change would do, saving nothing.
   r.post("/schedule/preview", async (req, res) => {
-    res.json(await previewTime(req.db, deps.clock.today(), validate(timeBody, req.body)));
+    res.json(await previewTime(req.db, deps.clock.today(), validate(timeBody, req.body), await others(req)));
   });
   r.put("/schedule/availability", async (req, res) => {
-    res.json(await saveTime(req.db, deps.clock.today(), validate(timeBody, req.body)));
+    res.json(await saveTime(req.db, deps.clock.today(), validate(timeBody, req.body), await others(req)));
   });
 
   // The latest re-plans that moved tasks (docs/Scheduler-Phase2-Plan.md), newest first.

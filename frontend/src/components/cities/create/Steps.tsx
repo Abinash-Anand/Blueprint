@@ -3,6 +3,9 @@
  * and report; saving, AI calls and navigation live in CreateCity.tsx.
  */
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { SlotNote } from "../../time/YourTime";
+import type { SlotReport } from "../../../api/types";
+import { cities } from "../../../api/client";
 import type { CityAttachment, CityProposal, CurriculumVersion, Understanding } from "../../../api/types";
 import { dayMonth, plural } from "../../../lib/format";
 import { CheckRow, DayToggles, DisclosureRow, Group, NumberStepper, Pill, Segmented, Sheet, TextRow } from "../../kit";
@@ -172,6 +175,37 @@ export function UnderstoodStep(p: {
 
 /* ---------------- 3 · How much time do you have? ---------------- */
 
+/**
+ * When study starts each day, checked against the learner's other cities as it changes, so two goals never get the
+ * same hours (docs/Google-Calendar-MVP-Plan.md §9).
+ */
+function StudyFrom({ t, onT }: { t: TimeInput; onT: (t: TimeInput) => void }) {
+  const [slot, setSlot] = useState<SlotReport | null>(null);
+  const asked = useRef(0);
+  useEffect(() => {
+    if (!t.studyStart) {
+      setSlot(null);
+      return;
+    }
+    const n = ++asked.current;
+    const timer = setTimeout(() => {
+      cities.slotCheck({ studyStart: t.studyStart!, hoursPerDay: t.hoursPerDay, weekdays: t.weekdays })
+        .then((r) => n === asked.current && setSlot(r), () => n === asked.current && setSlot(null));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [t.studyStart, t.hoursPerDay, t.weekdays]);
+  return (
+    <div className="cc-block">
+      <label className="yt-field">
+        <span>Study from</span>
+        <input className="inp" type="time" step={900} value={t.studyStart ?? ""} onChange={(e) => onT({ ...t, studyStart: e.target.value || undefined })} />
+      </label>
+      <p className="cc-split-note">When this goal's study starts each day. Your calendar puts its blocks there, and other goals keep their own time.</p>
+      {slot && <SlotNote slot={slot} onUse={(v) => onT({ ...t, studyStart: v })} />}
+    </div>
+  );
+}
+
 export function TimeStep(p: {
   t: TimeInput; onT: (t: TimeInput) => void; plan: TimePlan; paces: Record<Pace, number>; timezone: string; onTimezone: (tz: string) => void;
   edit: (r: EditRequest) => void; error: string | null; busy: boolean; onContinue: () => void;
@@ -190,6 +224,7 @@ export function TimeStep(p: {
         <NumberStepper label="Hours a day" value={p.t.hoursPerDay} min={0.5} max={8} step={0.5} unit={p.t.hoursPerDay === 1 ? "hour a day" : "hours a day"} onChange={(h) => p.onT({ ...p.t, hoursPerDay: h })} />
       </div>
       <div className="cc-block"><DayToggles value={p.t.weekdays} onChange={(w) => p.onT({ ...p.t, weekdays: w })} /></div>
+      <StudyFrom t={p.t} onT={p.onT} />
       <div className="cc-block">
         <Segmented<Pace>
           label="Pace" value={p.t.pace} onChange={(x) => p.onT({ ...p.t, pace: x })}

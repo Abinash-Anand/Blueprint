@@ -612,3 +612,4 @@ aside.side .blist .opt .n{color:#555a5e}
 .gc-order li{display:flex;align-items:center;gap:8px;font-size:14px}
 .gc-order li span{flex:1;min-width:0}
 .gc-order .btn{min-width:40px;min-height:40px;justify-content:center}
+.gc-when{display:block;font-size:12.5px;color:var(--g-muted)}

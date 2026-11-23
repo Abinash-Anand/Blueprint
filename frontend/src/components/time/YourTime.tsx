@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api/client";
-import type { TimeChoice, TimePace, TimePreview, YourTime } from "../../api/types";
+import type { SlotReport, TimeChoice, TimePace, TimePreview, YourTime } from "../../api/types";
 import { dayMonth, hm, plural } from "../../lib/format";
 import { useAppData } from "../../state/AppData";
 import { DayToggles, NumberStepper, Segmented } from "../kit";
@@ -38,6 +38,21 @@ export function shiftText(before: string | null, after: string | null) {
 
 const tomorrow = () => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
 
+const WEEKDAYS = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** Whether this study time clashes with another city, and the next free time (docs/Google-Calendar-MVP-Plan.md §9). */
+export function SlotNote({ slot, onUse }: { slot: SlotReport; onUse: (time: string) => void }) {
+  if (!slot.start) return <p className="yt-line">No study time set: in your calendar, this city follows your other cities from the default start.</p>;
+  if (!slot.clashes.length) return <p className="yt-target ok">Study from {slot.start}: clashes with none of your other cities.</p>;
+  return (
+    <div className="yt-target miss" role="alert">
+      {slot.clashes.map((c) => <p key={c.city} style={{ margin: 0 }}>Clashes with {c.city} ({c.from}–{c.to}) on {c.days.map((d) => WEEKDAYS[d]).join(", ")}.</p>)}
+      {slot.suggest
+        ? <button type="button" className="g-link" onClick={() => onUse(slot.suggest!)}>Use {slot.suggest} instead</button>
+        : <p style={{ margin: 0 }}>No free time left that day: fewer hours, or other study days.</p>}
+    </div>
+  );
+}
+
 export function YourTimePage({ backLabel, onClose }: { backLabel: string; onClose: () => void }) {
   const { mutate } = useAppData();
   const [now, setNow] = useState<YourTime | null>(null);
@@ -51,7 +66,7 @@ export function YourTimePage({ backLabel, onClose }: { backLabel: string; onClos
   useEffect(() => {
     api.yourTime().then((t) => {
       setNow(t);
-      setChoice({ minutesPerDay: t.minutesPerDay, studyDays: t.studyDays, pace: t.pace, targetDate: t.targetDate, timezone: t.timezone });
+      setChoice({ minutesPerDay: t.minutesPerDay, studyDays: t.studyDays, pace: t.pace, targetDate: t.targetDate, timezone: t.timezone, studyStart: t.studyStart });
     }, (e) => setLoadError(errText(e)));
   }, []);
 
@@ -111,6 +126,13 @@ export function YourTimePage({ backLabel, onClose }: { backLabel: string; onClos
                 </div>
                 <div className="yt-fields">
                   <label className="yt-field">
+                    <span>Study from</span>
+                    <span className="yt-inline">
+                      <input className="inp" type="time" step={900} value={choice.studyStart ?? ""} onChange={(e) => set({ studyStart: e.target.value || null })} />
+                      {choice.studyStart && <button type="button" className="g-link" onClick={() => set({ studyStart: null })}>No set time</button>}
+                    </span>
+                  </label>
+                  <label className="yt-field">
                     <span>Finish by</span>
                     <span className="yt-inline">
                       <input className="inp" type="date" min={tomorrow()} value={choice.targetDate ?? ""} onChange={(e) => set({ targetDate: e.target.value || null })} />
@@ -135,6 +157,7 @@ export function YourTimePage({ backLabel, onClose }: { backLabel: string; onClos
                       {p.unchanged ? <span className="yt-note">Your plan as it is.</span>
                         : shift && <span className={`yt-note ${p.finish.before && p.finish.after && p.finish.after > p.finish.before ? "later" : "sooner"}`}>{shift} than now ({p.finish.before ? yearDate(p.finish.before) : "—"})</span>}
                     </div>
+                    <SlotNote slot={p.slot} onUse={(t) => set({ studyStart: t })} />
                     {p.target.date && (
                       <p className={`yt-target ${p.target.meets ? "ok" : "miss"}`}>
                         {p.target.meets ? `On track for ${yearDate(p.target.date)}.`

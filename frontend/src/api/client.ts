@@ -1,4 +1,4 @@
-import type { CalendarStatus,
+import type { SlotReport, CalendarStatus,
   Account, CityAttachment, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template, Understanding,
   AiStatus, CheckpointResult, Curriculum, PlanChange, Progress, TimeChoice, TimePreview, YourTime, RecallHistoryRow, RecallHome, RecallMatrix, RecallReview, RetrievalMethod, RevisionArchive, Session, Stage, Task, TaskKind, TaskStatus, Today, Topic, Week,
 } from "./types";
@@ -201,6 +201,8 @@ export const calendarApi = {
 };
 
 export const cities = {
+  /** Does this study time clash with another of your cities? (docs/Google-Calendar-MVP-Plan.md §9) */
+  slotCheck: (b: { studyStart: string; hoursPerDay: number; weekdays: number[] }) => request<SlotReport>("POST", "/cities/slot-check", b),
   list: () => request<CitySummary[]>("GET", "/cities"),
   get: (id: string) => request<CitySummary>("GET", `/cities/${encodeURIComponent(id)}`),
   create: (b: NewCity) => request<CitySummary>("POST", "/cities", b),

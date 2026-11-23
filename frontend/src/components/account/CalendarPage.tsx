@@ -147,7 +147,7 @@ export function CalendarPage() {
               </label>
               <button type="submit" className="btn" disabled={busy || start === st.startTime || !start}>Save</button>
             </form>
-            <p className="g-foot">Each day starts here: a city's recalls first, then its study block, then the next city. In each city's time zone. A block you moved to another time in Google keeps your time.</p>
+            <p className="g-foot">For cities without a study time of their own (set it on each city's Your time page). Each city's recalls come first, then its study block; cities never overlap. In each city's time zone. A block you moved to another time in Google keeps your time.</p>
             <label className="gc-field">
               Remind me
               <select className="inp" value={st.reminderMinutes} disabled={busy}
@@ -159,12 +159,12 @@ export function CalendarPage() {
 
           {st.cities.length > 1 && (
             <div className="gc-sec">
-              <h3 className="p-h">Order of cities</h3>
+              <h3 className="p-h">Your cities</h3>
               <p className="g-foot">On a day with several cities, their blocks follow each other in this order.</p>
               <ol className="gc-order">
                 {st.cities.map((c, i) => (
                   <li key={c.id}>
-                    <span>{c.name}</span>
+                    <span>{c.name} <small className="gc-when">{c.start ? `from ${c.start}` : `no set time, from ${st.startTime}`}</small></span>
                     <button type="button" className="btn" disabled={busy || i === 0} aria-label={`Move ${c.name} up`} onClick={() => void act(() => calendarApi.setCityOrder(moved(st.cities, i, -1)))}>↑</button>
                     <button type="button" className="btn" disabled={busy || i === st.cities.length - 1} aria-label={`Move ${c.name} down`} onClick={() => void act(() => calendarApi.setCityOrder(moved(st.cities, i, 1)))}>↓</button>
                   </li>

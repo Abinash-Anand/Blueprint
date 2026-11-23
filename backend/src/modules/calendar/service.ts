@@ -49,8 +49,8 @@ export interface CalendarStatus {
   blocks: number;
   /** Minutes before a block that Google reminds you; 0 = none. */
   reminderMinutes: number;
-  /** Your active cities, in the order their blocks follow each other on a day. */
-  cities: { id: string; name: string }[];
+  /** Your active cities in order, with each one's study slot ("09:00"; null = the default start). */
+  cities: { id: string; name: string; start: string | null }[];
 }
 
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -151,7 +151,7 @@ export function calendarService(d: CalendarDeps) {
   /* ---------------- what should be in the calendar ---------------- */
 
   /** One event Blueprint wants: a city's recalls or its study block on a day (docs/Google-Calendar-MVP-Plan.md §8). */
-  interface Want { key: string; cityId: string; day: ISODate; kind: BlockKind; timeZone: string; minutes: number; body: (startMinute: number) => EventBody | null }
+  interface Want { key: string; cityId: string; day: ISODate; kind: BlockKind; timeZone: string; minutes: number; earliest: number; body: (startMinute: number) => EventBody | null }
   const keyOf = (cityId: string, day: ISODate, kind: string) => `${cityId}|${day}|${kind}`;
 
   /** The cities in the learner's order (unlisted ones last, oldest first). */
@@ -164,11 +164,21 @@ export function calendarService(d: CalendarDeps) {
 
   /** Every event for the window, in day order (each city's recalls, then its study block, cities in order). */
   async function wanted(c: GoogleConnection) {
-    const cities = ordered(await prisma.city.findMany({ where: { ownerId: c.userId, status: "ACTIVE" }, include: { settings: { select: { timezone: true } } } }), c.cityOrder);
+    const cities = ordered(await prisma.city.findMany({
+      where: { ownerId: c.userId, status: "ACTIVE" },
+      include: { settings: { select: { timezone: true, studyStartMinute: true } }, weeklyTargets: { select: { weekday: true, availableMinutes: true, targetMinutes: true } } },
+    }), c.cityOrder);
     const want: Want[] = [];
     const windows = new Map<string, { from: ISODate; to: ISODate; timeZone: string }>();
     for (const city of cities) {
       const timeZone = city.settings?.timezone ?? "Europe/Berlin";
+      // The city's own study slot (§9), else the calendar's start; its length is the weekday's study time.
+      const earliest = city.settings?.studyStartMinute ?? c.startMinute;
+      const slotOf = (day: ISODate) => {
+        const wd = new Date(`${day}T00:00:00Z`).getUTCDay() || 7;
+        const t = city.weeklyTargets.find((x) => x.weekday === wd);
+        return t ? t.availableMinutes ?? t.targetMinutes : 0;
+      };
       const from = withTimeZone(timeZone, () => d.clock.today());
       const to = addDays(from, config.windowDays - 1);
       windows.set(city.id, { from, to, timeZone });
@@ -181,9 +191,17 @@ export function calendarService(d: CalendarDeps) {
         },
       });
       const byDay = new Map<ISODate, typeof tasks>();
-      for (const t of tasks) byDay.set(d2i(t.scheduledDate), [...(byDay.get(d2i(t.scheduledDate)) ?? []), t]);
+      for (const t of tasks) {
+        const day = d2i(t.scheduledDate);
+        // Finished ahead of its day (a sub-topic ticked learned closes its later study tasks today): not today's work.
+        if (t.status === "DONE" && d2i(t.originalDate) > day) continue;
+        byDay.set(day, [...(byDay.get(day) ?? []), t]);
+      }
       for (const [day, list] of byDay) {
-        const ctx = { cityId: city.id, cityName: city.name, day, timeZone, appUrl: config.appUrl, reminderMinutes: c.reminderMinutes };
+        const total = list.reduce((s, t) => s + t.estimatedMinutes, 0);
+        const slot = slotOf(day);
+        const over = slot > 0 && total > slot ? { minutes: total - slot, slot } : null;
+        const ctx = { cityId: city.id, cityName: city.name, day, timeZone, appUrl: config.appUrl, reminderMinutes: c.reminderMinutes, over };
         const recalls = list.filter((t) => t.recallStateId !== null);
         const study = list.filter((t) => t.recallStateId === null);
         if (recalls.length) {
@@ -192,7 +210,7 @@ export function calendarService(d: CalendarDeps) {
             done: t.status === "DONE", lastReview: t.recallState?.lastReviewDate ? d2i(t.recallState.lastReviewDate) : null,
             overdueSince: t.status === "TODO" && d2i(t.originalDate) < day ? d2i(t.originalDate) : null,
           }));
-          want.push({ key: keyOf(city.id, day, "RECALL"), cityId: city.id, day, kind: "RECALL", timeZone, minutes: items.reduce((s, x) => s + x.minutes, 0), body: (m) => recallBody({ ...ctx, items }, m) });
+          want.push({ key: keyOf(city.id, day, "RECALL"), cityId: city.id, day, kind: "RECALL", timeZone, earliest, minutes: items.reduce((s, x) => s + x.minutes, 0), body: (m) => recallBody({ ...ctx, over: null, items }, m) });
         }
         if (study.length) {
           // The stage most of the day's work belongs to.
@@ -200,7 +218,7 @@ export function calendarService(d: CalendarDeps) {
           for (const t of study) if (t.stage) stages.set(t.stage.name, (stages.get(t.stage.name) ?? 0) + t.estimatedMinutes);
           const stage = [...stages.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
           const items = study.map((t) => ({ title: t.title, minutes: t.estimatedMinutes, done: t.status === "DONE" }));
-          want.push({ key: keyOf(city.id, day, "STUDY"), cityId: city.id, day, kind: "STUDY", timeZone, minutes: items.reduce((s, x) => s + x.minutes, 0), body: (m) => studyBody({ ...ctx, stage, tasks: items }, m) });
+          want.push({ key: keyOf(city.id, day, "STUDY"), cityId: city.id, day, kind: "STUDY", timeZone, earliest, minutes: items.reduce((s, x) => s + x.minutes, 0), body: (m) => studyBody({ ...ctx, stage, tasks: items }, m) });
         }
       }
     }
@@ -233,7 +251,7 @@ export function calendarService(d: CalendarDeps) {
     const days = [...new Set(want.map((w) => w.day))];
     for (const day of days) {
       const list = want.filter((w) => w.day === day && !rowOf.get(w.key)?.hidden);
-      const at = layoutDay(c.startMinute, list.map((w) => ({ minutes: w.minutes, fixed: rowOf.get(w.key)?.startMinute ?? null })));
+      const at = layoutDay(list.map((w) => ({ minutes: w.minutes, fixed: rowOf.get(w.key)?.startMinute ?? null, earliest: w.earliest })));
       list.forEach((w, i) => starts.set(w.key, at[i]));
     }
 
@@ -317,7 +335,8 @@ export function calendarService(d: CalendarDeps) {
       const local = localStart(remote.start, w.timeZone);
       // Same day: the learner's time wins, Blueprint's title, tasks and length win. Another day: the pull handles it.
       if (local && local.day !== w.day) return;
-      const moved = local?.minute != null && local.minute !== row.placedMinute ? local.minute : null;
+      // Moved only if Blueprint knows where it put it and the time differs (a row from before §8 knows nothing).
+      const moved = local?.minute != null && row.placedMinute !== null && local.minute !== row.placedMinute ? local.minute : null;
       const at2 = moved ?? row.startMinute ?? start;
       const again = w.body(at2)!;
       const ev = await google.patchEvent(at, calendarId, row.googleEventId!, again, remote.etag);
@@ -379,8 +398,12 @@ export function calendarService(d: CalendarDeps) {
       if (!local) continue;
       if (local.day === d2i(row.day)) {
         // Moved to another time: kept from now on. Any other edit: the next push writes Blueprint's version back.
-        const moved = local.minute !== null && local.minute !== row.placedMinute;
-        await prisma.calendarEvent.update({ where: { id: row.id }, data: { etag: ev.etag, contentHash: null, ...(moved ? { startMinute: local.minute, placedMinute: local.minute } : {}) } });
+        // Unknown where Blueprint put it (a row from before §8): taken as Blueprint's own placement, never as a move.
+        const moved = local.minute !== null && row.placedMinute !== null && local.minute !== row.placedMinute;
+        await prisma.calendarEvent.update({
+          where: { id: row.id },
+          data: { etag: ev.etag, contentHash: null, ...(moved ? { startMinute: local.minute, placedMinute: local.minute } : row.placedMinute === null ? { placedMinute: local.minute } : {}) },
+        });
       } else if (await moveDay(userId, row, local.day, local.minute, ev, c, timeZone)) replan.add(row.cityId);
     }
     for (const cityId of replan) {
@@ -467,12 +490,13 @@ export function calendarService(d: CalendarDeps) {
     async status(userId: string): Promise<CalendarStatus> {
       const c = await prisma.googleConnection.findUnique({ where: { userId } });
       const blocks = c ? await prisma.calendarEvent.count({ where: { userId, googleEventId: { not: null } } }) : 0;
-      const cities = c ? ordered(await prisma.city.findMany({ where: { ownerId: userId, status: "ACTIVE" }, select: { id: true, name: true, createdAt: true } }), c.cityOrder) : [];
+      const cities = c ? ordered(await prisma.city.findMany({ where: { ownerId: userId, status: "ACTIVE" }, select: { id: true, name: true, createdAt: true, settings: { select: { studyStartMinute: true } } } }), c.cityOrder) : [];
       return {
         configured: config.enabled, connected: !!c, status: (c?.status as CalendarStatus["status"]) ?? null,
         startTime: hhmm(c?.startMinute ?? 1080), lastSyncedAt: c?.lastSyncedAt?.toISOString() ?? null, lastError: c?.lastError ?? null,
         instant: !!config.webhookUrl, pollMinutes: config.pollMinutes, blocks,
-        reminderMinutes: c?.reminderMinutes ?? 10, cities: cities.map((x) => ({ id: x.id, name: x.name })),
+        reminderMinutes: c?.reminderMinutes ?? 10,
+        cities: cities.map((x) => ({ id: x.id, name: x.name, start: x.settings?.studyStartMinute != null ? hhmm(x.settings.studyStartMinute) : null })),
       };
     },
 
