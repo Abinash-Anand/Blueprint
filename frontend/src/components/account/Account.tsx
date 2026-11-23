@@ -83,6 +83,9 @@ export function AccountSettings() {
       <div className="vhead"><div><div className="kick">Account</div><h2>Settings</h2><div className="sub">Your profile, preferences and privacy.</div></div></div>
       <Profile user={user} onSaved={setUser} />
       <Preferences user={user} onSaved={setUser} />
+      <Section title="Google Calendar">
+        <p className="gc-p">Your study plan as blocks in a separate Blueprint calendar in Google, kept up to date. <a href="#/calendar">Open Google Calendar settings</a></p>
+      </Section>
       <Password />
       <Privacy onDeleted={() => void signOut()} />
     </div></div>

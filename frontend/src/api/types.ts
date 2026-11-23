@@ -287,7 +287,7 @@ export interface TimePreview {
 /** A re-plan that moved tasks (docs/Scheduler-Phase2-Plan.md). */
 export interface PlanChange {
   at: string;
-  reason: "DAILY" | "AVAILABILITY" | "STAGES" | "OVERDUE" | "CURRICULUM";
+  reason: "DAILY" | "AVAILABILITY" | "STAGES" | "OVERDUE" | "CURRICULUM" | "CALENDAR";
   moved: number;
   finishBefore: ISODate | null;
   finishAfter: ISODate | null;
@@ -823,4 +823,19 @@ export interface Forecast {
   neededNewMinutesPerWeek: number | null;
   week: { available: number; newMaterial: number; revision: number };
   revisionLoad: { weekStart: ISODate; recalls: number; minutes: number }[];
+}
+
+/** Google Calendar sync (docs/Google-Calendar-MVP-Plan.md), as the server last saw it. */
+export interface CalendarStatus {
+  configured: boolean;
+  connected: boolean;
+  status: "ACTIVE" | "PAUSED" | "RECONNECT" | null;
+  /** "18:00": when study blocks start. */
+  startTime: string;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  /** Changes in Google arrive at once (webhooks), or within `pollMinutes`. */
+  instant: boolean;
+  pollMinutes: number;
+  blocks: number;
 }

@@ -9,6 +9,7 @@ import { createMailer } from "./modules/auth/mailer.js";
 import { recoverGenerations } from "./modules/ai/curriculum/service.js";
 import { authService } from "./modules/auth/service.js";
 import type { RecallService } from "./modules/recall/service.js";
+import type { CalendarService } from "./modules/calendar/service.js";
 
 const config = loadConfig();
 const prisma = createPrisma();
@@ -25,6 +26,11 @@ void (app.locals.recall as RecallService).planAll()
 void (app.locals.recall as RecallService).resumeWaiting()
   .then((n) => n && console.log(JSON.stringify({ level: "info", msg: "Recall grading resumed", count: n })))
   .catch(startupFailed("resuming grading"));
+
+// Google Calendar sync: the job worker, polling and channel renewal (off unless configured).
+const calendar = app.locals.calendar as CalendarService;
+const stopCalendar = calendar.start();
+void calendar.status("").then((st) => console.log(JSON.stringify({ level: "info", msg: "Google Calendar", configured: st.configured, instant: st.instant })));
 
 // Sessions and one-time tokens that have expired are removed on start (they are rejected anyway when used).
 void authService(prisma, config.auth, { send: async () => {} })
@@ -66,6 +72,7 @@ const server = app.listen(config.port, () => {
 
 const shutdown = async (signal: string) => {
   console.log(JSON.stringify({ level: "info", msg: `Received ${signal}, shutting down` }));
+  stopCalendar();
   server.close(() => void prisma.$disconnect().finally(() => process.exit(0)));
   setTimeout(() => process.exit(1), 10_000).unref();
 };

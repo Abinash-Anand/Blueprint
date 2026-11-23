@@ -52,6 +52,10 @@ services:
       AI_REQUEST_TIMEOUT_MS: ${AI_REQUEST_TIMEOUT_MS:-60000}
       # GWDG Academic Cloud (AI design §10.2): AI_EVALUATION_PROVIDER=gwdg uses these.
       SAIA_API_KEY: ${SAIA_API_KEY:-}
+      # Google Calendar sync (docs/Google-Calendar-MVP-Plan.md): off unless the OAuth client and the token key are set.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      CALENDAR_TOKEN_KEY: ${CALENDAR_TOKEN_KEY:-}
       SAIA_BASE_URL: ${SAIA_BASE_URL:-}
       SAIA_AUDIO_BASE_URL: ${SAIA_AUDIO_BASE_URL:-}
       AI_DISABLE_THINKING: ${AI_DISABLE_THINKING:-}

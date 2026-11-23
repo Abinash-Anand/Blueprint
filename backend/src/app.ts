@@ -18,6 +18,11 @@ import { type Mailer, createMailer } from "./modules/auth/mailer.js";
 import { authRoutes } from "./modules/auth/routes.js";
 import { type RateLimiter, rateLimiter } from "./modules/auth/security.js";
 import { type AuthService, authService } from "./modules/auth/service.js";
+import { calendarRoutes, pushAfterChanges } from "./modules/calendar/routes.js";
+import { type CalendarService, calendarService } from "./modules/calendar/service.js";
+import { type CalendarConfig, type GoogleCalendarApi, googleCalendarApi, loadCalendarConfig } from "./modules/calendar/google.js";
+import { fakeGoogle } from "./modules/calendar/fakeGoogle.js";
+import { parseKey } from "./modules/calendar/crypto.js";
 import { cityRoutes } from "./modules/cities/routes.js";
 import { curriculumRoutes } from "./modules/curriculum/routes.js";
 import { type RecallService, recallService } from "./modules/recall/service.js";
@@ -42,6 +47,8 @@ export interface Deps {
   intake: IntakeService;
   /** Recall: due lists, reviews, checklists and grading (docs/Recall-Plan.md). */
   recall: RecallService;
+  /** Google Calendar sync (docs/Google-Calendar-MVP-Plan.md); off unless configured. */
+  calendar: CalendarService;
 }
 
 export interface AppInput {
@@ -55,6 +62,8 @@ export interface AppInput {
   recallRetryDelaysMs?: readonly number[];
   /** Reverse proxies in front of the API (config.ts trustProxyHops); 1, the bundled Nginx, by default. */
   trustProxy?: number;
+  /** Google Calendar: its settings and the Google client (tests and development: the fake). */
+  calendar?: { config: CalendarConfig; google: GoogleCalendarApi; now?: () => Date };
 }
 
 export function createApp(input: AppInput) {
@@ -75,6 +84,7 @@ export function createApp(input: AppInput) {
     generation: generationService({ prisma: input.prisma, clock: input.clock, ai, usage: aiUsage, auth }),
     intake: intakeService({ prisma: input.prisma, clock: input.clock, ai, usage: aiUsage, auth, limiter }),
     recall: recallService({ prisma: input.prisma, clock: input.clock, ai, usage: aiUsage, auth, retryDelaysMs: input.recallRetryDelaysMs }),
+    calendar: calendarService({ prisma: input.prisma, clock: input.clock, ...(input.calendar ?? defaultCalendar(authConfig.publicUrl)) }),
   };
   const app = express();
   app.disable("x-powered-by");
@@ -99,7 +109,9 @@ export function createApp(input: AppInput) {
   api.get("/presentation", (_req, res) => {
     res.json(presentationCatalog());
   });
+  api.use(pushAfterChanges(deps.calendar));
   api.use(authRoutes(deps));
+  api.use(calendarRoutes(deps.calendar, authConfig.cookieSecure));
   api.use(cityRoutes(deps));
 
   // Everything below works inside one of the signed-in user's cities (X-City-Id), through a city-scoped client.
@@ -120,5 +132,13 @@ export function createApp(input: AppInput) {
   app.use(errorHandler);
   // The server resumes grading that was waiting when it stopped (server.ts).
   app.locals.recall = deps.recall;
+  app.locals.calendar = deps.calendar;
   return app;
+}
+
+/** From the environment: the real Google client when GOOGLE_CLIENT_ID/SECRET are set, the fake with GOOGLE_CALENDAR_FAKE=true. */
+function defaultCalendar(publicUrl: string): { config: CalendarConfig; google: GoogleCalendarApi } {
+  const config = loadCalendarConfig(process.env, publicUrl, parseKey);
+  const google = config.fake || !config.clientId || !config.clientSecret ? fakeGoogle() : googleCalendarApi({ clientId: config.clientId, clientSecret: config.clientSecret });
+  return { config, google };
 }

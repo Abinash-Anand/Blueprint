@@ -1,4 +1,4 @@
-import type {
+import type { CalendarStatus,
   Account, CityAttachment, CityProposal, CitySummary, ConsentState, CurriculumVersion, GenerationAvailability, NewCity, Template, Understanding,
   AiStatus, CheckpointResult, Curriculum, PlanChange, Progress, TimeChoice, TimePreview, YourTime, RecallHistoryRow, RecallHome, RecallMatrix, RecallReview, RetrievalMethod, RevisionArchive, Session, Stage, Task, TaskKind, TaskStatus, Today, Topic, Week,
 } from "./types";
@@ -188,6 +188,14 @@ export const account = {
   /** The export as a file (download), never kept in memory longer than needed. */
   exportUrl: "/api/account/export",
   remove: (password: string) => request<void>("DELETE", "/account", { password, confirm: "DELETE" }),
+};
+
+/** Google Calendar (docs/Google-Calendar-MVP-Plan.md): account-level, not per city. */
+export const calendarApi = {
+  status: () => request<CalendarStatus>("GET", "/calendar"),
+  setStart: (startTime: string) => request<CalendarStatus>("PUT", "/calendar", { startTime }),
+  syncNow: () => request<CalendarStatus>("POST", "/calendar/sync"),
+  disconnect: (removeCalendar: boolean) => request<void>("DELETE", "/calendar", { removeCalendar }),
 };
 
 export const cities = {

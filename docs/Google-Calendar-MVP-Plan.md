@@ -1,6 +1,7 @@
 # Google Calendar sync: MVP plan
 
-Status: plan for review (22 Nov 2026). Nothing is built yet.
+Status: built 23 Nov 2026 with the suggested answers to section 6 (see section 7). Off until the Google Cloud setup in
+section 5 is done.
 
 ## 1. What the MVP does
 
@@ -97,3 +98,31 @@ and verification is required for sensitive scopes if other people use it. For ju
 4. **Deleting a block in Google:** hide it and leave the plan alone (suggested for the MVP), or treat that day as a
    rest day and move its tasks on? The second needs date-specific days off, which Blueprint doesn't have yet.
 5. **Cities:** all your cities on the one Blueprint calendar (suggested), or one Google calendar per city?
+
+## 7. Build results (23 Nov 2026)
+
+Built in one go, with the suggested answers to section 6: one block per city per study day, a separate "Blueprint"
+calendar, 18:00 by default (changeable on the page), a deleted block is hidden, all cities on one calendar.
+
+- **Backend** (`backend/src/modules/calendar/`):
+  - `google.ts`: the Google client (plain fetch, 20 s per call) and the settings;
+  - `fakeGoogle.ts`: an in-memory Google with sync tokens, etags, 410 and 412, used by tests and by the dev API
+    (`GOOGLE_CALENDAR_FAKE=true`);
+  - `crypto.ts`: AES-256-GCM for both tokens;
+  - `blocks.ts`: what a block looks like, worked out in code;
+  - `service.ts`: the job queue (one waiting job per account and kind, `FOR UPDATE SKIP LOCKED`, backoff 30 s → 1 h
+    with jitter, paused after 8 failures), the token refresh under an advisory lock, PUSH, PULL, WATCH and renewal;
+  - `routes.ts`: the page's API, the OAuth start and callback (a one-time `state` in an HttpOnly cookie), the webhook
+    (channel, resource and token must all match), and a hook that queues a push after any successful change.
+- **Migration** `20261201090000_google_calendar`: four new tables, nothing existing changes.
+- **Found and fixed on the way:** the request log wrote every query string, so an OAuth `code` (and the e-mail
+  links' `token`) would have reached the log. Those values are now replaced with "…".
+- **Frontend:** the Calendar page (`#/calendar`), from the account menu and Account settings; a re-plan caused by
+  a moved block shows on Today as "to follow a study block you moved in Google Calendar".
+- **Settings:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `CALENDAR_TOKEN_KEY` in `.env` (Docker passes them on)
+  and in Render (`render.yaml`, `sync: false`). Webhooks switch on by themselves where `PUBLIC_URL` is https.
+- **Tests:** backend 396 (13 end to end on the fake Google, 6 unit), frontend 272 (4 for the page).
+- **Checked in the dev app** with the fake Google: connect → back on the page "Connected", 12 blocks written for
+  Engineering City within seconds, no failed jobs.
+- **Not checked yet, needs your Google Cloud setup:** the real consent screen, the real API answers, and webhooks
+  on Render.

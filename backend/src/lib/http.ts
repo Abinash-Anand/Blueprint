@@ -53,13 +53,23 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   res.status(e.status).json({ error: { code: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) } });
 };
 
+/** Query values that are credentials (OAuth codes and states, one-time tokens) never reach the log. */
+const SECRET_PARAMS = new Set(["code", "state", "token"]);
+export function logPath(url: string) {
+  const i = url.indexOf("?");
+  if (i < 0) return url;
+  const q = new URLSearchParams(url.slice(i + 1));
+  for (const k of [...q.keys()]) if (SECRET_PARAMS.has(k.toLowerCase())) q.set(k, "…");
+  return `${url.slice(0, i)}?${q.toString()}`;
+}
+
 export const requestLog: RequestHandler = (req, res, next) => {
   const t0 = performance.now();
   res.on("finish", () => {
     if (process.env.NODE_ENV === "test") return;
     // Addresses are personal data and are not logged; LOG_CLIENT_IP=true adds them for a short check of TRUST_PROXY.
     const ip = process.env.LOG_CLIENT_IP === "true" ? { ip: req.ip, forwardedFor: req.get("x-forwarded-for") ?? null } : {};
-    console.log(JSON.stringify({ level: "info", method: req.method, path: req.originalUrl, status: res.statusCode, ms: Math.round(performance.now() - t0), ...ip }));
+    console.log(JSON.stringify({ level: "info", method: req.method, path: logPath(req.originalUrl), status: res.statusCode, ms: Math.round(performance.now() - t0), ...ip }));
   });
   next();
 };
