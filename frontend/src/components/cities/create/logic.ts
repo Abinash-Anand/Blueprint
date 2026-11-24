@@ -17,11 +17,22 @@ export const addDaysIso = (iso: string, days: number) => new Date(toDate(iso).ge
 export const daysBetween = (a: string, b: string) => Math.round((toDate(b).getTime() - toDate(a).getTime()) / DAY);
 /** "14 May 2027" */
 export const longDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-export const addMonthsIso = (iso: string, months: number) => {
-  const d = toDate(iso);
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
-};
+const isoWeekday = (iso: string) => toDate(iso).getUTCDay() || 7;
+/** The date of the `n`th study day from `start` (start itself counts when it is a study day). */
+export function nthStudyDay(start: string, n: number, weekdays: number[]) {
+  let d = start, count = 0;
+  if (!weekdays.length) return start;
+  for (;;) {
+    if (weekdays.includes(isoWeekday(d)) && ++count >= n) return d;
+    d = addDaysIso(d, 1);
+  }
+}
+/** Study days from `start` to `end`, both included. */
+export function studyDaysBetween(start: string, end: string, weekdays: number[]) {
+  let n = 0;
+  for (let d = start; d <= end; d = addDaysIso(d, 1)) if (weekdays.includes(isoWeekday(d))) n++;
+  return n;
+}
 
 export interface TimeInput {
   hoursPerDay: number;
@@ -33,6 +44,8 @@ export interface TimeInput {
   studyStart?: string;
   /** The understood estimate of hours the goal needs. */
   estimatedHours?: number;
+  /** Districts the city will have (the subjects kept): each is one stage with its own buffer. */
+  districts?: number;
 }
 
 export interface TimePlan {
@@ -49,19 +62,50 @@ export interface TimePlan {
   tooLong: boolean;
 }
 
+/**
+ * New material per study day, exactly as the generator's calendar has it (generator.ts buildCalendar): the pace's share
+ * of the hours a day, in 30-minute steps, at least 30 minutes and at most 4 hours.
+ */
+export const newMinutesPerDay = (hoursPerDay: number, share: number) => Math.max(30, Math.min(240, Math.round((hoursPerDay * 60 * share) / 30) * 30));
+
+/**
+ * Study days a plan of `hours` takes, with the generator's stage buffer: one stage per district, each long enough for
+ * its hours plus 15 % buffer days and one more (Math.ceil(days × 1.15) per stage). The hours are taken as shared evenly.
+ */
+export function studyDaysFor(hours: number, minutesPerDay: number, districts = 1) {
+  const n = Math.max(1, districts);
+  const per = Math.ceil((hours * 60) / n / minutesPerDay);
+  return n * (per + Math.ceil(per * 0.15) + 1);
+}
+
+/**
+ * What the time screen promises, worked out as the generator's calendar will be (so a schedule confirmed here doesn't
+ * end "after your date" on the review): the finish date with the stage buffer, and with a finish-by date the hours that
+ * fit before it and whether the goal does.
+ */
 export function timePlan(t: TimeInput, paces: Record<Pace, number> = DEFAULT_PACES): TimePlan {
   const weeklyHours = Math.round(t.hoursPerDay * t.weekdays.length * 10) / 10;
-  const newHoursPerWeek = weeklyHours * (paces[t.pace] ?? DEFAULT_PACES.STEADY);
+  const share = paces[t.pace] ?? DEFAULT_PACES.STEADY;
+  const newHoursPerWeek = weeklyHours * share;
   const est = t.estimatedHours && t.estimatedHours > 0 ? t.estimatedHours : null;
+  const perDay = newMinutesPerDay(t.hoursPerDay, share);
+  const districts = Math.max(1, t.districts ?? 1);
+  const finishFor = (hours: number) => {
+    const days = studyDaysFor(hours, perDay, districts);
+    return { days, finish: nthStudyDay(t.startDate, days, t.weekdays) };
+  };
+  if (!t.weekdays.length) return { weeklyHours, newHoursPerWeek, finish: null, fitHours: null, short: false, tooLong: false };
   if (t.targetDate) {
-    const weeks = Math.max(0, daysBetween(t.startDate, t.targetDate)) / 7;
-    const fitHours = Math.round(weeks * newHoursPerWeek);
-    return { weeklyHours, newHoursPerWeek, finish: null, fitHours, short: est !== null && fitHours < est * 0.9, tooLong: false };
+    // The study days before the date, less each stage's buffer, at the new material a day.
+    const studyDays = studyDaysBetween(t.startDate, t.targetDate, t.weekdays);
+    const fitHours = Math.max(0, Math.floor((((studyDays - districts) / 1.15) * perDay) / 60));
+    const short = est !== null && finishFor(est).finish > t.targetDate;
+    return { weeklyHours, newHoursPerWeek, finish: null, fitHours, short, tooLong: false };
   }
   if (!est || newHoursPerWeek <= 0) return { weeklyHours, newHoursPerWeek, finish: null, fitHours: null, short: false, tooLong: false };
-  const days = Math.ceil(est / newHoursPerWeek) * 7;
-  const tooLong = days > MAX_JOURNEY_DAYS;
-  return { weeklyHours, newHoursPerWeek, finish: addDaysIso(t.startDate, Math.min(days, MAX_JOURNEY_DAYS)), fitHours: null, short: tooLong, tooLong };
+  const { finish } = finishFor(est);
+  const tooLong = daysBetween(t.startDate, finish) > MAX_JOURNEY_DAYS;
+  return { weeklyHours, newHoursPerWeek, finish: tooLong ? addDaysIso(t.startDate, MAX_JOURNEY_DAYS) : finish, fitHours: null, short: tooLong, tooLong };
 }
 
 /* ---------------- plan files ---------------- */
@@ -95,17 +139,14 @@ export function resumeStep(r: { understood?: Understanding } | null, c: CityCons
   return "goal";
 }
 
-/** A short name from the learner's own words, until the AI suggests one. */
-export const provisionalName = (brief: string) => {
-  const words = brief.replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ");
-  return words.length > 2 ? words.slice(0, 60) : "New city";
-};
+/** A new city's name until "Here's what I understood" gives it one (never words cut from the learner's text). */
+export const UNTITLED = "Untitled draft";
 
 /* ---------------- "Here's what I understood" ---------------- */
 
 const UNDERSTANDING_KEYS = [
   "name", "category", "goal", "currentLevel", "targetLevel", "subjects", "alreadyKnown", "resources", "focusOptions",
-  "questions", "plan", "planMonths", "estimatedHours",
+  "questions", "plan", "planDays", "estimatedHours",
 ] as const;
 /**
  * Only the summary's own fields. The AI step's reply carries more (prompt version, model, provider), and the draft's

@@ -57,6 +57,37 @@ const EXAMPLES: [string, string][] = [
   ["A new career", "I want to move into full-stack development with Java and Angular. I know basic Java and HTML."],
 ];
 
+/** Shorter than this, the server reads it as "no text found" (intake.ts ATTACHMENTS.minChars). */
+const PASTE_MIN = 40;
+
+/**
+ * "Paste syllabus or timestamps": a YouTube chapter list, a course syllabus or documentation headings, pasted as they
+ * are. Saved as a plain-text plan file through the same upload as a file (so the same 3-file limit), no PDF needed.
+ */
+function PastePlan({ files, busy, onAdd }: { files: CityAttachment[]; busy: boolean; onAdd: (f: File) => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const pasted = files.filter((f) => f.name.startsWith("Pasted plan")).length;
+  const add = () => {
+    onAdd(new File([text], pasted ? `Pasted plan ${pasted + 1}.txt` : "Pasted plan.txt", { type: "text/plain" }));
+    setText("");
+    setOpen(false);
+  };
+  if (!open) return <DisclosureRow icon={<span>＋</span>} label="Paste syllabus or timestamps" value="Text" onClick={() => setOpen(true)} />;
+  return (
+    <div className="kit-row cc-paste">
+      <label className="kit-row-label" htmlFor="cc-paste">Paste syllabus or timestamps</label>
+      <textarea id="cc-paste" className="inp" rows={8} maxLength={150_000} value={text} onChange={(e) => setText(e.target.value)}
+        placeholder={"00:00:00 | Introduction\n00:27:14 | let, const and var\n01:14:46 | Closures\n…"} />
+      <small className="cc-split-note">YouTube chapters, a course syllabus or documentation headings, as they are. Kept as a plan file; timestamps set how long each part is planned.</small>
+      <div className="cc-paste-acts">
+        <button type="button" className="btn" disabled={busy || text.trim().length < PASTE_MIN} onClick={add}>{busy ? "Reading…" : "Add as plan"}</button>
+        <button type="button" className="kit-link quiet" onClick={() => { setOpen(false); setText(""); }}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 export function GoalStep(p: {
   brief: string; onBrief: (v: string) => void;
   files: CityAttachment[]; onAddFiles: (fs: File[]) => void; onRemoveFile: (id: number) => void; uploading: boolean;
@@ -87,7 +118,7 @@ export function GoalStep(p: {
       <div className="cc-pills" aria-label="Examples">
         {EXAMPLES.map(([label, text]) => <Pill key={label} pressed={p.brief === text} onClick={() => { p.onBrief(text); setInvalid(false); }}>{label}</Pill>)}
       </div>
-      <Group caption="Your own plan (optional)" footer="PDF or text, up to 3 files. Blueprint follows its order and milestones. Only the text is kept, never the file.">
+      <Group caption="Your own plan (optional)" footer="PDF or text, or paste it, up to 3 in all. Blueprint follows its order and milestones. Only the text is kept, never the file.">
         {p.files.map((f) => (
           <div key={f.id} className="kit-row cc-file">
             <span className="kit-row-label">{f.name}<small className={f.hasText ? "" : "cc-warn"}>{fileSummary(f)}</small></span>
@@ -97,6 +128,7 @@ export function GoalStep(p: {
         {p.files.length < 3 && (
           <DisclosureRow icon={<span>＋</span>} label={p.uploading ? "Reading the file…" : p.files.length ? "Add another file" : "Add your plan"} value="PDF or text" onClick={() => input.current?.click()} />
         )}
+        {p.files.length < 3 && <PastePlan files={p.files} busy={p.uploading} onAdd={(f) => p.onAddFiles([f])} />}
       </Group>
       <input ref={input} type="file" className="sr" tabIndex={-1} aria-hidden="true" multiple accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
         onChange={(e) => { const fs = [...(e.target.files ?? [])]; e.target.value = ""; if (fs.length) p.onAddFiles(fs); }} />

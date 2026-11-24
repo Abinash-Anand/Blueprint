@@ -77,7 +77,7 @@ if (understood) {
   const u = understood;
   console.log(`\n  Name: ${u.name}   Category: ${u.category}\n  Goal: ${u.goal}\n  Level: ${u.currentLevel} → ${u.targetLevel}   Estimate: ${u.estimatedHours} h`);
   console.log(`  Districts: ${u.subjects.join(" · ")}\n  Already knows: ${u.alreadyKnown.join(", ") || "—"}\n  Resources: ${u.resources.join(", ") || "—"}`);
-  console.log(`  Focus options: ${u.focusOptions.join(" / ")}\n  Plan: ${u.plan ?? "—"}${u.planMonths ? ` (${u.planMonths} months)` : ""}`);
+  console.log(`  Focus options: ${u.focusOptions.join(" / ")}\n  Plan: ${u.plan ?? "—"}${u.planDays ? ` (${u.planDays} days)` : ""}`);
   for (const q of u.questions) console.log(`  Question: ${q.question}  [${q.options.join(" | ")}]`);
 }
 
@@ -91,7 +91,7 @@ if (generate && understood && providers.generation) {
     // As the wizard does: the plan's own time span pre-fills "Finish by".
     constraints: {
       hoursPerDay: 1, weekdays: [1, 2, 3, 4, 5], pace: "STEADY", startDate: "2026-11-23", timezone: "Europe/Berlin",
-      ...(understood.planMonths ? { targetDate: new Date(Date.UTC(2026, 10 + understood.planMonths, 23)).toISOString().slice(0, 10) } : {}),
+      ...(understood.planDays ? { targetDate: new Date(Date.UTC(2026, 10, 23 + understood.planDays)).toISOString().slice(0, 10) } : {}),
     },
     plan: plan || undefined, language: "en", today: new Date().toISOString().slice(0, 10),
   };

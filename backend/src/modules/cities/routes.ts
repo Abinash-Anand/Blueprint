@@ -32,6 +32,9 @@ const understood = z.object({
   focusOptions: z.array(str(60).min(1)).max(4).optional(),
   questions: z.array(z.object({ question: str(200), options: z.array(str(80)).max(4) }).strict()).max(2).optional(),
   plan: str(200).nullable().optional(),
+  /** The plan's calendar timeline in days (city-intake-v3); null when it states none. */
+  planDays: z.number().int().min(1).max(1100).nullable().optional(),
+  /** From drafts read before city-intake-v3. */
   planMonths: z.number().int().min(1).max(36).nullable().optional(),
   estimatedHours: z.number().int().min(1).max(5000).optional(),
 }).strict();
@@ -64,7 +67,8 @@ const constraints = z.object({
 }).strict().refine((c) => !c.startDate || !c.targetDate || c.startDate <= c.targetDate, { message: "The target date is before the start date", path: ["targetDate"] });
 
 const createBody = z.object({
-  name: str(80).min(1), description: str(1000).optional(), goal: str(500).optional(), category: str(60).nullable().optional(),
+  /** Optional: a new draft is "Untitled draft" until "Here's what I understood" names it. */
+  name: str(80).min(1).optional(), description: str(1000).optional(), goal: str(500).optional(), category: str(60).nullable().optional(),
   requirements: requirements.nullable().optional(), constraints: constraints.nullable().optional(),
 }).strict();
 const updateBody = createBody.partial().strict().refine((b) => Object.keys(b).length > 0, { message: "Provide at least one field" });
