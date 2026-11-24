@@ -23,9 +23,12 @@ export const ATTACHMENTS = {
   maxFiles: 3,
   maxBytes: 5 * 1024 * 1024,
   /** Text kept per file. */
-  maxChars: 100_000,
-  /** Plan text sent to the AI in total, across all files. */
-  promptChars: 40_000,
+  maxChars: 150_000,
+  /**
+   * Plan text sent to the AI in total, across all files. The models in use read far more (256K+ tokens): this only
+   * keeps one request within reason, so a whole syllabus reaches every call (the outline and each district alike).
+   */
+  promptChars: 150_000,
   /** Fewer characters than this: treated as "no text found" (a scanned PDF). */
   minChars: 40,
 } as const;
@@ -90,6 +93,110 @@ export function planText(files: { name: string; text: string }[]) {
   return out;
 }
 
+/* ---------------- timestamps in a plan (video chapters) ---------------- */
+
+/** One chapter of a video course: when it starts and ends (seconds), its title and the section it belongs to. */
+export interface Chapter { stamp: string; start: number; end: number; seconds: number; title: string; section: string | null }
+/** A section's (or subject's) runtime and its share of the whole video. */
+export interface Section { name: string; seconds: number; share: number; chapters: number }
+export interface RuntimeAnalysis {
+  chapters: Chapter[];
+  sections: Section[];
+  totalSeconds: number;
+  /** Where the last chapter's end came from: the stated video length, or the median chapter length. */
+  endFrom: "stated" | "median";
+}
+
+const STAMP = String.raw`(\d{1,2}:[0-5]\d(?::[0-5]\d)?)`;
+const LEADING = new RegExp(String.raw`^\s*[-*•]?\s*[\[(]?${STAMP}[\])]?\s*(?:[|:\-–—.)\]]\s*)?(.+?)\s*$`);
+const TRAILING = new RegExp(String.raw`^\s*[-*•]?\s*(.+?)\s*[-–—|:(\[]*\s*[\[(]?${STAMP}[\])]?\s*$`);
+const LENGTH_WORDS = /\b(video length|total length|course length|duration|runtime|run time|length)\b/i;
+const NOT_A_HEADING = /^(time ?stamps?|chapters?|contents?|table of contents|course contents?|outline|syllabus|agenda)\s*:?$/i;
+
+/** "01:14:46" or "27:14" in seconds. */
+export function stampSeconds(stamp: string) {
+  const p = stamp.split(":").map(Number);
+  return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+}
+
+/** A stated total length: "Video length: 8 hours, 23 minutes, 35 seconds", "Duration: 08:23:35", "Length: 8h 23m". */
+export function statedLength(text: string): number | null {
+  for (const line of text.split(/\r?\n/)) {
+    if (!LENGTH_WORDS.test(line)) continue;
+    const clock = new RegExp(String.raw`${LENGTH_WORDS.source}\s*[:\-–=]?\s*${STAMP}`, "i").exec(line);
+    if (clock) return stampSeconds(clock[2]);
+    const h = /(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)\b/i.exec(line);
+    const m = /(\d+)\s*(?:m|mins?|minutes?)\b/i.exec(line);
+    const s = /(\d+)\s*(?:s|secs?|seconds?)\b/i.exec(line);
+    if (h || m) return Math.round((h ? Number(h[1]) * 3600 : 0) + (m ? Number(m[1]) * 60 : 0) + (s ? Number(s[1]) : 0));
+  }
+  return null;
+}
+
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+};
+const cleanHeading = (line: string) => line.replace(/^\s*(?:#+|[-*•]+|\d+[.)])\s*/, "").replace(/[*_`]/g, "").replace(/\s*:\s*$/, "").trim();
+
+/**
+ * The chapters of a video course found in a plan's text, in order, each with its exact runtime (the next chapter's
+ * start minus its own), grouped under the section headings between them when there are any, with each section's share
+ * of the whole runtime. The last chapter ends at the stated video length when the text gives one, otherwise after the
+ * median length of the chapters before it. Null when the text has fewer than three chapters in order.
+ */
+export function parseTimestamps(text: string): RuntimeAnalysis | null {
+  const lines = text.split(/\r?\n/);
+  const found: { stamp: string; start: number; title: string; section: string | null }[] = [];
+  let heading: string | null = null;
+  let headingsSeen = false;
+  let pending: string | null = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^---\s.*\s---$/.test(line)) { pending = null; continue; } // a file separator from planText
+    const lead = LEADING.exec(line);
+    const trail = lead ? null : TRAILING.exec(line);
+    const m = lead ? { stamp: lead[1], title: lead[2] } : trail ? { stamp: trail[2], title: trail[1] } : null;
+    if (m && !LENGTH_WORDS.test(line) && m.title.replace(/[^\p{L}\p{N}]/gu, "").length > 0) {
+      if (pending !== null) {
+        heading = pending;
+        headingsSeen = true;
+        pending = null;
+      }
+      const start = stampSeconds(m.stamp);
+      if (found.length && start <= found[found.length - 1].start) continue; // out of order: not part of the chapter list
+      found.push({ stamp: m.stamp, start, title: m.title.replace(/^[|:\-–—.)\]\s]+|[|:\-–—(\[\s]+$/g, "").trim(), section: heading });
+      continue;
+    }
+    // A short line that isn't a chapter may be the heading of the chapters that follow it.
+    const h = cleanHeading(line);
+    pending = h && h.length <= 100 && !LENGTH_WORDS.test(line) && !NOT_A_HEADING.test(h) ? h : null;
+  }
+  if (found.length < 3) return null;
+  const lengths = found.slice(1).map((c, i) => c.start - found[i].start);
+  const stated = statedLength(text);
+  const last = found[found.length - 1];
+  const endFrom: RuntimeAnalysis["endFrom"] = stated !== null && stated > last.start ? "stated" : "median";
+  const end = endFrom === "stated" ? stated! : last.start + Math.max(1, Math.round(median(lengths)));
+  const chapters: Chapter[] = found.map((c, i) => {
+    const e = i + 1 < found.length ? found[i + 1].start : end;
+    return { ...c, end: e, seconds: e - c.start, section: headingsSeen ? c.section ?? "Introduction" : null };
+  });
+  const totalSeconds = end - found[0].start;
+  const groups = new Map<string, Section>();
+  for (const c of chapters) {
+    const name = c.section ?? c.title;
+    const g = groups.get(name) ?? { name, seconds: 0, share: 0, chapters: 0 };
+    g.seconds += c.seconds;
+    g.chapters++;
+    groups.set(name, g);
+  }
+  const sections = [...groups.values()].map((g) => ({ ...g, share: g.seconds / totalSeconds }));
+  return { chapters, sections, totalSeconds, endFrom };
+}
+
 /* ---------------- "Here's what I understood" ---------------- */
 
 const s = (max: number) => z.string().min(1).max(max);
@@ -105,13 +212,13 @@ export const Understanding = z.object({
   focusOptions: z.array(s(30)).min(2).max(3),
   questions: z.array(z.object({ question: s(160), options: z.array(s(60)).min(2).max(4) })).max(2),
   plan: z.string().max(160).nullable(),
-  planMonths: z.number().int().min(1).max(36).nullable(),
+  planDays: z.number().int().min(1).max(1100).nullable(),
   estimatedHours: z.number().int().min(10).max(1500),
 });
 export type Understanding = z.infer<typeof Understanding>;
 export const understandingJsonSchema = () => z.toJSONSchema(Understanding) as Record<string, unknown>;
 
-export const UNDERSTAND_PROMPT_VERSION = "city-intake-v2";
+export const UNDERSTAND_PROMPT_VERSION = "city-intake-v3";
 
 const SYSTEM = `You help people set up a learning environment in Blueprint, a planning app. They describe in their own words
 what they want to learn (inside <goal>) and may add their own plan (inside <plan>). Turn this into a short summary they
@@ -129,7 +236,9 @@ Rules:
 - questions: at most 2, only for missing information that would change the curriculum a lot; each with 2 to 4 short answers.
   Never ask about time, hours, schedule, pace or deadlines: the next screen asks the learner for those.
 - plan: one short sentence describing their plan (e.g. "12 months in 4 phases"), or null if there is no plan.
-- planMonths: how many months their plan or goal says it should take (e.g. 12), or null if they do not say.
+- planDays: how many calendar days their plan or goal says it should take, only when it states a calendar timeline
+  (e.g. "a 6-week bootcamp" = 42, "in 3 months" = 90). Return null when it only states how long the material itself
+  runs (e.g. "an 8.5-hour video course"), or when it says nothing about time.
 - estimatedHours: realistic total hours of focused study, including practice, to go from currentLevel to targetLevel.
 - Reply with one JSON object matching the schema, nothing else.`;
 
@@ -311,6 +420,8 @@ export function intakeService(d: IntakeDeps) {
       await d.prisma.city.update({
         where: { id: cityId },
         data: {
+          // The draft is "Untitled draft" until now: its name becomes the AI's short title (the learner may still edit it).
+          name: result.name.trim().slice(0, 80),
           requirements: { ...req, understood: result } as Prisma.InputJsonValue,
           ...(city.category ? {} : { category: result.category }),
         },

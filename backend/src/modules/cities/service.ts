@@ -13,8 +13,11 @@ import { TEMPLATES, type TemplateId, applyCurriculum } from "./apply.js";
 import { updatePlanForCurriculum } from "./planUpdate.js";
 import { CURRICULUM_CONTRACT_VERSION, type CurriculumDocument, diffCurriculum, shiftDocument, validateCurriculum } from "./contract.js";
 
+/** A new city's name until "Here's what I understood" gives it one (never words cut from the learner's text). */
+export const UNTITLED = "Untitled draft";
+
 export interface CityInput {
-  name: string;
+  name?: string;
   description?: string;
   goal?: string;
   category?: string | null;
@@ -100,7 +103,7 @@ export function cityService(prisma: PrismaClient, clock: Clock, userId: string) 
       const id = `c${randomBytes(6).toString("hex")}`; // opaque, not guessable from another user's ids
       const c = await prisma.city.create({
         data: {
-          id, idPrefix: `${id}.`, ownerId: userId, name: b.name.trim(), description: b.description?.trim() ?? "", goal: b.goal?.trim() ?? "",
+          id, idPrefix: `${id}.`, ownerId: userId, name: b.name?.trim() || UNTITLED, description: b.description?.trim() ?? "", goal: b.goal?.trim() ?? "",
           category: b.category?.trim() || null, status: "DRAFT",
           requirements: (b.requirements ?? undefined) as Prisma.InputJsonValue | undefined,
           constraints: (b.constraints ?? undefined) as Prisma.InputJsonValue | undefined,

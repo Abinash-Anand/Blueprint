@@ -555,7 +555,8 @@ export interface Understanding {
   focusOptions?: string[];
   questions?: { question: string; options: string[] }[];
   plan?: string | null;
-  planMonths?: number | null;
+  /** The plan's calendar timeline in days ("a 6-week bootcamp" = 42); null when it only states a video's runtime. */
+  planDays?: number | null;
   estimatedHours?: number;
 }
 /** A learner's own plan file: only its extracted text is kept on the server; this is what the browser sees of it. */
@@ -608,7 +609,8 @@ export interface CitySummary {
 }
 
 export interface NewCity {
-  name: string;
+  /** Optional: a new draft is "Untitled draft" until "Here's what I understood" names it. */
+  name?: string;
   description?: string;
   goal?: string;
   category?: string | null;

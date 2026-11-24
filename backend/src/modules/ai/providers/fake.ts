@@ -128,7 +128,7 @@ function fakeUnderstand(i: EvaluateInput) {
       focusOptions: ["Everyday use", "Exam"],
       questions: [{ question: "What matters most to you?", options: ["Speaking", "Exam", "Both"] }],
       plan: phases.length ? `${phases.length} phases` : null,
-      planMonths: phases.length ? phases.length * 3 : null,
+      planDays: phases.length ? phases.length * 90 : null,
       estimatedHours: 120,
     },
     usage: { inputTokens: Math.ceil(i.user.length / 4), outputTokens: 150 },

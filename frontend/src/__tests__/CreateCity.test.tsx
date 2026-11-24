@@ -37,7 +37,7 @@ vi.mock("../api/client", async (orig) => {
       removeAttachment: vi.fn(async () => undefined),
       understand: vi.fn(async (id: string) => {
         log("understand", id);
-        return { name: "German C1", category: "Language", goal: "Work in German", currentLevel: "A2", targetLevel: "C1", subjects: ["Grammar", "Listening", "Speaking"], alreadyKnown: [], resources: ["Podcasts"], focusOptions: ["Everyday", "Exam"], questions: [{ question: "Which exam?", options: ["Goethe", "telc"] }], plan: "12 months in 4 phases", planMonths: 12, estimatedHours: 300, promptVersion: "v1", model: "gemma", provider: "gwdg" };
+        return { name: "German C1", category: "Language", goal: "Work in German", currentLevel: "A2", targetLevel: "C1", subjects: ["Grammar", "Listening", "Speaking"], alreadyKnown: [], resources: ["Podcasts"], focusOptions: ["Everyday", "Exam"], questions: [{ question: "Which exam?", options: ["Goethe", "telc"] }], plan: "12 months in 4 phases", planDays: 365, estimatedHours: 300, promptVersion: "v1", model: "gemma", provider: "gwdg" };
       }),
       versions: vi.fn(async () => []),
       generate: vi.fn(async (id: string) => { log("generate", id); return { version: 1, status: "GENERATING" }; }),
@@ -105,7 +105,7 @@ describe("creating a city", () => {
     click("Save");
     click("Looks right");
 
-    // 3 · time: the plan's 12 months became the finish-by date
+    // 3 · time: the plan's 365 days became the finish-by date
     await screen.findByRole("heading", { name: "How much time do you have?" });
     const saved = last("update")![2] as { name: string; goal: string; requirements: Record<string, unknown> };
     expect(saved.name).toBe("My German");

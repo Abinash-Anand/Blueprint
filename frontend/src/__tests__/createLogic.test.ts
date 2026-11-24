@@ -1,20 +1,35 @@
 /** City creation without UI: the time promise, files, resuming. */
 import { describe, expect, it } from "vitest";
-import { addMonthsIso, fileSummary, fileType, onlyUnderstanding, provisionalName, resumeStep, timePlan } from "../components/cities/create/logic";
+import { UNTITLED, fileSummary, fileType, newMinutesPerDay, onlyUnderstanding, resumeStep, studyDaysFor, timePlan } from "../components/cities/create/logic";
 
 describe("time plan (matches the backend generator)", () => {
   const base = { hoursPerDay: 1, weekdays: [1, 2, 3, 4, 5], pace: "STEADY" as const, startDate: "2026-11-23" };
 
-  it("finishes the estimated hours at the pace's share of the weekly time", () => {
+  it("finishes the estimated hours as the generator's calendar does: new material a day, plus the 15 % stage buffer", () => {
     const p = timePlan({ ...base, estimatedHours: 150 });
     expect(p.weeklyHours).toBe(5);
     expect(p.newHoursPerWeek).toBe(3.75);
-    expect(p.finish).toBe("2027-08-30"); // 150 / 3.75 = 40 weeks
+    // 1 h at 75 % = 45 min, in 30-minute steps = 60 min a day; 150 days + 23 buffer + 1 = 174 study days.
+    expect(newMinutesPerDay(1, 0.75)).toBe(60);
+    expect(studyDaysFor(150, 60)).toBe(174);
+    expect(p.finish).toBe("2027-07-22");
     expect(p.short).toBe(false);
   });
 
+  it("gives every district its own stage buffer, as the generator does", () => {
+    // 24 h at 3.5 h of new material a day: one stage of 7 days + 2 + 1, or seven stages of 1 + 1 + 1.
+    expect(newMinutesPerDay(4, 0.9)).toBe(210);
+    expect(studyDaysFor(24, 210, 1)).toBe(10);
+    expect(studyDaysFor(24, 210, 7)).toBe(21);
+    const week = { hoursPerDay: 4, weekdays: [1, 2, 3, 4, 5, 6], pace: "INTENSIVE" as const, startDate: "2026-11-23", estimatedHours: 24, districts: 7 };
+    expect(timePlan(week).finish).toBe("2026-12-16");
+    // A week to 30 Nov can't hold seven stages: the screen says so before the city is built.
+    expect(timePlan({ ...week, targetDate: "2026-11-30" }).short).toBe(true);
+    expect(timePlan({ ...week, targetDate: "2026-12-16" }).short).toBe(false);
+  });
+
   it("a faster pace finishes sooner, a slower one later", () => {
-    const at = (pace: "LIGHT" | "STEADY" | "INTENSIVE") => timePlan({ ...base, pace, estimatedHours: 150 }).finish!;
+    const at = (pace: "LIGHT" | "STEADY" | "INTENSIVE") => timePlan({ ...base, hoursPerDay: 2, pace, estimatedHours: 150 }).finish!;
     expect(at("INTENSIVE") < at("STEADY")).toBe(true);
     expect(at("STEADY") < at("LIGHT")).toBe(true);
   });
@@ -22,7 +37,7 @@ describe("time plan (matches the backend generator)", () => {
   it("with a finish-by date: says how many hours fit, and when the goal needs more", () => {
     const p = timePlan({ ...base, targetDate: "2027-11-23", estimatedHours: 800 });
     expect(p.finish).toBeNull();
-    expect(p.fitHours).toBe(196); // 52.1 weeks × 3.75 h
+    expect(p.fitHours).toBe(226); // (262 study days − 1 stage day) ÷ 1.15 × 1 h
     expect(p.short).toBe(true);
     expect(timePlan({ ...base, targetDate: "2027-11-23", estimatedHours: 150 }).short).toBe(false);
   });
@@ -65,10 +80,8 @@ describe("resuming a draft", () => {
     expect(resumeStep(null, null, [{ status: "FAILED" }])).toBe("goal");
   });
 
-  it("names a city from the learner's words until the AI suggests a name", () => {
-    expect(provisionalName("  I want to reach German C1 so I can work  ")).toBe("I want to reach");
-    expect(provisionalName("")).toBe("New city");
-    expect(addMonthsIso("2026-11-23", 12)).toBe("2027-11-23");
+  it("calls a new draft Untitled until step 2 names it, never words cut from the goal", () => {
+    expect(UNTITLED).toBe("Untitled draft");
   });
 });
 

@@ -15,7 +15,7 @@ import type { CityAttachment, CityConstraints, CityProposal, CityRequirements, C
 import { useSession } from "../../../state/Session";
 import { FlowHeader, Sheet } from "../../kit";
 import { LoadingState } from "../../Status";
-import { DEFAULT_PACES, FILE_LIMITS, type Pace, type StepId, type TimeInput, addMonthsIso, fileType, longDate, onlyUnderstanding, provisionalName, resumeStep, timePlan } from "./logic";
+import { DEFAULT_PACES, FILE_LIMITS, type Pace, type StepId, type TimeInput, UNTITLED, addDaysIso, fileType, longDate, onlyUnderstanding, resumeStep, timePlan } from "./logic";
 import { CityPreview, type PreviewDistrict, fromDocument } from "./CityPreview";
 import { BuildStep, EditSheet, type EditRequest, GoalStep, type Subject, TimeStep, UnderstoodStep } from "./Steps";
 import { useGeneration } from "./useGeneration";
@@ -95,7 +95,8 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
   /** The draft city, created on first need (first save, first file, first recording). */
   const ensureDraft = useCallback(async () => {
     if (idRef.current) return idRef.current;
-    const c = await api.create({ name: provisionalName(brief) });
+    // "Untitled draft" until step 2 names it: words cut from the goal look broken (multi-line goals, timestamps).
+    const c = await api.create({});
     idRef.current = c.id;
     setId(c.id);
     history.replaceState(null, "", `#/cities/new/${c.id}`);
@@ -172,7 +173,8 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
       setAnswers({});
       setReadFrom(fingerprint);
       setManual(null);
-      if (r.planMonths && !targetTouched) setTime((t) => ({ ...t, targetDate: addMonthsIso(t.startDate, r.planMonths!) }));
+      // Only a stated calendar timeline pre-fills "Finish by" (a video's runtime is not one: planDays is null then).
+      if (r.planDays && !targetTouched) setTime((t) => ({ ...t, targetDate: addDaysIso(t.startDate, r.planDays! - 1) }));
       setStep("understood");
     } catch (e) {
       if (e instanceof ApiError && e.code === "AI_CONSENT_REQUIRED") {
@@ -181,7 +183,7 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
         return;
       }
       // Fill it in by hand: the goal as written, the districts to add.
-      setU((x) => (Object.keys(x).length ? x : { name: provisionalName(brief), goal: brief.trim().slice(0, 200) }));
+      setU((x) => (Object.keys(x).length ? x : { name: "", goal: brief.trim().slice(0, 200) }));
       setManual(`${msg(e)} You can fill this in yourself and add the districts, or try again.`);
       setStep("understood");
     } finally {
@@ -211,7 +213,7 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
     setBusy(true);
     setError(null);
     try {
-      const name = (u.name || provisionalName(brief)).slice(0, 80);
+      const name = (u.name?.trim() || UNTITLED).slice(0, 80);
       await api.update(idRef.current!, { name, goal: (u.goal ?? "").slice(0, 500), ...(u.category ? { category: u.category.slice(0, 60) } : {}), requirements: requirements() });
       void refreshCities();
       setStep("time");
@@ -223,8 +225,8 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
   };
 
   /* ---------------- step 3 ---------------- */
-  const tInput = { ...time, estimatedHours: u.estimatedHours };
-  const plan = useMemo(() => timePlan(tInput, paces), [time, u.estimatedHours, paces]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tInput = { ...time, estimatedHours: u.estimatedHours, districts: subjects.filter((s) => s.on).length || undefined };
+  const plan = useMemo(() => timePlan(tInput, paces), [time, u.estimatedHours, tInput.districts, paces]); // eslint-disable-line react-hooks/exhaustive-deps
   const confirmTime = async () => {
     setBusy(true);
     setError(null);
@@ -272,7 +274,8 @@ export function CreateCity({ draftId }: { draftId: string | null }) {
   const finishText = plan.finish ? `Finishes around ${longDate(plan.finish)}` : time.targetDate ? `By ${longDate(time.targetDate)}` : "";
   const hero = useMemo((): { districts: PreviewDistrict[]; caption?: string } => {
     const planned = (state: PreviewDistrict["state"]) => keptNames.map((name): PreviewDistrict => ({ name, state, topics: Array(perDistrict).fill(3) }));
-    if (preview?.content && proposal?.summary) {
+    // A proposal's counts only on the build screen: on steps 2 and 3 the answers may have changed since it was written.
+    if (step === "build" && preview?.content && proposal?.summary) {
       const s = proposal.summary;
       return { districts: fromDocument(preview.content), caption: `${s.districts} districts · ${s.topics} topics · finishes ${longDate(s.end)}` };
     }
